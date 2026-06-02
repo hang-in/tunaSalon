@@ -1,7 +1,7 @@
 ---
 title: Salon 엔진 플랜 v0.6 - FlowMeter (수렴/발산 측정)
 type: plan
-status: in_progress
+status: done
 priority: P1
 updated_at: 2026-06-02
 owner: shared
