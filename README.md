@@ -3,8 +3,8 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.8-blue)
-![tests](https://img.shields.io/badge/tests-210%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.9-blue)
+![tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
@@ -219,6 +219,18 @@ What's **not** here yet (later): BGE-M3 semantic search, SQLite persistence (L1)
 
 ---
 
+## Deeper recall + persistence (v0.9)
+
+v0.8 remembered in-memory with raw token overlap. v0.9 deepens it by lifting the search core from the author's own [seCall](https://github.com/hang-in/seCall) engine — all behind a `friend-engine` Cargo feature (off by default, so the normal build pulls no extra deps and the golden output is untouched):
+
+- **Korean morphology** (Stage 0): recall tokenizes with Lindera (ko-dic), stripping 조사/어미 — so "비가 온다" now matches a past "비 온다" line that whitespace overlap missed.
+- **SQLite + FTS5 BM25** (Stage 1): the store becomes real SQLite with an FTS5 index; recall ranks past lines by BM25 (term frequency / rarity / length) with OR-match, instead of a raw token count.
+- **Cross-session memory**: `--chat` persists to `~/.local/share/tunaSalon/memory.db` (`$SALON_MEMORY_DB` overrides), so personas remember across runs. Tests stay in `:memory:` and write nothing to disk.
+
+Next (v0.10): BGE-M3 semantic search + HNSW + hybrid fusion. Alongside v0.9 the `--chat` room got livelier — a tuned 3-way config (cross-excitation + no same-speaker-twice) and `/topic` to steer the conversation (gated by `smoke_chat`).
+
+---
+
 ## Try it
 
 All you need is [Rust](https://rustup.rs). The default run needs no LLM and no network.
@@ -232,10 +244,11 @@ cargo run -- --room argument                      # room mood preset (calm/pub/a
 cargo run -- --room chaos --fsm                   # chemistry + no speaker twice in a row
 cargo run -- --theta 0.7 --k 5 --beta 0.4         # turn the knobs
 cargo run -- --llm                                # opt in to LLM (default cloud model, needs network)
+cargo run --features friend-engine -- --chat      # personas remember across sessions (morphology + SQLite BM25 recall)
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
 cargo run --example chat_demo                     # non-interactive chat loop with flow readout per line
-cargo test                                        # 210 tests, including the smoke gates + recall eval
+cargo test                                        # 222 tests (230 with --features friend-engine)
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -244,7 +257,7 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.8 (now):** Long-term memory (friend engine), first increment — participation-based in-memory store, keyword recall into the v0.3 recall slot, and an SSOT recall-eval harness. Live chat path only, so the deterministic run stays byte-identical. Rust, 210 tests, smoke gates green.
+**v0.9 (now):** friend engine, deeper — Korean morphology (Lindera) + SQLite/FTS5 BM25 recall + cross-session persistence, lifted from the author's seCall engine and gated behind a `friend-engine` feature (golden untouched). Plus a livelier `--chat` (tuned 3-way + `/topic`). Rust, 222 tests (230 with the feature), smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
@@ -255,11 +268,12 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 - **v0.6 — FlowMeter:** convergence/divergence measurement (observe-only). Token-overlap approximation; BGE-M3 embeddings later. Live gauge in TUI + `chat_demo` readout.
 - **v0.7 — MetaController:** macro→micro feedback (cool the room as it converges). The original engine-layer roadmap — rhythm → chemistry → LLM → concurrency → chat → flow-meter → meta-controller — is now complete.
 - **v0.8 — friend engine (first increment):** participation-based memory + keyword recall + recall-eval harness. Personas start remembering what was said in rooms they were in.
+- **v0.9 — friend engine, deeper:** Korean morphology + SQLite/FTS5 BM25 recall + cross-session persistence (feature-gated). Livelier `--chat` (3-way config + `/topic`).
 
 **What's next (separate tracks, no fixed order):**
-- **Friend engine, deeper:** BGE-M3 semantic search, SQLite persistence, forgetting, subjective storage, cross-room impressions — building on the v0.8 increment.
-- **Web frontend:** moving the chat UI to the browser for a production-grade, shareable app (Rust engine kept as-is, served over WebSocket; the TUI stays as a debug tool). Planned, parked — see `docs/plans/salon-web-frontend.md`.
-- **Persona invite / visuals:** bringing new personas in mid-conversation; richer representation.
+- **v0.10 — semantic recall:** BGE-M3 embeddings (ONNX) + HNSW (usearch) + hybrid BM25/vector fusion, on top of the v0.9 store. Then forgetting, subjective storage, cross-room impressions.
+- **Web frontend:** moving the chat UI to the browser for a production-grade, shareable app (Rust engine kept as-is, served over WebSocket; the TUI stays as a debug tool). Planned — see `docs/plans/salon-web-frontend.md`.
+- **Persona synthesis + characters:** building personas from MBTI / blood-type / zodiac / role presets, with pixel-art (Cyworld-minimi-style) avatars for the web — see `docs/temp/salon-persona-ui.md`.
 
 ---
 

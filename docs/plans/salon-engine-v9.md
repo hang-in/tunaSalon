@@ -1,7 +1,7 @@
 ---
 title: Salon 엔진 플랜 v0.9 - friend engine 심화 (seCall 검색코어 lift, 1단계: 형태소 + SQLite/FTS5 BM25)
 type: plan
-status: planned
+status: done
 priority: P1
 updated_at: 2026-06-03
 owner: shared
