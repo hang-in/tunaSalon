@@ -317,7 +317,7 @@ fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
     let lang = salon::locale::reply_language();
     // 공통 꼬리말: 언어 지시 + 행동 가드레일.
     let common = format!(
-        " Always respond in {lang}, even if others write in another language. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue)."
+        " A real person takes part in this chat; their messages are labelled \"나\". When 나 says or asks something, respond to 나 directly and follow their lead (answer the question, do what they ask) instead of just riffing with the other personas. Always respond in {lang}, even if others write in another language. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue)."
     );
     let mut m = BTreeMap::new();
     m.insert(

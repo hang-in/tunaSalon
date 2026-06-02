@@ -29,7 +29,7 @@ const MAX_WALL_SECS: u64 = 30;
 
 // 사람 턴을 삽입할 발화 번호 (0-based: 3번째 발화 도착 후).
 const HUMAN_TURN_AFTER: usize = 2;
-const HUMAN_TEXT: &str = "안녕, 다들 비 와서 뭐해?";
+const HUMAN_TEXT: &str = "얘들아 각자 자기소개 좀 해줄래?";
 
 fn demo_personas() -> Vec<Persona> {
     vec![
@@ -43,7 +43,7 @@ fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
     // 응답 언어는 시스템 로케일($LANG)에서 감지, 기본 한국어.
     let lang = salon::locale::reply_language();
     let common = format!(
-        " Always respond in {lang}, even if others write in another language. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue)."
+        " A real person takes part in this chat; their messages are labelled \"나\". When 나 says or asks something, respond to 나 directly and follow their lead (answer the question, do what they ask) instead of just riffing with the other personas. Always respond in {lang}, even if others write in another language. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue)."
     );
     let mut m = BTreeMap::new();
     m.insert(
