@@ -5,3 +5,4 @@ Plan document index. Register new plans here.
 | slug | 상태 | 버전 | 요약 |
 |------|------|------|------|
 | [salon-engine-v1](salon-engine-v1.md) | in_progress | v1 | Salon 대화 흐름 엔진 실행 플랜. **v0.1 구현 완료**(Rust, 27 tests, 스모크 게이트 green) ~ v0.6(MetaController) 로드맵 |
+| [salon-engine-v2](salon-engine-v2.md) | draft | v0.2 | 케미(α) 단계. 교차 자극 α(room preset + persona modifier) + FSM 전이. 안정 조건 spectral radius < 1 |
