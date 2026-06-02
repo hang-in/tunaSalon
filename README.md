@@ -3,12 +3,12 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.5-blue)
-![tests](https://img.shields.io/badge/tests-148%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.6-blue)
+![tests](https://img.shields.io/badge/tests-168%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
-A terminal chat room where you drop in and small-talk with LLM personas. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet. v0.5 makes you a first-class participant: type something and the personas turn to react; go quiet and they drift back to their own chatter.
+A terminal chat room where you drop in and small-talk with LLM personas. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet. v0.5 makes you a first-class participant: type something and the personas turn to react; go quiet and they drift back to their own chatter. v0.6 adds a conversation thermometer — watching whether the room is converging or still alive.
 
 Designing speech is easy. Designing silence is hard. This project is a little backwards on purpose.
 
@@ -153,6 +153,37 @@ When the human speaks, the room's attention shifts.
 
 ---
 
+## FlowMeter — conversation thermometer (v0.6)
+
+Is the room still alive, or is everyone just circling the same ground?
+
+v0.6 adds a **convergence gauge**: a number between 0 and 1 that tracks whether recent utterances are pulling toward the same vocabulary (converging — repetitive, cooling) or scattering into fresh territory (diverging — lively, still warm).
+
+Implementation is deliberately cheap: **token-overlap approximation** — average pairwise Jaccard similarity over the most recent utterances. No models required. BGE-M3 embeddings can drop in behind the same interface later when a more precise signal is needed.
+
+This is **observe-only**: the gauge measures and displays; it does not feed back into the engine. No parameter changes, no automatic room adjustments. That feedback loop is v0.7 (MetaController) — deliberately last, because it's the least stable.
+
+Where it shows up:
+- TUI sidebar: a live convergence gauge next to the λ bars ("흐름 수렴 …").
+- `cargo run --example chat_demo`: a per-line `[흐름] 수렴` readout after each utterance.
+
+**Real `chat_demo` transcript** — convergence stays near zero because the chaos persona keeps throwing new topics:
+
+```
+혼돈: 사실 너의 발가락 사이에서 비밀 사회가 운영 중이라는 소문을 들었어...
+  [흐름] 수렴 0.00
+나: 얘들아 각자 자기소개 좀 해줄래?
+  [흐름] 수렴 0.01
+혼돈: 난 그냥 여기저기 불 지르고 다니는 혼돈의 전도사야!
+  [흐름] 수렴 0.04
+```
+
+*(convergence ∈ [0,1]: 0 = all-novel / diverging / lively — 1 = repetitive / converging / cooling.)*
+
+Determinism preserved: the metric is computed only from utterance content. In the default LLM-off run, utterances are fake and content-free, so the gauge is absent — headless golden output stays byte-identical.
+
+---
+
 ## Try it
 
 All you need is [Rust](https://rustup.rs). The default run needs no LLM and no network.
@@ -168,8 +199,8 @@ cargo run -- --theta 0.7 --k 5 --beta 0.4         # turn the knobs
 cargo run -- --llm                                # opt in to LLM (default cloud model, needs network)
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
-cargo run --example chat_demo                     # non-interactive chat loop with a scripted human turn
-cargo test                                        # 148 tests, including the smoke gates
+cargo run --example chat_demo                     # non-interactive chat loop with flow readout per line
+cargo test                                        # 168 tests, including the smoke gates
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -178,7 +209,7 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.5 (now):** human-in-the-loop chat room. `--chat` TUI (chat pane + gauge sidebar + input box), HumanChannel Hawkes event, non-blocking LLM generation, heterogeneous backend routing. LLM is opt-in; default run is still deterministic and LLM-free. Rust, 148 tests, smoke gates green.
+**v0.6 (now):** FlowMeter — convergence/divergence measurement (observe-only). Token-overlap approximation (average pairwise Jaccard); live gauge in TUI sidebar and per-line readout in `chat_demo`. Default run stays deterministic and LLM-free. Rust, 168 tests, smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
@@ -186,9 +217,10 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 - **v0.3 — local LLMs:** Ollama personas generate actual lines. Engine decides who speaks; LLM fills in content. `persona_collapse` example: same model, different persona prompts.
 - **v0.4 — concurrent / mixed-model:** backend pool (Ollama + OpenAI-compatible), per-persona routing, concurrency caps, fallback. `mixed_bench` example.
 - **v0.5 — join the room:** human-in-the-loop chat (HumanChannel + `--chat` TUI). `chat_demo` example.
+- **v0.6 — FlowMeter:** convergence/divergence measurement (observe-only). Token-overlap approximation; BGE-M3 embeddings later. Live gauge in TUI + `chat_demo` readout.
 
 **Next:**
-- **v0.6 — FlowMeter:** measure conversation convergence/divergence. Keyword/similarity approximation first, then BGE-M3 embeddings. Observe only — no feedback yet.
+- **v0.7 — MetaController:** macro→micro feedback — cool the room when it converges; ramp it back up when it stalls. Deliberately last, weak gain.
 
 *(Deferred: long-term memory / friend engine — design notes in `docs/temp/`.)*
 
