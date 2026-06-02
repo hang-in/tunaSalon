@@ -1,5 +1,6 @@
 use crate::driver;
 use crate::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
+use crate::preset::RoomPreset;
 use crate::sink::VecSink;
 use std::collections::BTreeMap;
 
@@ -32,6 +33,22 @@ pub fn run(seed: u64, ticks: u64) {
                 counts.get("summarizer").copied().unwrap_or(0),
             );
         }
+    }
+
+    println!();
+    println!("--- preset comparison (seed={seed} ticks={ticks}) ---");
+    for preset in [RoomPreset::Calm, RoomPreset::Pub, RoomPreset::Argument, RoomPreset::Chaos] {
+        let config = preset.build_config(&personas);
+        let mut sink = VecSink::default();
+        driver::run(&config, &personas, seed, ticks, &mut sink);
+        let silence_count = sink.records.last().map_or(0, |r| r.silence_count);
+        let counts = speak_counts(&sink, &personas);
+        println!(
+            "preset={preset:?} silence_count={silence_count} friend={} chaos={} summarizer={}",
+            counts.get("friend").copied().unwrap_or(0),
+            counts.get("chaos").copied().unwrap_or(0),
+            counts.get("summarizer").copied().unwrap_or(0),
+        );
     }
 }
 

@@ -15,6 +15,9 @@ pub struct ObservationRecord {
     pub silence_count: u64,
     pub speak_count: u64,
     pub conversation_len: u64,
+    /// α=0이면 항목 없음 → 직렬화에서 생략(v0.1 골든 바이트 동일 보존).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub excitations: BTreeMap<PersonaId, f64>,
 }
 
 pub trait ObservationSink {
@@ -53,6 +56,7 @@ mod tests {
             silence_count: 0,
             speak_count: 1,
             conversation_len: 1,
+            excitations: BTreeMap::new(),
         }
     }
 

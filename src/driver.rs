@@ -97,6 +97,13 @@ pub fn run(
             };
 
         let conversation_len = speak_count + silence_count;
+        // α=0이면 모든 E_p가 정확히 0.0이므로 필터 결과 빈 맵 → JSON 직렬화 생략 → v0.1 골든 보존.
+        let excitations: BTreeMap<PersonaId, f64> = state
+            .excitations
+            .iter()
+            .filter(|(_, v)| **v != 0.0)
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
         let record = ObservationRecord {
             tick,
             ts: tick as f64 * config.tick_interval,
@@ -108,6 +115,7 @@ pub fn run(
             silence_count,
             speak_count,
             conversation_len,
+            excitations,
         };
 
         sink.emit(&record);

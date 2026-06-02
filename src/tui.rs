@@ -52,9 +52,13 @@ pub fn render(
     for (id, lambda) in &record.intensities {
         let name = names.get(id).map(String::as_str).unwrap_or(id.as_str());
         gauge_lines.push(Line::from(name.to_string()));
+        let excitation_suffix = match record.excitations.get(id) {
+            Some(&e) if e != 0.0 => format!(" +{e:.2}"),
+            _ => String::new(),
+        };
         gauge_lines.push(Line::from(vec![
             Span::raw(lambda_bar(*lambda, theta)),
-            Span::raw(format!(" {lambda:.2}")),
+            Span::raw(format!(" {lambda:.2}{excitation_suffix}")),
         ]));
     }
     gauge_lines.push(Line::from(""));
@@ -322,6 +326,7 @@ mod tests {
             silence_count: 3,
             speak_count: 9,
             conversation_len: 12,
+            excitations: BTreeMap::new(),
         };
         let names = names();
         let log = vec![
@@ -360,6 +365,7 @@ mod tests {
             silence_count: 4,
             speak_count: 9,
             conversation_len: 13,
+            excitations: BTreeMap::new(),
         };
         let names = names();
         let log = vec!["t13 (silence)".to_string()];
@@ -373,5 +379,41 @@ mod tests {
         let text = buffer_text(&terminal);
         assert!(text.contains("(silence)"));
         assert!(text.contains("speak 9  silence 4"));
+    }
+
+    #[test]
+    fn renders_excitation_annotation_when_present() {
+        let mut intensities = BTreeMap::new();
+        intensities.insert("chaos".to_string(), 0.73);
+        intensities.insert("friend".to_string(), 0.81);
+        let mut excitations = BTreeMap::new();
+        excitations.insert("chaos".to_string(), 0.09);
+        let record = ObservationRecord {
+            tick: 20,
+            ts: 20.0,
+            intensities,
+            gate_passed: true,
+            candidates: vec!["chaos".to_string()],
+            chosen: Some("chaos".to_string()),
+            rrf_reason: Some("intensity".to_string()),
+            silence_count: 1,
+            speak_count: 5,
+            conversation_len: 6,
+            excitations,
+        };
+        let names = names();
+        let log = vec!["t20 Chaos Guest".to_string()];
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("test backend terminal");
+
+        terminal
+            .draw(|frame| render(frame, &record, &names, 0.65, &log))
+            .expect("render succeeds");
+
+        let text = buffer_text(&terminal);
+        // chaos 게이지에 자극 표시 +0.09가 나타나야 한다
+        assert!(text.contains("+0.09"), "excitation annotation '+0.09' should appear for chaos");
+        // friend는 excitations에 없으므로 friend의 lambda에 + 표시가 없어야 한다
+        assert!(text.contains("0.81"), "friend lambda 0.81 should appear");
     }
 }
