@@ -1,5 +1,5 @@
 ---
-title: Salon 플랜 v0.9 - web 프런트엔드 트랙 (TUI는 디버그용으로 강등)
+title: Salon 플랜 - web 프런트엔드 트랙 (TUI는 디버그용으로 강등, 엔진 버전 라인과 별개의 병렬 제품 트랙)
 type: plan
 status: planned
 priority: P1
@@ -11,7 +11,9 @@ ui_ref: ../temp/salon-persona-ui.md
 roadmap_ref: salon-engine-v1.md
 ---
 
-# Salon - 플랜 v0.9 (web 프런트엔드 트랙)
+# Salon - web 프런트엔드 트랙 (병렬 제품 트랙)
+
+> 번호 주의: 엔진 버전 라인(v0.1~v0.8, 다음 v0.9=friend engine 심화)과 별개의 **병렬 제품 트랙**이다. 한때 "v0.9"로 적었으나 v0.9는 friend engine 심화에 배정됨(2026-06-03). 이 트랙은 엔진 버전 번호를 점유하지 않는다.
 
 > 상태: **planned (착수 전, 결정만 기록)**. 사용자 지시(2026-06-03): "플랜 문서로 만들어 두고 하던 작업 이어가자" - 즉 이 트랙은 **파킹**해 두고 다른 작업을 먼저 진행한다. 이 문서는 web 전환 결정과 아키텍처를 잃지 않으려는 기록이다.
 
@@ -123,4 +125,4 @@ WS의 유일한 추가 비용: ping/pong keepalive + 재연결 로직을 직접 
 ## 8. 산출물
 
 - 이 문서(플랜 v0.9). 착수 시 §4를 task로 분해(`salon-web-frontend-task-NN.md`).
-- v0.9 한 줄: Rust 엔진은 그대로, axum WebSocket으로 엔진 리듬을 브라우저에 push하고 사람 입력을 받아, 외부 사용자에게 "제대로 된 앱"으로 보이게 한다. TUI는 디버그로 남고 골든은 안 깨진다.
+- web 트랙 한 줄: Rust 엔진은 그대로, axum WebSocket으로 엔진 리듬을 브라우저에 push하고 사람 입력을 받아, 외부 사용자에게 "제대로 된 앱"으로 보이게 한다. TUI는 디버그로 남고 골든은 안 깨진다.
