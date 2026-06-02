@@ -1,4 +1,6 @@
-use crate::model::{CouplingMatrix, EngineConfig, Persona};
+use crate::hawkes::HawkesEngine;
+use crate::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
+use std::collections::BTreeMap;
 
 /// 방 분위기 프리셋. 각 프리셋은 β/θ/α를 한 번에 세팅한다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,27 +42,66 @@ impl RoomPreset {
 
     /// 프리셋 값으로 EngineConfig를 구성한다.
     ///
-    /// alpha는 균일 off-diagonal 행렬:
-    ///   α_base = target_rho * beta / (N - 1)   (N > 1)
-    ///   대각 항목은 absent(0.0으로 취급).
-    /// 이렇게 구성하면 분기 spectral radius == target_rho < 1 이므로 is_stable()이 항상 true.
+    /// 모디파이어를 전부 기본(1.0)으로 설정한 build_config_with_modifiers와 동일.
+    /// alpha는 균일 off-diagonal 행렬, 분기 spectral radius == target_rho < 1.
     pub fn build_config(&self, personas: &[Persona]) -> EngineConfig {
+        self.build_config_with_modifiers(personas, &BTreeMap::new())
+    }
+
+    /// 페르소나별 모디파이어를 반영한 비대칭 α 행렬로 EngineConfig를 구성한다.
+    ///
+    /// 비대칭 raw α:
+    ///   raw_pj = reactivity(p) * provocativeness(j)   (p != j, 대각 absent)
+    ///   모디파이어가 없는 페르소나는 기본값(1.0)으로 취급.
+    ///
+    /// 안정 재정규화:
+    ///   cur = branching_spectral_radius(raw_alpha, personas, beta)
+    ///   cur > 0 이면 모든 항목에 (target_rho / cur) 를 곱해 spectral radius == target_rho.
+    ///   cur <= 0 이면 빈 행렬 반환(자극 없음).
+    pub fn build_config_with_modifiers(
+        &self,
+        personas: &[Persona],
+        modifiers: &BTreeMap<PersonaId, PersonaModifier>,
+    ) -> EngineConfig {
         let (beta, theta, target_rho, _mu_scale) = self.params();
         let n = personas.len();
 
         let alpha = if n <= 1 {
             CouplingMatrix::new()
         } else {
-            let alpha_base = target_rho * beta / (n as f64 - 1.0);
-            let mut matrix = CouplingMatrix::new();
+            // 1단계: raw 비대칭 α 계산
+            let mut raw = CouplingMatrix::new();
             for p in personas {
+                let reactivity = modifiers
+                    .get(&p.id)
+                    .map(|m| m.reactivity)
+                    .unwrap_or(PersonaModifier::default().reactivity);
                 for j in personas {
                     if p.id != j.id {
-                        matrix.values.insert((p.id.clone(), j.id.clone()), alpha_base);
+                        let provocativeness = modifiers
+                            .get(&j.id)
+                            .map(|m| m.provocativeness)
+                            .unwrap_or(PersonaModifier::default().provocativeness);
+                        let value = reactivity * provocativeness;
+                        if value > 0.0 {
+                            raw.values.insert((p.id.clone(), j.id.clone()), value);
+                        }
                     }
                 }
             }
-            matrix
+
+            // 2단계: 분기 spectral radius 계산 후 재정규화
+            let cur = HawkesEngine::branching_spectral_radius(&raw, personas, beta);
+            if cur <= 0.0 {
+                CouplingMatrix::new()
+            } else {
+                let scale = target_rho / cur;
+                let mut scaled = CouplingMatrix::new();
+                for (key, value) in &raw.values {
+                    scaled.values.insert(key.clone(), value * scale);
+                }
+                scaled
+            }
         };
 
         EngineConfig {
@@ -207,5 +248,109 @@ mod tests {
         assert_eq!(RoomPreset::parse("ARGUMENT").unwrap(), RoomPreset::Argument);
         assert_eq!(RoomPreset::parse("chaos").unwrap(), RoomPreset::Chaos);
         assert!(RoomPreset::parse("jazz").is_err());
+    }
+
+    // ── task-11 신규 테스트 ──────────────────────────────────────────────────
+
+    /// 대비되는 모디파이어를 넣으면 α 행렬이 비대칭 (α_pj != α_jp 인 쌍이 존재).
+    #[test]
+    fn contrasting_modifiers_produce_asymmetric_alpha() {
+        let personas = three_personas();
+        // a: 높은 도발성, b: 높은 반응성, c: 둘 다 낮음
+        let mut modifiers = BTreeMap::new();
+        modifiers.insert(
+            "a".to_string(),
+            PersonaModifier { reactivity: 0.6, provocativeness: 2.0 },
+        );
+        modifiers.insert(
+            "b".to_string(),
+            PersonaModifier { reactivity: 2.0, provocativeness: 1.0 },
+        );
+        modifiers.insert(
+            "c".to_string(),
+            PersonaModifier { reactivity: 0.5, provocativeness: 0.5 },
+        );
+
+        let config = RoomPreset::Pub.build_config_with_modifiers(&personas, &modifiers);
+        let alpha = &config.alpha;
+
+        // b→a: reactivity(b)*provocativeness(a) raw = 2.0*2.0 = 4.0
+        // a→b: reactivity(a)*provocativeness(b) raw = 0.6*1.0 = 0.6
+        // raw가 다르므로 scaled도 다르다.
+        let ab = alpha.get(&"a".to_string(), &"b".to_string());
+        let ba = alpha.get(&"b".to_string(), &"a".to_string());
+        assert!(
+            (ab - ba).abs() > 1e-9,
+            "expected asymmetry: α_ab={ab} α_ba={ba}"
+        );
+    }
+
+    /// 비대칭 α 도 is_stable 이고 branching_spectral_radius ≈ target_rho (tol 1e-6).
+    #[test]
+    fn asymmetric_config_is_stable_and_matches_target_rho() {
+        let personas = three_personas();
+        let mut modifiers = BTreeMap::new();
+        modifiers.insert(
+            "a".to_string(),
+            PersonaModifier { reactivity: 0.6, provocativeness: 2.0 },
+        );
+        modifiers.insert(
+            "b".to_string(),
+            PersonaModifier { reactivity: 2.0, provocativeness: 1.0 },
+        );
+        modifiers.insert(
+            "c".to_string(),
+            PersonaModifier { reactivity: 0.5, provocativeness: 0.5 },
+        );
+
+        // Pub preset의 target_rho = 0.40
+        let target_rho = 0.40_f64;
+        let config = RoomPreset::Pub.build_config_with_modifiers(&personas, &modifiers);
+
+        assert!(
+            HawkesEngine::is_stable(&config.alpha, &personas, config.beta),
+            "asymmetric config should be stable"
+        );
+
+        let radius =
+            HawkesEngine::branching_spectral_radius(&config.alpha, &personas, config.beta);
+        assert!(
+            (radius - target_rho).abs() < 1e-6,
+            "asymmetric radius={radius} expected={target_rho} diff={}",
+            (radius - target_rho).abs()
+        );
+    }
+
+    /// 모디파이어가 전부 기본(빈 맵)이면 build_config_with_modifiers == build_config (균일 행렬).
+    #[test]
+    fn empty_modifiers_equals_build_config() {
+        let personas = three_personas();
+        for preset in ALL_PRESETS {
+            let uniform = preset.build_config(&personas);
+            let from_modifiers =
+                preset.build_config_with_modifiers(&personas, &BTreeMap::new());
+
+            assert_eq!(
+                uniform.beta, from_modifiers.beta,
+                "{preset:?}: beta mismatch"
+            );
+            assert_eq!(
+                uniform.theta, from_modifiers.theta,
+                "{preset:?}: theta mismatch"
+            );
+            // α 모든 항목 일치 확인
+            for p in &personas {
+                for j in &personas {
+                    let v1 = uniform.alpha.get(&p.id, &j.id);
+                    let v2 = from_modifiers.alpha.get(&p.id, &j.id);
+                    assert!(
+                        (v1 - v2).abs() < 1e-12,
+                        "{preset:?}: alpha[{}][{}] uniform={v1} modifiers={v2}",
+                        p.id,
+                        j.id
+                    );
+                }
+            }
+        }
     }
 }

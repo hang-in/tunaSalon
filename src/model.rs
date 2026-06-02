@@ -3,6 +3,25 @@ use std::collections::BTreeMap;
 
 pub type PersonaId = String;
 
+/// 페르소나별 케미 비대칭 계수.
+/// reactivity:    이 페르소나가 남의 발화에 얼마나 자극받나 (row 스케일).
+/// provocativeness: 이 페르소나가 남을 얼마나 자극하나 (column 스케일).
+/// 기본값은 둘 다 1.0 (균일, task-10 build_config와 동일).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PersonaModifier {
+    pub reactivity: f64,
+    pub provocativeness: f64,
+}
+
+impl Default for PersonaModifier {
+    fn default() -> Self {
+        Self {
+            reactivity: 1.0,
+            provocativeness: 1.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct EngineConfig {
     pub beta: f64,

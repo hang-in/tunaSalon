@@ -1,6 +1,6 @@
 use salon::driver;
 use salon::headless::HeadlessSink;
-use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
+use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
 use salon::preset::RoomPreset;
 use salon::sweep;
 use salon::tui::TuiSink;
@@ -59,7 +59,8 @@ fn main() {
         for p in &mut personas {
             p.base_rate *= mu;
         }
-        preset.build_config(&personas)
+        let demo_modifiers = demo_persona_modifiers();
+        preset.build_config_with_modifiers(&personas, &demo_modifiers)
     } else {
         EngineConfig {
             beta: cli.beta.unwrap_or(DEFAULT_BETA),
@@ -174,6 +175,28 @@ fn demo_personas() -> Vec<Persona> {
             base_rate: 0.25,
         },
     ]
+}
+
+/// --room 사용 시 적용되는 데모 모디파이어.
+/// 대비되는 값으로 비대칭 케미를 가시화한다.
+///   chaos:      높은 도발성(2.0), 낮은 반응성(0.6) — 남을 많이 자극하지만 자신은 덜 반응.
+///   friend:     높은 반응성(2.0), 보통 도발성(1.0) — 남의 발화에 민감하게 반응.
+///   summarizer: 둘 다 낮음(0.5) — 조용하고 덜 자극하는 역할.
+fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
+    let mut m = BTreeMap::new();
+    m.insert(
+        "chaos".to_string(),
+        PersonaModifier { reactivity: 0.6, provocativeness: 2.0 },
+    );
+    m.insert(
+        "friend".to_string(),
+        PersonaModifier { reactivity: 2.0, provocativeness: 1.0 },
+    );
+    m.insert(
+        "summarizer".to_string(),
+        PersonaModifier { reactivity: 0.5, provocativeness: 0.5 },
+    );
+    m
 }
 
 fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
