@@ -8,7 +8,7 @@ tunaSalon는 **사용자가 LLM 페르소나들과 스몰토크하는 채팅방*
 
 설계 SSOT `docs/reference/salon-engine-design.md`(엔진 + §5 사람 참여), **제품 UI 설계 `docs/temp/salon-persona-ui.md` §5**(채팅 pane + 게이지 사이드바 + 입력창), 단계 로드맵 `docs/plans/salon-engine-v1.md`.
 
-개발은 Architect(계획)·Developer(구현)·Reviewer(검토) 역할 분리로 진행하며(`docs/agents/`), 실제 구현은 **Sonnet 서브에이전트에 위임**(codex 비사용, 2026-06-02 사용자 지시)하고 Claude(Opus)가 스펙 작성·리뷰·검증합니다. **현재 v0.1~v0.7 구현 완료**(2026-06-02, 원래 로드맵 엔진층 전부 완성): 리듬(v0.1) + 케미 α(v0.2) + 로컬 LLM(v0.3) + 동시 호출·이종 백엔드 풀(v0.4) + 사람 참여 채팅방(v0.5) + FlowMeter 관찰층(v0.6) + **MetaController 거시→미시 피드백(v0.7: 수렴 시 μ 낮춰 식힘, content 게이팅으로 골든 보존)**. 184 tests, 스모크 게이트 7종 green, 공개 레포 https://github.com/hang-in/tunaSalon. v2~v7 done. **다음은 이후 트랙**(번호 로드맵 완료): 장기기억(friend engine, 회상 슬롯 v0.3 예약·가장 유력) / BGE-M3(FlowMeter 정밀도) / `/invite`·페르소나 비주얼(persona-ui §3/§4) / v0.7 boost·기타 파라미터 피드백.
+개발은 Architect(계획)·Developer(구현)·Reviewer(검토) 역할 분리로 진행하며(`docs/agents/`), 실제 구현은 **Sonnet 서브에이전트에 위임**(codex 비사용, 2026-06-02 사용자 지시)하고 Claude(Opus)가 스펙 작성·리뷰·검증합니다. **현재 v0.1~v0.8 구현 완료**(2026-06-03): 리듬(v0.1) + 케미 α(v0.2) + 로컬 LLM(v0.3) + 동시 호출·이종 백엔드 풀(v0.4) + 사람 참여 채팅방(v0.5) + FlowMeter(v0.6) + MetaController(v0.7) + **friend engine 장기기억 첫 증분(v0.8: 참여 기반 인메모리 기억 + 키워드 회상 + 회상 슬롯 주입 + SSOT 회상 평가 하네스)**. 210 tests, 스모크 게이트 8종 green, 공개 레포 https://github.com/hang-in/tunaSalon. v2~v8 done. **다음 이후 트랙**: friend engine 심화(BGE-M3 검색·SQLite 영속(L1)·망각·주관적 저장·인물기억·발화층 judge 채점) / `/invite`·페르소나 비주얼(persona-ui §3/§4) / ratkit UI 검토 / v0.7 boost.
 
 ## 2. 기술 스택
 
@@ -36,10 +36,10 @@ tunaSalon는 **사용자가 LLM 페르소나들과 스몰토크하는 채팅방*
 
 ## 3. 빌드 / 테스트
 
-Rust 프로젝트. `src/` 모듈: model, sink, hawkes, gate, rrf, utterance, driver, headless, tui, sweep, preset, runtime, ollama, openai, pool, semaphore, human(v0.5), live(v0.5 LiveSession), chat(v0.5 채팅 TUI), locale(v0.5 응답 언어 감지 $LANG, 기본 한국어, SALON_LANG override), flow(v0.6 FlowMeter 수렴/발산 토큰 근사), meta(v0.7 MetaController, 수렴→μ 식힘 mu_scale, SALON_META_GAIN).
+Rust 프로젝트. `src/` 모듈: model, sink, hawkes, gate, rrf, utterance, driver, headless, tui, sweep, preset, runtime, ollama, openai, pool, semaphore, human(v0.5), live(v0.5 LiveSession), chat(v0.5 채팅 TUI), locale(v0.5 응답 언어 감지 $LANG, 기본 한국어, SALON_LANG override), flow(v0.6 FlowMeter 수렴/발산 토큰 근사), meta(v0.7 MetaController, 수렴→μ 식힘 mu_scale, SALON_META_GAIN), memory(v0.8 friend engine: 참여 기반 사건/회상, recall 슬롯은 라이브 경로만). 회상 평가 하네스 `tests/recall_eval.rs`.
 
 ```bash
-cargo test                                       # 전체 184 tests (스모크 게이트 7종: smoke=v0.1 ~ smoke_v7=v0.7)
+cargo test                                       # 전체 210 tests (스모크 게이트 8종 + recall_eval 회상 하네스)
 cargo run                                        # TUI (DebugMeter, 인터랙티브). q 종료, space 일시정지
 cargo run -- --headless --seed 42 --ticks 200    # 결정적 NDJSON (틱당 한 줄)
 cargo run -- --sweep                             # θ×k 격자 + room preset 비교
