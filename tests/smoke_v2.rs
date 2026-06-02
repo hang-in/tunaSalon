@@ -2,6 +2,7 @@ use salon::driver;
 use salon::hawkes::HawkesEngine;
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
 use salon::preset::RoomPreset;
+use salon::runtime::FakeBackend;
 use salon::sink::VecSink;
 use std::collections::BTreeMap;
 
@@ -84,8 +85,8 @@ fn chemistry_modifiers_change_speaker_pattern() {
 
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config_a, &personas, seed, ticks, &mut sink_a);
-    driver::run(&config_b, &personas, seed, ticks, &mut sink_b);
+    driver::run(&config_a, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
+    driver::run(&config_b, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
 
     // α 행렬이 비대칭적이어야 한다 (전제 확인)
     let ab = config_a.alpha.get(&"friend".to_string(), &"chaos".to_string());
@@ -121,7 +122,7 @@ fn stable_preset_keeps_intensities_bounded() {
     );
 
     let mut sink = VecSink::default();
-    driver::run(&config, &personas, 7, 300, &mut sink);
+    driver::run(&config, &personas, 7, 300, &mut sink, &mut FakeBackend);
 
     // 모든 레코드의 intensities가 유한하고 보수적 상한(5.0) 아래
     for record in &sink.records {
@@ -168,7 +169,7 @@ fn alpha_creates_seed_variance_in_length() {
     let summarizer_counts: Vec<u64> = (0u64..12)
         .map(|seed| {
             let mut sink = VecSink::default();
-            driver::run(&config, &personas, seed, ticks, &mut sink);
+            driver::run(&config, &personas, seed, ticks, &mut sink, &mut FakeBackend);
             persona_speak_count(&sink, "summarizer")
         })
         .collect();
@@ -204,8 +205,8 @@ fn alpha_zero_toggle_matches_v1_behavior() {
     // (a) 동일 seed 두 번 → 동일 결과 (결정성)
     let mut sink_1 = VecSink::default();
     let mut sink_2 = VecSink::default();
-    driver::run(&config, &personas, 42, 200, &mut sink_1);
-    driver::run(&config, &personas, 42, 200, &mut sink_2);
+    driver::run(&config, &personas, 42, 200, &mut sink_1, &mut FakeBackend);
+    driver::run(&config, &personas, 42, 200, &mut sink_2, &mut FakeBackend);
     assert_eq!(
         sink_1.records, sink_2.records,
         "α=0에서 동일 seed가 동일 결과를 내지 않음 — 결정성 위반"
@@ -263,7 +264,7 @@ fn fsm_forbids_consecutive_same_speaker() {
     };
 
     let mut sink = VecSink::default();
-    driver::run(&config, &personas, 42, 300, &mut sink);
+    driver::run(&config, &personas, 42, 300, &mut sink, &mut FakeBackend);
 
     // 발화 시퀀스만 추출
     let spoken: Vec<&str> = sink

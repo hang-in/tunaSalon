@@ -1,6 +1,7 @@
 use crate::driver;
 use crate::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
 use crate::preset::RoomPreset;
+use crate::runtime::FakeBackend;
 use crate::sink::VecSink;
 use std::collections::BTreeMap;
 
@@ -22,7 +23,7 @@ pub fn run(seed: u64, ticks: u64) {
             };
             let mut sink = VecSink::default();
 
-            driver::run(&config, &personas, seed, ticks, &mut sink);
+            driver::run(&config, &personas, seed, ticks, &mut sink, &mut FakeBackend);
 
             let silence_count = sink.records.last().map_or(0, |record| record.silence_count);
             let counts = speak_counts(&sink, &personas);
@@ -40,7 +41,7 @@ pub fn run(seed: u64, ticks: u64) {
     for preset in [RoomPreset::Calm, RoomPreset::Pub, RoomPreset::Argument, RoomPreset::Chaos] {
         let config = preset.build_config(&personas);
         let mut sink = VecSink::default();
-        driver::run(&config, &personas, seed, ticks, &mut sink);
+        driver::run(&config, &personas, seed, ticks, &mut sink, &mut FakeBackend);
         let silence_count = sink.records.last().map_or(0, |r| r.silence_count);
         let counts = speak_counts(&sink, &personas);
         println!(

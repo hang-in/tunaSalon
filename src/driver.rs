@@ -2,6 +2,7 @@ use crate::gate::{self, GateResult};
 use crate::hawkes::HawkesEngine;
 use crate::model::{EngineConfig, EngineState, Persona, PersonaId};
 use crate::rrf;
+use crate::runtime::PersonaRuntime;
 use crate::sink::{ObservationRecord, ObservationSink};
 use crate::utterance;
 use rand::SeedableRng;
@@ -14,6 +15,7 @@ pub fn run(
     seed: u64,
     ticks: u64,
     sink: &mut dyn ObservationSink,
+    runtime: &mut dyn PersonaRuntime,
 ) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut state = initial_state(personas, seed);
@@ -32,7 +34,7 @@ pub fn run(
             HawkesEngine::combined_intensities(&state.intensities, &state.excitations, personas);
         let intensity_snapshot = combined_intensities.clone();
 
-        let (gate_passed, candidates, chosen, rrf_reason) =
+        let (gate_passed, candidates, chosen, rrf_reason, utterance_content) =
             match gate::evaluate(&combined_intensities, config.theta) {
                 GateResult::Candidates(candidates) => {
                     // FSM 전이 제약: forbid_self_repeat ON이면 직전 화자를 후보에서 제거한다.
@@ -54,7 +56,7 @@ pub fn run(
                         // 강제 화자가 연속 불가이고 다른 후보 없음 → 침묵으로 처리한다.
                         // silent fallback이 아닌 정상 동작으로, silence_count를 증가시킨다.
                         silence_count += 1;
-                        (false, candidates, None, None)
+                        (false, candidates, None, None, None)
                     } else {
                         let selection = rrf::select(
                             &filtered,
@@ -63,13 +65,23 @@ pub fn run(
                             config.k,
                             &mut rng,
                         );
-                        let utterance = utterance::make_utterance(
+                        let mut utterance = utterance::make_utterance(
                             &selection.chosen,
                             tick,
                             config.tick_interval,
                             false,
                             &mut rng,
                         );
+
+                        // rrf::select + make_utterance의 rng 소비가 끝난 뒤 runtime을 호출한다.
+                        // FakeBackend는 rng를 소비하지 않으므로 기존 결정성이 보존된다.
+                        let content = runtime.generate(
+                            &selection.chosen,
+                            &state.history,
+                            tick,
+                            &mut rng,
+                        );
+                        utterance.event.content = content.clone();
 
                         state.history.push(utterance.event);
                         suppress_chosen(&mut state, personas, &selection.chosen);
@@ -87,12 +99,13 @@ pub fn run(
                             candidates,
                             Some(selection.chosen),
                             Some(selection.reason),
+                            content,
                         )
                     }
                 }
                 GateResult::Silent => {
                     silence_count += 1;
-                    (false, Vec::new(), None, None)
+                    (false, Vec::new(), None, None, None)
                 }
             };
 
@@ -116,6 +129,7 @@ pub fn run(
             speak_count,
             conversation_len,
             excitations,
+            utterance: utterance_content,
         };
 
         sink.emit(&record);
@@ -151,6 +165,7 @@ fn suppress_chosen(state: &mut EngineState, personas: &[Persona], chosen: &Perso
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::FakeBackend;
     use crate::sink::VecSink;
 
     fn config() -> EngineConfig {
@@ -191,8 +206,8 @@ mod tests {
         let mut left = VecSink::default();
         let mut right = VecSink::default();
 
-        run(&config, &personas, 42, 100, &mut left);
-        run(&config, &personas, 42, 100, &mut right);
+        run(&config, &personas, 42, 100, &mut left, &mut FakeBackend);
+        run(&config, &personas, 42, 100, &mut right, &mut FakeBackend);
 
         assert_eq!(left.records, right.records);
         assert_eq!(left.records.len(), 100);
@@ -227,7 +242,7 @@ mod tests {
         let personas = personas();
         let mut sink = VecSink::default();
 
-        run(&config, &personas, 42, 200, &mut sink);
+        run(&config, &personas, 42, 200, &mut sink, &mut FakeBackend);
 
         // 발화가 한 번 이상 있어야 테스트가 의미 있다.
         let spoken: Vec<&str> = sink
@@ -259,8 +274,8 @@ mod tests {
         let mut sink_default = VecSink::default();
         let mut sink_explicit = VecSink::default();
 
-        run(&config_default, &personas, 42, 100, &mut sink_default);
-        run(&config_explicit, &personas, 42, 100, &mut sink_explicit);
+        run(&config_default, &personas, 42, 100, &mut sink_default, &mut FakeBackend);
+        run(&config_explicit, &personas, 42, 100, &mut sink_explicit, &mut FakeBackend);
 
         assert_eq!(sink_default.records, sink_explicit.records);
     }

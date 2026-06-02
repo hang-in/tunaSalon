@@ -2,6 +2,7 @@ use salon::driver;
 use salon::headless::HeadlessSink;
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
 use salon::preset::RoomPreset;
+use salon::runtime::FakeBackend;
 use salon::sweep;
 use salon::tui::TuiSink;
 use std::collections::BTreeMap;
@@ -95,7 +96,7 @@ fn main() {
     if cli.headless {
         let stdout = io::stdout();
         let mut sink = HeadlessSink::new(stdout.lock());
-        driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink);
+        driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut FakeBackend);
         return;
     }
 
@@ -108,7 +109,7 @@ fn main() {
             process::exit(1);
         }
     };
-    driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink);
+    driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut FakeBackend);
 }
 
 fn parse_args<I>(args: I) -> Result<Cli, String>

@@ -23,6 +23,7 @@ pub fn make_utterance(
         ts: tick as f64 * tick_interval,
         speaker: speaker.clone(),
         mark: DEFAULT_MARK,
+        content: None,
     };
 
     // Topic tags mimic the future v0.3 interest signal; v0.1 validation does not need them.

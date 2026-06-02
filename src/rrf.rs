@@ -199,6 +199,7 @@ mod tests {
             ts,
             speaker: speaker.to_string(),
             mark: 1.0,
+            content: None,
         }
     }
 

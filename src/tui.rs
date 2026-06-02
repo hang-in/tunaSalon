@@ -327,6 +327,7 @@ mod tests {
             speak_count: 9,
             conversation_len: 12,
             excitations: BTreeMap::new(),
+            utterance: None,
         };
         let names = names();
         let log = vec![
@@ -366,6 +367,7 @@ mod tests {
             speak_count: 9,
             conversation_len: 13,
             excitations: BTreeMap::new(),
+            utterance: None,
         };
         let names = names();
         let log = vec!["t13 (silence)".to_string()];
@@ -400,6 +402,7 @@ mod tests {
             speak_count: 5,
             conversation_len: 6,
             excitations,
+            utterance: None,
         };
         let names = names();
         let log = vec!["t20 Chaos Guest".to_string()];

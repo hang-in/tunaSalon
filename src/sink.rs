@@ -18,6 +18,9 @@ pub struct ObservationRecord {
     /// α=0이면 항목 없음 → 직렬화에서 생략(v0.1 골든 바이트 동일 보존).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub excitations: BTreeMap<PersonaId, f64>,
+    /// FakeBackend이면 None → 직렬화에서 생략(v0.2 골든 바이트 동일 보존).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utterance: Option<String>,
 }
 
 pub trait ObservationSink {
@@ -57,6 +60,7 @@ mod tests {
             speak_count: 1,
             conversation_len: 1,
             excitations: BTreeMap::new(),
+            utterance: None,
         }
     }
 

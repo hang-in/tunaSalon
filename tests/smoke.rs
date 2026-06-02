@@ -3,6 +3,7 @@ use rand_chacha::ChaCha8Rng;
 use salon::driver;
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
 use salon::rrf;
+use salon::runtime::FakeBackend;
 use salon::sink::VecSink;
 use std::collections::BTreeMap;
 
@@ -43,7 +44,7 @@ fn demo_personas() -> Vec<Persona> {
 fn run_to_sink(config: &EngineConfig, seed: u64, ticks: u64) -> VecSink {
     let personas = demo_personas();
     let mut sink = VecSink::default();
-    driver::run(config, &personas, seed, ticks, &mut sink);
+    driver::run(config, &personas, seed, ticks, &mut sink, &mut FakeBackend);
     sink
 }
 

@@ -45,6 +45,7 @@ pub struct Event {
     pub ts: f64,
     pub speaker: PersonaId,
     pub mark: f64,
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

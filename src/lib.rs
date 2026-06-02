@@ -5,6 +5,7 @@ pub mod headless;
 pub mod model;
 pub mod preset;
 pub mod rrf;
+pub mod runtime;
 pub mod sink;
 pub mod sweep;
 pub mod tui;
