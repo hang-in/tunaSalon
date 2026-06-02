@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod driver;
 pub mod gate;
 pub mod hawkes;

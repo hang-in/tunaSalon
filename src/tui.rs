@@ -269,7 +269,7 @@ impl Drop for TuiSink {
     }
 }
 
-fn lambda_bar(lambda: f64, theta: f64) -> String {
+pub(crate) fn lambda_bar(lambda: f64, theta: f64) -> String {
     let scale = theta.max(lambda).max(1.0);
     let filled = ((lambda / scale) * BAR_WIDTH as f64)
         .round()
