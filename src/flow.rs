@@ -22,7 +22,7 @@ pub struct FlowMetric {
 /// 4. 빈 문자열이 된 토큰은 버린다.
 ///
 /// 한국어는 공백 분리 근사(v0.6 목표는 정밀도보다 빠른 측정).
-fn tokenize(utterance: &str) -> BTreeSet<String> {
+pub(crate) fn tokenize(utterance: &str) -> BTreeSet<String> {
     const STRIP: &[char] = &['.', ',', '!', '?', '\'', '"', '(', ')', ':', ';'];
     utterance
         .to_lowercase()
