@@ -20,8 +20,10 @@ use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Stdout, Write};
 use std::time::{Duration, Instant};
 
-/// 틱 주기 (wall-clock). 생성은 off-thread이므로 UI는 이 주기마다 엔진을 1틱 전진.
-const TICK_PERIOD: Duration = Duration::from_millis(700);
+/// 틱 주기 기본값 (wall-clock). 생성은 off-thread이므로 UI는 이 주기마다 엔진을 1틱 전진.
+/// 생성이 이 주기보다 빠르면 발화 간격 ≈ 이 주기 → 읽을 틈이 일정하게 보장된다.
+/// 페이스는 주관적이라 `SALON_CHAT_TICK_MS` 환경변수로 런타임 튜닝 가능(아래 run()).
+const TICK_PERIOD: Duration = Duration::from_millis(2000);
 /// event::poll 타임아웃. 짧게 유지해 입력이 즉시 반응.
 const POLL_TIMEOUT: Duration = Duration::from_millis(50);
 /// 게이지 막대 너비 (tui.rs BAR_WIDTH와 동일).
@@ -221,9 +223,16 @@ impl ChatApp {
         let mut input_buf = String::new();
         let mut last_tick = Instant::now();
 
+        // 틱 주기: 기본 TICK_PERIOD(2초). SALON_CHAT_TICK_MS로 재컴파일 없이 조절.
+        let tick_period = std::env::var("SALON_CHAT_TICK_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(TICK_PERIOD);
+
         loop {
             // ── 틱 전진 ──────────────────────────────────────────────
-            if last_tick.elapsed() >= TICK_PERIOD {
+            if last_tick.elapsed() >= tick_period {
                 self.session.tick();
                 last_tick = Instant::now();
             }
