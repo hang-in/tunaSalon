@@ -1,7 +1,7 @@
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use salon::driver;
-use salon::model::{EngineConfig, Persona, PersonaId};
+use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
 use salon::rrf;
 use salon::sink::VecSink;
 use std::collections::BTreeMap;
@@ -15,6 +15,7 @@ fn base_config(theta: f64, k: f64) -> EngineConfig {
         theta,
         k,
         tick_interval: 1.0,
+        alpha: CouplingMatrix::default(),
     }
 }
 

@@ -22,14 +22,22 @@ pub fn run(
 
     for tick in 0..ticks {
         state.intensities = HawkesEngine::update_intensities(&state, 1, config, personas);
-        let intensity_snapshot = state.intensities.clone();
+        state.excitations = HawkesEngine::decay_excitations(
+            &state.excitations,
+            1,
+            config.beta,
+            config.tick_interval,
+        );
+        let combined_intensities =
+            HawkesEngine::combined_intensities(&state.intensities, &state.excitations, personas);
+        let intensity_snapshot = combined_intensities.clone();
 
         let (gate_passed, candidates, chosen, rrf_reason) =
-            match gate::evaluate(&state.intensities, config.theta) {
+            match gate::evaluate(&combined_intensities, config.theta) {
                 GateResult::Candidates(candidates) => {
                     let selection = rrf::select(
                         &candidates,
-                        &state.intensities,
+                        &combined_intensities,
                         &state.history,
                         config.k,
                         &mut rng,
@@ -44,6 +52,12 @@ pub fn run(
 
                     state.history.push(utterance.event);
                     suppress_chosen(&mut state, personas, &selection.chosen);
+                    HawkesEngine::apply_excitation_on_speak(
+                        &mut state.excitations,
+                        &config.alpha,
+                        &selection.chosen,
+                        personas,
+                    );
                     state.last_speaker = Some(selection.chosen.clone());
                     speak_count += 1;
 
@@ -88,6 +102,7 @@ fn initial_state(personas: &[Persona], seed: u64) -> EngineState {
 
     EngineState {
         intensities,
+        excitations: BTreeMap::new(),
         history: Vec::new(),
         last_speaker: None,
         rng_seed: seed,
@@ -114,6 +129,7 @@ mod tests {
             theta: 0.5,
             k: 60.0,
             tick_interval: 1.0,
+            alpha: crate::model::CouplingMatrix::default(),
         }
     }
 

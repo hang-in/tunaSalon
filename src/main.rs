@@ -1,6 +1,6 @@
 use salon::driver;
 use salon::headless::HeadlessSink;
-use salon::model::{EngineConfig, Persona, PersonaId};
+use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
 use salon::sweep;
 use salon::tui::TuiSink;
 use std::collections::BTreeMap;
@@ -47,6 +47,7 @@ fn main() {
         theta: cli.theta,
         k: cli.k,
         tick_interval: TICK_INTERVAL,
+        alpha: CouplingMatrix::default(),
     };
     let personas = demo_personas();
 

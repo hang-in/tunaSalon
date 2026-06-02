@@ -1,4 +1,4 @@
-use crate::model::{EngineConfig, EngineState, Persona, PersonaId};
+use crate::model::{CouplingMatrix, EngineConfig, EngineState, Persona, PersonaId};
 use std::collections::BTreeMap;
 
 const SPEAKER_SUPPRESSION_FACTOR: f64 = 0.25;
@@ -36,6 +36,113 @@ impl HawkesEngine {
     pub fn suppressed_after_speak(base_rate: f64) -> f64 {
         base_rate * SPEAKER_SUPPRESSION_FACTOR
     }
+
+    pub fn decay_excitations(
+        excitations: &BTreeMap<PersonaId, f64>,
+        elapsed_ticks: u64,
+        beta: f64,
+        tick_interval: f64,
+    ) -> BTreeMap<PersonaId, f64> {
+        let elapsed = (elapsed_ticks as f64) * tick_interval;
+        let decay = (-beta * elapsed).exp();
+
+        excitations
+            .iter()
+            .map(|(persona_id, excitation)| (persona_id.clone(), excitation * decay))
+            .collect()
+    }
+
+    pub fn apply_excitation_on_speak(
+        excitations: &mut BTreeMap<PersonaId, f64>,
+        alpha: &CouplingMatrix,
+        speaker: &PersonaId,
+        personas: &[Persona],
+    ) {
+        for persona in personas {
+            let excitation = excitations.entry(persona.id.clone()).or_insert(0.0);
+            *excitation += alpha.get(&persona.id, speaker);
+        }
+    }
+
+    pub fn combined_intensities(
+        base: &BTreeMap<PersonaId, f64>,
+        excitations: &BTreeMap<PersonaId, f64>,
+        personas: &[Persona],
+    ) -> BTreeMap<PersonaId, f64> {
+        let mut combined = BTreeMap::new();
+
+        for persona in personas {
+            let base_value = match base.get(&persona.id) {
+                Some(value) => *value,
+                None => persona.base_rate,
+            };
+            let excitation = match excitations.get(&persona.id) {
+                Some(value) => *value,
+                None => 0.0,
+            };
+            combined.insert(persona.id.clone(), base_value + excitation);
+        }
+
+        combined
+    }
+
+    pub fn branching_spectral_radius(
+        alpha: &CouplingMatrix,
+        personas: &[Persona],
+        beta: f64,
+    ) -> f64 {
+        if personas.is_empty() || beta <= 0.0 || !beta.is_finite() {
+            return 0.0;
+        }
+
+        let n = personas.len();
+        let mut vector = vec![1.0 / n as f64; n];
+        let mut log_scale_sum = 0.0;
+        let mut scale_count = 0_u64;
+
+        for iteration in 0..288 {
+            let mut next = vec![0.0; n];
+
+            for (row_index, persona) in personas.iter().enumerate() {
+                let mut value = 0.0;
+                for (column_index, speaker) in personas.iter().enumerate() {
+                    let entry = alpha.get(&persona.id, &speaker.id) / beta;
+                    if entry.is_finite() && entry > 0.0 {
+                        value += entry * vector[column_index];
+                    }
+                }
+                next[row_index] = value;
+            }
+
+            let norm = next.iter().copied().fold(0.0, f64::max);
+            if norm <= 0.0 || !norm.is_finite() {
+                return 0.0;
+            }
+            if iteration >= 32 {
+                log_scale_sum += norm.ln();
+                scale_count += 1;
+            }
+
+            for value in &mut next {
+                *value /= norm;
+            }
+            vector = next;
+        }
+
+        if scale_count > 0 {
+            let radius = (log_scale_sum / scale_count as f64).exp();
+            if radius.is_finite() {
+                return radius;
+            }
+            0.0
+        } else {
+            0.0
+        }
+    }
+
+    pub fn is_stable(alpha: &CouplingMatrix, personas: &[Persona], beta: f64) -> bool {
+        Self::branching_spectral_radius(alpha, personas, beta) < 1.0
+    }
 }
 
 #[cfg(test)]
@@ -48,6 +155,7 @@ mod tests {
             theta: 0.7,
             k: 60.0,
             tick_interval: 1.0,
+            alpha: CouplingMatrix::default(),
         }
     }
 
@@ -72,6 +180,7 @@ mod tests {
     ) -> EngineState {
         EngineState {
             intensities,
+            excitations: BTreeMap::new(),
             history: Vec::new(),
             last_speaker,
             rng_seed: 42,
@@ -138,5 +247,143 @@ mod tests {
         let second = HawkesEngine::update_intensities(&state, 7, &config, &personas);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn cross_excitation_raises_combined_intensity_after_speaker_event() {
+        let personas = personas();
+        let base = BTreeMap::from([("quiet".to_string(), 0.3), ("active".to_string(), 0.9)]);
+        let mut alpha = CouplingMatrix::default();
+        alpha
+            .values
+            .insert(("quiet".to_string(), "active".to_string()), 0.4);
+        let mut excitations = BTreeMap::new();
+
+        HawkesEngine::apply_excitation_on_speak(
+            &mut excitations,
+            &alpha,
+            &"active".to_string(),
+            &personas,
+        );
+        let combined = HawkesEngine::combined_intensities(&base, &excitations, &personas);
+
+        assert!(intensity_at(&combined, "quiet") > intensity_at(&base, "quiet"));
+        assert_eq!(
+            intensity_at(&combined, "active"),
+            intensity_at(&base, "active")
+        );
+    }
+
+    #[test]
+    fn excitation_decays_monotonically_toward_zero_without_events() {
+        let mut excitations = BTreeMap::from([("quiet".to_string(), 1.0)]);
+        let first = HawkesEngine::decay_excitations(&excitations, 1, 0.5, 1.0);
+        excitations = first.clone();
+        let second = HawkesEngine::decay_excitations(&excitations, 1, 0.5, 1.0);
+
+        assert!(intensity_at(&first, "quiet") < 1.0);
+        assert!(intensity_at(&second, "quiet") < intensity_at(&first, "quiet"));
+        assert!(intensity_at(&second, "quiet") > 0.0);
+    }
+
+    #[test]
+    fn empty_alpha_keeps_combined_intensities_equal_to_base_sequence() {
+        let personas = personas();
+        let config = config();
+        let alpha = CouplingMatrix::default();
+        let mut state = state(BTreeMap::new(), None);
+        let mut excitations = BTreeMap::new();
+
+        for _ in 0..12 {
+            let base = HawkesEngine::update_intensities(&state, 1, &config, &personas);
+            excitations =
+                HawkesEngine::decay_excitations(&excitations, 1, config.beta, config.tick_interval);
+            HawkesEngine::apply_excitation_on_speak(
+                &mut excitations,
+                &alpha,
+                &"active".to_string(),
+                &personas,
+            );
+            let combined = HawkesEngine::combined_intensities(&base, &excitations, &personas);
+
+            assert_eq!(combined, base);
+            state.intensities = base;
+        }
+    }
+
+    #[test]
+    fn spectral_radius_matches_known_two_by_two_and_stability_boundary() {
+        let personas = vec![
+            Persona {
+                id: "a".to_string(),
+                name: "A".to_string(),
+                base_rate: 0.5,
+            },
+            Persona {
+                id: "b".to_string(),
+                name: "B".to_string(),
+                base_rate: 0.5,
+            },
+        ];
+        let mut alpha = CouplingMatrix::default();
+        alpha.values.insert(("a".to_string(), "b".to_string()), 0.2);
+        alpha.values.insert(("b".to_string(), "a".to_string()), 0.8);
+
+        let radius = HawkesEngine::branching_spectral_radius(&alpha, &personas, 1.0);
+        let hand_value = (0.2_f64 * 0.8_f64).sqrt();
+
+        assert!((radius - hand_value).abs() < 1e-9);
+        assert!(HawkesEngine::is_stable(&alpha, &personas, 1.0));
+
+        alpha.values.insert(("a".to_string(), "b".to_string()), 1.0);
+        alpha.values.insert(("b".to_string(), "a".to_string()), 1.0);
+
+        assert!(!HawkesEngine::is_stable(&alpha, &personas, 1.0));
+    }
+
+    #[test]
+    fn stable_excitation_stays_bounded_while_unstable_excitation_grows() {
+        let personas = vec![Persona {
+            id: "solo".to_string(),
+            name: "Solo".to_string(),
+            base_rate: 0.5,
+        }];
+        let base = BTreeMap::from([("solo".to_string(), 0.5)]);
+        let mut stable_alpha = CouplingMatrix::default();
+        stable_alpha
+            .values
+            .insert(("solo".to_string(), "solo".to_string()), 0.4);
+        let mut unstable_alpha = CouplingMatrix::default();
+        unstable_alpha
+            .values
+            .insert(("solo".to_string(), "solo".to_string()), 1.2);
+        let mut stable_excitations = BTreeMap::new();
+        let mut unstable_excitations = BTreeMap::new();
+
+        for _ in 0..40 {
+            stable_excitations = HawkesEngine::decay_excitations(&stable_excitations, 1, 1.0, 1.0);
+            unstable_excitations =
+                HawkesEngine::decay_excitations(&unstable_excitations, 1, 1.0, 1.0);
+            HawkesEngine::apply_excitation_on_speak(
+                &mut stable_excitations,
+                &stable_alpha,
+                &"solo".to_string(),
+                &personas,
+            );
+            HawkesEngine::apply_excitation_on_speak(
+                &mut unstable_excitations,
+                &unstable_alpha,
+                &"solo".to_string(),
+                &personas,
+            );
+        }
+
+        let stable = HawkesEngine::combined_intensities(&base, &stable_excitations, &personas);
+        let unstable = HawkesEngine::combined_intensities(&base, &unstable_excitations, &personas);
+
+        assert!(HawkesEngine::is_stable(&stable_alpha, &personas, 1.0));
+        assert!(!HawkesEngine::is_stable(&unstable_alpha, &personas, 1.0));
+        assert!(intensity_at(&stable, "solo") < 1.2);
+        assert!(intensity_at(&unstable, "solo") > intensity_at(&stable, "solo") * 2.0);
     }
 }

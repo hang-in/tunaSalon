@@ -1,5 +1,5 @@
 use crate::driver;
-use crate::model::{EngineConfig, Persona, PersonaId};
+use crate::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
 use crate::sink::VecSink;
 use std::collections::BTreeMap;
 
@@ -16,6 +16,7 @@ pub fn run(seed: u64, ticks: u64) {
                 theta,
                 k,
                 tick_interval: TICK_INTERVAL,
+                alpha: CouplingMatrix::default(),
             };
             let mut sink = VecSink::default();
 

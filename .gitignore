@@ -28,6 +28,9 @@ tmp/
 # 로컬 에이전트 설정 (개인용, 공개 레포 제외)
 .claude/settings.local.json
 
+# omc 공간검색 캐시 (프롬프트/세션 로그 포함, 공개 금지)
+.omc/
+
 # 모델 / 대용량 산출물 (로컬 LLM 자산)
 *.gguf
 *.bin

@@ -9,6 +9,7 @@ pub struct EngineConfig {
     pub theta: f64,
     pub k: f64,
     pub tick_interval: f64,
+    pub alpha: CouplingMatrix,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +29,7 @@ pub struct Event {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EngineState {
     pub intensities: BTreeMap<PersonaId, f64>,
+    pub excitations: BTreeMap<PersonaId, f64>,
     pub history: Vec<Event>,
     pub last_speaker: Option<PersonaId>,
     pub rng_seed: u64,
@@ -37,6 +39,27 @@ pub struct EngineState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CouplingMatrix {
     pub values: BTreeMap<(PersonaId, PersonaId), f64>,
+}
+
+impl CouplingMatrix {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, p: &PersonaId, j: &PersonaId) -> f64 {
+        match self.values.get(&(p.clone(), j.clone())) {
+            Some(value) => *value,
+            None => 0.0,
+        }
+    }
+}
+
+impl Default for CouplingMatrix {
+    fn default() -> Self {
+        Self {
+            values: BTreeMap::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -50,6 +73,7 @@ mod tests {
             theta: 0.7,
             k: 60.0,
             tick_interval: 1.0,
+            alpha: CouplingMatrix::default(),
         };
         let persona = Persona {
             id: "p1".to_string(),
@@ -60,6 +84,7 @@ mod tests {
         intensities.insert(persona.id.clone(), persona.base_rate);
         let state = EngineState {
             intensities,
+            excitations: BTreeMap::new(),
             history: Vec::new(),
             last_speaker: None,
             rng_seed: 42,
