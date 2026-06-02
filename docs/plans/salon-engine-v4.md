@@ -1,11 +1,11 @@
 ---
 title: Salon 엔진 플랜 v0.4 - 동시 호출 (이종 백엔드 풀)
 type: plan
-status: in_progress
+status: done
 priority: P1
 updated_at: 2026-06-02
 owner: shared
-summary: v0.4 - 이종 백엔드 풀(Ollama Cloud 동시성 3 + 지인서버 qwen3.6:32b 동시성 2) + 페르소나별 라우팅(mixed-model 방) + 백엔드별 세마포어/큐/타임아웃 폴백. 동시성은 persona collapse 비교·벤치 전용, 라이브 틱 루프는 순차 유지. async(tokio) 미도입(blocking + std::thread::scope). num_ctx 하드코딩 제거(백엔드별 Option). 라이브 burst는 보류(측정 후).
+summary: v0.4(완료) - 이종 백엔드 풀(cloud gemma4:31b-cloud 동시성 3 + 지인서버 vLLM qwen3.6-35b-fast 동시성 1) + 페르소나별 라우팅(mixed-model 방 라이브 작동) + 폴백 체인. Backend enum(Ollama|OpenAI). 동시성은 비교/벤치 전용, 라이브 틱 루프는 순차. async 미도입(blocking + std::thread::scope). num_ctx 백엔드별 Option, 로컬 ollama 금지(가드). 125 tests, 스모크 게이트 4종.
 design_ref: ../reference/salon-engine-design.md
 roadmap_ref: salon-engine-v1.md
 ---

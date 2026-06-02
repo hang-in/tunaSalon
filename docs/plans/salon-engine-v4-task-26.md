@@ -1,36 +1,37 @@
 ---
 title: "Salon v0.4 Task 26: v0.4 스모크 게이트"
 type: plan-task
-status: todo
+status: done
 updated_at: 2026-06-02
 parent_plan: salon-engine-v4.md
 task_id: "26"
-depends_on: ["21", "23", "24"]
+depends_on: ["21", "22", "23", "24", "27"]
 parallel_group: ""
 ---
 
 # Task 26 - v0.4 스모크 게이트
 
-plan `salon-engine-v4.md` subtask 26. v0.4 불변식을 자동 검증하는 게이트. 핵심은 **LLM off 풀이 v0.1~v0.3 골든과 바이트 동일**(INV-1)이고, 동시성/cap/폴백/num_ctx가 **네트워크 없이 deterministic fake로** 검증되는 것. 라이브 호출은 `#[ignore]`로 분리.
+plan `salon-engine-v4.md` subtask 26. v0.4 불변식을 자동 검증하는 게이트(`tests/smoke_v4.rs`, 기존 smoke/v2/v3 패턴). 핵심: **기본 경로(LLM off = FakeBackend, 풀 미사용)가 v0.1~v0.3 골든과 바이트 동일**(INV-1) — 풀/추상화/동시성 코드가 들어와도 결정 경로 불변. 풀 속성(라우팅/폴백/cap/num_ctx/Backend 분기)은 **네트워크 없이**(오프라인 백엔드/fake) 검증. 라이브는 `#[ignore]`.
+
+> **정정**: `BackendPool`은 `Backend{Ollama,OpenAI}`만 담고 FakeBackend를 담지 않는다. 골든 경로는 풀이 아니라 main의 FakeBackend 직접 경로다(`--llm` 없을 때). 따라서 INV-1 게이트 = "headless FakeBackend 출력이 골든과 동일" + "두 번 실행이 바이트 동일"이며, 풀은 별도로 오프라인/단위 수준에서 검증한다.
 
 ## Changed files
 
-- `tests/smoke_v4.rs` - 신규. v0.4 게이트(기존 smoke / smoke_v2 / smoke_v3 패턴 따름).
-- (필요 시) `src/pool.rs`/`src/ollama.rs` - 테스트 훅(fake 백엔드가 outcome·지연을 주입할 수 있는 최소 인터페이스). 프로덕션 경로 영향 없게.
+- `tests/smoke_v4.rs` - 신규. v0.4 게이트. **src 변경 없음**(오프라인 백엔드 127.0.0.1:1 + 기존 공개 API로 충분, 프로덕션 훅 불필요).
 
 ## Change description
 
 게이트가 assert하는 것:
-- **INV-1 골든 보존**: BackendPool을 FakeBackend로 구성(LLM off 등가) → headless seed 42, theta 0.65, 80틱 출력이 v0.3 골든과 바이트 동일. record JSON에 `utterance` 없음(`grep -c` 0).
-- **INV-4 cap 준수**: fake 백엔드(진입/이탈 atomic 카운터 + 인위 지연)로 `generate_batch` 동시 in-flight 피크 ≤ max_concurrent(백엔드별; 예 3, 2). 두 백엔드 독립 cap 동시 확인.
-- **폴백**(task-24): Rejected/Timeout fake → 폴백 백엔드 호출, 양쪽 실패 → None(panic 없음).
-- **num_ctx**(task-21): None이면 요청 body에 num_ctx 생략, Some(n)이면 n.
-- **라우팅**(task-22): persona→backend 매핑·기본 폴백.
-- 라이브 Ollama 통합은 `#[ignore]`(네트워크 필요, CI skip).
+- **INV-1 골든/결정성**: headless seed 42·theta 0.65·80틱(FakeBackend, `--llm` 없음) 출력이 (a) 두 번 실행 바이트 동일, (b) `/tmp/salon_golden/s42_t065.ndjson`와 동일. record JSON에 `utterance` 없음.
+- **라우팅(task-22)**: `resolve(persona)`가 routing 지정→해당 백엔드, 미지정→default, 없으면 None.
+- **폴백 체인(task-24)**: `fallback_chain`이 [primary, fallback] 순서, 사이클 안전(유한).
+- **배치 순서/무패닉(task-23)**: 오프라인 백엔드 풀로 `generate_batch` → 입력 순서 보존, 전부 None, panic 없음. (엄격 cap≤n 피크는 `pool::tests`의 `run_with_caps` 단위 테스트가 이미 게이트하므로 여기선 통합 동작 위주.)
+- **num_ctx(task-21)** / **Backend 분기(task-27)**: `build_request_body` num_ctx None 생략 / Some(n); OpenAI `parse_response`가 `content` 추출·`reasoning` 무시 — (대부분 단위 테스트 존재, smoke는 대표 1~2개 재확인 가능).
+- 라이브(cloud/friend) 통합은 `#[ignore]`(네트워크).
 
 ## Dependencies
 
-- task-21(num_ctx/풀), task-23(배치/세마포어), task-24(폴백). task-22 라우팅 포함.
+- task-21·22·23·24·27 전부(풀/라우팅/배치/폴백/추상화).
 
 ## Verification
 
