@@ -36,3 +36,4 @@ tmp/
 *.gguf
 *.bin
 models/
+*.zip
