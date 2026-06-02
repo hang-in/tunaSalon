@@ -9,6 +9,7 @@
 # 환경 / 비밀
 .env
 .env.*
+!.env.example
 *.local
 
 # 에디터 / IDE
