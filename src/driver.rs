@@ -1,3 +1,4 @@
+use crate::flow;
 use crate::gate::{self, GateResult};
 use crate::hawkes::HawkesEngine;
 use crate::model::{EngineConfig, EngineState, Persona, PersonaId};
@@ -8,6 +9,9 @@ use crate::utterance;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::BTreeMap;
+
+/// content 있는 최근 발화 최대 N개를 flow 계산에 사용한다.
+const FLOW_WINDOW: usize = 6;
 
 pub fn run(
     config: &EngineConfig,
@@ -117,6 +121,18 @@ pub fn run(
             .filter(|(_, v)| **v != 0.0)
             .map(|(k, v)| (k.clone(), *v))
             .collect();
+
+        // content 있는 최근 FLOW_WINDOW개 발화로 flow 계산(관찰 전용 — 엔진 결정에 영향 없음).
+        // FakeBackend는 content가 항상 None → 슬라이스 빈 → measure → None → JSON 생략 → 골든 보존.
+        let content_utterances: Vec<&str> = state
+            .history
+            .iter()
+            .filter_map(|e| e.content.as_deref())
+            .collect();
+        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
+        let flow_input = &content_utterances[window_start..];
+        let flow_metric = flow::measure(flow_input);
+
         let record = ObservationRecord {
             tick,
             ts: tick as f64 * config.tick_interval,
@@ -130,6 +146,7 @@ pub fn run(
             conversation_len,
             excitations,
             utterance: utterance_content,
+            flow: flow_metric,
         };
 
         sink.emit(&record);
@@ -278,5 +295,72 @@ mod tests {
         run(&config_explicit, &personas, 42, 100, &mut sink_explicit, &mut FakeBackend);
 
         assert_eq!(sink_default.records, sink_explicit.records);
+    }
+
+    /// (task-34) FakeBackend(content 항상 None) → 모든 record의 flow가 None.
+    /// JSON 직렬화 시 "flow" 키가 없어야 한다(골든 보존 확인).
+    #[test]
+    fn fake_backend_produces_no_flow_in_records() {
+        let config = config();
+        let personas = personas();
+        let mut sink = VecSink::default();
+
+        run(&config, &personas, 42, 50, &mut sink, &mut FakeBackend);
+
+        for record in &sink.records {
+            assert!(
+                record.flow.is_none(),
+                "FakeBackend에서 flow는 항상 None이어야 한다 (tick={})",
+                record.tick
+            );
+            // JSON에 "flow" 키가 없어야 한다.
+            let json = serde_json::to_string(record).expect("직렬화 성공");
+            assert!(
+                !json.contains("\"flow\""),
+                "FakeBackend record JSON에 \"flow\" 키가 없어야 한다 (tick={}): {json}",
+                record.tick
+            );
+        }
+    }
+
+    /// (task-34) content 있는 history를 직접 구성해 flow 계산 헬퍼 동작 검증.
+    /// Event::content = Some("...") 2개 이상이면 flow::measure가 Some을 반환한다.
+    #[test]
+    fn flow_measure_returns_some_for_content_bearing_history() {
+        use crate::flow;
+        use crate::model::Event;
+
+        let events = vec![
+            Event {
+                ts: 0.0,
+                speaker: "aria".to_string(),
+                mark: 0.0,
+                content: Some("hello world".to_string()),
+            },
+            Event {
+                ts: 1.0,
+                speaker: "bjorn".to_string(),
+                mark: 0.0,
+                content: Some("hello friend".to_string()),
+            },
+            Event {
+                ts: 2.0,
+                speaker: "aria".to_string(),
+                mark: 0.0,
+                content: None, // content 없는 발화는 제외됨
+            },
+        ];
+
+        let content_utterances: Vec<&str> = events
+            .iter()
+            .filter_map(|e| e.content.as_deref())
+            .collect();
+        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
+        let result = flow::measure(&content_utterances[window_start..]);
+
+        assert!(
+            result.is_some(),
+            "content 있는 발화 2개 이상이면 flow::measure는 Some이어야 한다"
+        );
     }
 }

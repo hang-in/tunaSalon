@@ -21,6 +21,10 @@ pub struct ObservationRecord {
     /// FakeBackend이면 None → 직렬화에서 생략(v0.2 골든 바이트 동일 보존).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub utterance: Option<String>,
+    /// content 있는 발화 2개 미만이면 None → 직렬화에서 생략(FakeBackend 골든 바이트 동일 보존).
+    /// 관찰 전용 — 엔진 선택/강도/파라미터에 영향 없음(INV-2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<crate::flow::FlowMetric>,
 }
 
 pub trait ObservationSink {
@@ -61,6 +65,7 @@ mod tests {
             conversation_len: 1,
             excitations: BTreeMap::new(),
             utterance: None,
+            flow: None,
         }
     }
 
@@ -85,5 +90,33 @@ mod tests {
 
         assert_eq!(sink.records.len(), 1);
         assert_eq!(sink.records[0], record);
+    }
+
+    /// (task-34) flow=None인 record는 JSON에 "flow" 키가 없어야 한다.
+    /// skip_serializing_if = "Option::is_none" 동작 검증.
+    #[test]
+    fn record_with_flow_none_omits_flow_key_in_json() {
+        let record = sample_record(); // flow: None
+        let json = serde_json::to_string(&record).expect("직렬화 성공");
+        assert!(
+            !json.contains("\"flow\""),
+            "flow=None이면 JSON에 \"flow\" 키가 없어야 한다. 실제: {json}"
+        );
+    }
+
+    /// (task-34) flow=Some인 record는 JSON에 "flow" 키가 있어야 한다.
+    #[test]
+    fn record_with_flow_some_includes_flow_key_in_json() {
+        let mut record = sample_record();
+        record.flow = Some(crate::flow::FlowMetric { convergence: 0.42 });
+        let json = serde_json::to_string(&record).expect("직렬화 성공");
+        assert!(
+            json.contains("\"flow\""),
+            "flow=Some이면 JSON에 \"flow\" 키가 있어야 한다. 실제: {json}"
+        );
+        assert!(
+            json.contains("\"convergence\""),
+            "flow 값에 convergence 필드가 있어야 한다. 실제: {json}"
+        );
     }
 }

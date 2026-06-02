@@ -7,6 +7,7 @@
 //! - 모든 퍼블릭 메서드 즉시 반환(블록 없음).
 //! - crossterm·ratatui 없음 — 순수 세션 로직.
 
+use crate::flow;
 use crate::gate::{self, GateResult};
 use crate::hawkes::HawkesEngine;
 use crate::human::HumanChannel;
@@ -323,6 +324,23 @@ impl LiveSession {
         self.pending.is_some()
     }
 
+    /// 최근 content 발화 최대 FLOW_WINDOW개로 수렴/발산 지표를 계산한다.
+    ///
+    /// content 없는 발화(FakeBackend/placeholder)는 제외.
+    /// 유효 발화 2개 미만이면 None. 관찰 전용 — 엔진 결정에 영향 없음(INV-2).
+    /// task-35 채팅 TUI 수렴 게이지가 이 메서드를 사용한다.
+    pub fn flow(&self) -> Option<crate::flow::FlowMetric> {
+        const FLOW_WINDOW: usize = 6;
+        let content_utterances: Vec<&str> = self
+            .state
+            .history
+            .iter()
+            .filter_map(|e| e.content.as_deref())
+            .collect();
+        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
+        flow::measure(&content_utterances[window_start..])
+    }
+
     /// 현재 틱 카운터.
     pub fn tick_count(&self) -> u64 {
         self.tick_count
@@ -540,5 +558,59 @@ mod tests {
             }
         } // Drop here — shutdown() 호출 → job_tx drop → 워커 종료 → join.
         // hang이나 panic이 없으면 통과.
+    }
+
+    /// (task-34) content 없는 history(오프라인/FakeBackend) → flow()는 None.
+    #[test]
+    fn live_session_flow_returns_none_for_empty_content_history() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        // 틱을 돌려도 오프라인이라 content는 None → flow None.
+        for _ in 0..20 {
+            let _ = session.tick();
+        }
+
+        assert!(
+            session.flow().is_none(),
+            "content 없는 history → flow()는 None이어야 한다"
+        );
+    }
+
+    /// (task-34) content 있는 발화를 수동으로 push했을 때 flow()가 Some을 반환한다.
+    #[test]
+    fn live_session_flow_returns_some_for_content_bearing_history() {
+        use crate::model::Event;
+
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        // content 있는 Event 2개를 history에 직접 push(결정적 stub content).
+        session.state.history.push(Event {
+            ts: 0.0,
+            speaker: "aria".to_string(),
+            mark: 0.0,
+            content: Some("안녕 반가워".to_string()),
+        });
+        session.state.history.push(Event {
+            ts: 1.0,
+            speaker: "bjorn".to_string(),
+            mark: 0.0,
+            content: Some("안녕 오랜만이야".to_string()),
+        });
+
+        let result = session.flow();
+        assert!(
+            result.is_some(),
+            "content 있는 발화 2개 이상이면 flow()는 Some이어야 한다"
+        );
+        // convergence는 [0, 1] 범위
+        if let Some(metric) = result {
+            assert!(
+                metric.convergence >= 0.0 && metric.convergence <= 1.0,
+                "convergence는 [0, 1] 범위여야 한다: {}",
+                metric.convergence
+            );
+        }
     }
 }

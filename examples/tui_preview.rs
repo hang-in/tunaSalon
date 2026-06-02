@@ -61,6 +61,7 @@ fn main() {
         conversation_len: 17,
         excitations: BTreeMap::new(),
         utterance: None,
+        flow: None,
     };
 
     let silence = ObservationRecord {
@@ -80,6 +81,7 @@ fn main() {
         conversation_len: 18,
         excitations: BTreeMap::new(),
         utterance: None,
+        flow: None,
     };
 
     show("발화 틱 (friend 당선)", &speaking, &log);
