@@ -11,6 +11,7 @@ use crate::flow;
 use crate::gate::{self, GateResult};
 use crate::hawkes::HawkesEngine;
 use crate::human::HumanChannel;
+use crate::meta::MetaController;
 use crate::model::{EngineConfig, EngineState, Event, Persona, PersonaId};
 use crate::pool::BackendPool;
 use crate::rrf;
@@ -48,6 +49,8 @@ pub struct LiveSession {
     state: EngineState,
     rng: ChaCha8Rng,
     human: HumanChannel,
+    /// MetaController: flow 수렴도 → mu_scale 계산. task-37에서 추가.
+    meta: MetaController,
     // pool 필드: 워커 스레드가 Arc 클론을 소유하므로 LiveSession에서는 직접 호출하지 않지만
     // Arc 카운트를 유지해 pool이 세션 수명 동안 살아있도록 한다.
     #[allow(dead_code)]
@@ -111,6 +114,8 @@ impl LiveSession {
 
         let rng = ChaCha8Rng::seed_from_u64(seed);
         let human = HumanChannel::new(human_speaker_id);
+        // MetaController: 환경 변수에서 gain 읽기(없으면 기본값).
+        let meta = MetaController::from_env();
 
         Self {
             config,
@@ -118,6 +123,7 @@ impl LiveSession {
             state,
             rng,
             human,
+            meta,
             pool,
             job_tx: Some(job_tx),
             result_rx,
@@ -155,9 +161,12 @@ impl LiveSession {
         let tick = self.tick_count;
         self.tick_count += 1;
 
-        // 1. Hawkes 강도 갱신
+        // 1. Hawkes 강도 갱신 (MetaController mu_scale 적용).
+        // flow()는 content 있는 최근 발화 기반 수렴도. content 없으면 None → mu_scale=1.0(no-op).
+        let flow_now = self.flow();
+        let mu_scale = self.meta.cooling(flow_now);
         self.state.intensities =
-            HawkesEngine::update_intensities(&self.state, 1, &self.config, &self.personas);
+            HawkesEngine::update_intensities(&self.state, 1, &self.config, &self.personas, mu_scale);
 
         // 2. excitation 감쇠
         self.state.excitations = HawkesEngine::decay_excitations(
@@ -339,6 +348,14 @@ impl LiveSession {
             .collect();
         let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
         flow::measure(&content_utterances[window_start..])
+    }
+
+    /// 현재 MetaController가 계산하는 mu_scale을 반환한다. task-38 사이드바 표시용.
+    ///
+    /// `self.flow()`가 None이면 → `cooling(None)` = 1.0(no-op).
+    /// content 있는 high-convergence 히스토리면 < 1.0.
+    pub fn mu_scale(&self) -> f64 {
+        self.meta.cooling(self.flow())
     }
 
     /// 현재 틱 카운터.
@@ -612,5 +629,61 @@ mod tests {
                 metric.convergence
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // task-37 신규 테스트: mu_scale() 접근자 + MetaController 배선
+    // -------------------------------------------------------------------------
+
+    /// (task-37-4a) content 없는 history → flow None → mu_scale() == 1.0.
+    ///
+    /// FakeBackend/오프라인 → content 없음 → cooling(None) = 1.0.
+    #[test]
+    fn mu_scale_returns_one_for_empty_content_history() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        // 틱을 돌려도 오프라인이라 content는 None → mu_scale == 1.0.
+        for _ in 0..20 {
+            let _ = session.tick();
+        }
+
+        let scale = session.mu_scale();
+        assert!(
+            (scale - 1.0).abs() < 1e-15,
+            "content 없는 history → mu_scale()은 1.0이어야 한다, 실제: {scale}"
+        );
+    }
+
+    /// (task-37-4b) content + high-convergence history → mu_scale() < 1.0.
+    ///
+    /// 거의 동일한 발화 여러 개를 history에 주입해 수렴도를 높인다.
+    /// MetaController 기본값(gain=0.6, threshold=0.5, floor=0.4)에서
+    /// convergence > 0.5이면 mu_scale < 1.0이어야 한다.
+    #[test]
+    fn mu_scale_below_one_for_high_convergence_history() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        // 거의 동일한 내용의 발화 4개: Jaccard 유사도가 높아 convergence > 0.5 기대.
+        for i in 0..4u64 {
+            session.state.history.push(crate::model::Event {
+                ts: i as f64,
+                speaker: "aria".to_string(),
+                mark: 0.0,
+                content: Some("안녕 반가워 오늘도".to_string()),
+            });
+        }
+
+        let scale = session.mu_scale();
+        assert!(
+            scale < 1.0,
+            "high-convergence history → mu_scale()은 < 1.0이어야 한다, 실제: {scale}"
+        );
+        // floor 이상이어야 한다(MetaController 기본 floor=0.4).
+        assert!(
+            scale >= 0.4,
+            "mu_scale()은 floor(0.4) 이상이어야 한다, 실제: {scale}"
+        );
     }
 }

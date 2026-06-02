@@ -1,6 +1,7 @@
 use crate::flow;
 use crate::gate::{self, GateResult};
 use crate::hawkes::HawkesEngine;
+use crate::meta::MetaController;
 use crate::model::{EngineConfig, EngineState, Persona, PersonaId};
 use crate::rrf;
 use crate::runtime::PersonaRuntime;
@@ -25,9 +26,25 @@ pub fn run(
     let mut state = initial_state(personas, seed);
     let mut silence_count = 0;
     let mut speak_count = 0;
+    // MetaController: 환경 변수에서 gain 읽기(없으면 기본값). 루프 전 1회 생성.
+    let meta = MetaController::from_env();
 
     for tick in 0..ticks {
-        state.intensities = HawkesEngine::update_intensities(&state, 1, config, personas);
+        // 틱 시작: content 있는 최근 FLOW_WINDOW개 발화로 flow 계산.
+        // FakeBackend → content 항상 None → flow_input 빈 슬라이스 → flow_metric None.
+        // None → meta.cooling(None) = 1.0 → update_intensities 완전 동일(골든 보존).
+        let content_utterances: Vec<&str> = state
+            .history
+            .iter()
+            .filter_map(|e| e.content.as_deref())
+            .collect();
+        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
+        let flow_metric = flow::measure(&content_utterances[window_start..]);
+
+        // mu_scale: flow None → 1.0(no-op), flow Some → cooling 계산.
+        let mu_scale = meta.cooling(flow_metric);
+
+        state.intensities = HawkesEngine::update_intensities(&state, 1, config, personas, mu_scale);
         state.excitations = HawkesEngine::decay_excitations(
             &state.excitations,
             1,
@@ -122,16 +139,8 @@ pub fn run(
             .map(|(k, v)| (k.clone(), *v))
             .collect();
 
-        // content 있는 최근 FLOW_WINDOW개 발화로 flow 계산(관찰 전용 — 엔진 결정에 영향 없음).
-        // FakeBackend는 content가 항상 None → 슬라이스 빈 → measure → None → JSON 생략 → 골든 보존.
-        let content_utterances: Vec<&str> = state
-            .history
-            .iter()
-            .filter_map(|e| e.content.as_deref())
-            .collect();
-        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
-        let flow_input = &content_utterances[window_start..];
-        let flow_metric = flow::measure(flow_input);
+        // flow_metric은 틱 시작 시 이미 계산됨(meta.cooling에도 사용).
+        // FakeBackend → None → JSON 직렬화 생략 → 골든 보존.
 
         let record = ObservationRecord {
             tick,
@@ -362,5 +371,35 @@ mod tests {
             result.is_some(),
             "content 있는 발화 2개 이상이면 flow::measure는 Some이어야 한다"
         );
+    }
+
+    /// (task-37-3) FakeBackend → content 없음 → flow None → mu_scale 1.0 경로.
+    ///
+    /// FakeBackend로 두 번 실행해 동일한 결과가 나오면 mu_scale=1.0이 no-op임을 간접 확인.
+    /// (MetaController::from_env 기본값도 동일하게 적용되므로 결정성 그대로.)
+    #[test]
+    fn fake_backend_flow_none_gives_same_records_as_deterministic_run() {
+        let config = config();
+        let personas = personas();
+        let mut left = VecSink::default();
+        let mut right = VecSink::default();
+
+        run(&config, &personas, 42, 50, &mut left, &mut FakeBackend);
+        run(&config, &personas, 42, 50, &mut right, &mut FakeBackend);
+
+        // 동일 시드·동일 백엔드 → 완전 동일(mu_scale=1.0이므로 기존과 바이트 동일).
+        assert_eq!(
+            left.records, right.records,
+            "FakeBackend 두 번 실행 결과가 동일해야 한다"
+        );
+
+        // 모든 record의 flow가 None(FakeBackend → content 없음).
+        for record in &left.records {
+            assert!(
+                record.flow.is_none(),
+                "FakeBackend: flow는 None이어야 한다 (tick={})",
+                record.tick
+            );
+        }
     }
 }

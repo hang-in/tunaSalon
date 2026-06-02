@@ -6,11 +6,17 @@ const SPEAKER_SUPPRESSION_FACTOR: f64 = 0.25;
 pub struct HawkesEngine;
 
 impl HawkesEngine {
+    /// Hawkes 기저 강도를 1틱 회복시킨다.
+    ///
+    /// `mu_scale ∈ [0, 1]`: 회복 목표(effective μ)를 `base_rate * mu_scale`로 낮춘다.
+    /// - `mu_scale == 1.0` → `mu = base_rate` → 기존 공식과 비트 동일(골든 보존).
+    /// - `mu_scale < 1.0` → 회복 목표가 낮아져 강도가 점차 내려감(MetaController 식히기).
     pub fn update_intensities(
         state: &EngineState,
         elapsed_ticks: u64,
         config: &EngineConfig,
         personas: &[Persona],
+        mu_scale: f64,
     ) -> BTreeMap<PersonaId, f64> {
         let elapsed = (elapsed_ticks as f64) * config.tick_interval;
         let decay = (-config.beta * elapsed).exp();
@@ -18,11 +24,13 @@ impl HawkesEngine {
 
         for persona in personas {
             let base_rate = persona.base_rate;
+            // mu_scale=1.0이면 mu == base_rate → 기존 공식과 완전 동일.
+            let mu = base_rate * mu_scale;
             let previous = match state.intensities.get(&persona.id) {
                 Some(value) => *value,
                 None => base_rate,
             };
-            let intensity = base_rate + (previous - base_rate) * decay;
+            let intensity = mu + (previous - mu) * decay;
 
             updated.insert(persona.id.clone(), intensity);
         }
@@ -203,7 +211,7 @@ mod tests {
         initial.insert("active".to_string(), -2.0);
         let state = state(initial, None);
 
-        let recovered = HawkesEngine::update_intensities(&state, 100, &config(), &personas);
+        let recovered = HawkesEngine::update_intensities(&state, 100, &config(), &personas, 1.0);
 
         assert!(intensity_at(&recovered, "active") > intensity_at(&recovered, "quiet"));
     }
@@ -220,10 +228,10 @@ mod tests {
 
         let recovering_once = state(suppressed, Some("active".to_string()));
         let recovered_one =
-            HawkesEngine::update_intensities(&recovering_once, 1, &config(), &personas);
+            HawkesEngine::update_intensities(&recovering_once, 1, &config(), &personas, 1.0);
         let recovering_twice = state(recovered_one.clone(), Some("active".to_string()));
         let recovered_two =
-            HawkesEngine::update_intensities(&recovering_twice, 1, &config(), &personas);
+            HawkesEngine::update_intensities(&recovering_twice, 1, &config(), &personas, 1.0);
 
         let recovered_one_active = intensity_at(&recovered_one, "active");
         let recovered_two_active = intensity_at(&recovered_two, "active");
@@ -244,8 +252,8 @@ mod tests {
         let state = state(initial, Some("quiet".to_string()));
         let config = config();
 
-        let first = HawkesEngine::update_intensities(&state, 7, &config, &personas);
-        let second = HawkesEngine::update_intensities(&state, 7, &config, &personas);
+        let first = HawkesEngine::update_intensities(&state, 7, &config, &personas, 1.0);
+        let second = HawkesEngine::update_intensities(&state, 7, &config, &personas, 1.0);
 
         assert_eq!(first, second);
     }
@@ -296,7 +304,7 @@ mod tests {
         let mut excitations = BTreeMap::new();
 
         for _ in 0..12 {
-            let base = HawkesEngine::update_intensities(&state, 1, &config, &personas);
+            let base = HawkesEngine::update_intensities(&state, 1, &config, &personas, 1.0);
             excitations =
                 HawkesEngine::decay_excitations(&excitations, 1, config.beta, config.tick_interval);
             HawkesEngine::apply_excitation_on_speak(
@@ -386,5 +394,79 @@ mod tests {
         assert!(!HawkesEngine::is_stable(&unstable_alpha, &personas, 1.0));
         assert!(intensity_at(&stable, "solo") < 1.2);
         assert!(intensity_at(&unstable, "solo") > intensity_at(&stable, "solo") * 2.0);
+    }
+
+    // -------------------------------------------------------------------------
+    // task-37 신규 테스트: mu_scale 동작 검증
+    // -------------------------------------------------------------------------
+
+    /// (task-37-1) mu_scale=1.0은 기존 동작과 동일한 결과를 반환해야 한다.
+    ///
+    /// mu=base_rate*1.0 == base_rate → 공식이 완전히 동일 → 비트 동일.
+    #[test]
+    fn mu_scale_one_matches_pre_change_behavior() {
+        let personas = personas();
+        let config = config();
+
+        // 기존 공식 직접 계산: intensity = base_rate + (prev - base_rate)*decay
+        let elapsed = 1.0 * config.tick_interval;
+        let decay = (-config.beta * elapsed).exp();
+
+        let prev_quiet = 0.1_f64;
+        let prev_active = 1.5_f64;
+
+        let mut initial = BTreeMap::new();
+        initial.insert("quiet".to_string(), prev_quiet);
+        initial.insert("active".to_string(), prev_active);
+        let state = state(initial, None);
+
+        // mu_scale=1.0으로 호출
+        let result = HawkesEngine::update_intensities(&state, 1, &config, &personas, 1.0);
+
+        // 손계산으로 기대값
+        let expected_quiet = 0.3 + (prev_quiet - 0.3) * decay;
+        let expected_active = 0.9 + (prev_active - 0.9) * decay;
+
+        let got_quiet = intensity_at(&result, "quiet");
+        let got_active = intensity_at(&result, "active");
+
+        assert!(
+            (got_quiet - expected_quiet).abs() < 1e-15,
+            "mu_scale=1.0: quiet 기대={expected_quiet}, 실제={got_quiet}"
+        );
+        assert!(
+            (got_active - expected_active).abs() < 1e-15,
+            "mu_scale=1.0: active 기대={expected_active}, 실제={got_active}"
+        );
+    }
+
+    /// (task-37-2) mu_scale<1.0이면 회복 목표가 낮아져 강도가 더 낮게 수렴한다.
+    ///
+    /// base_rate=0.9 페르소나가 0.1에서 회복 중: mu_scale=0.5이면 목표가 0.45로 낮아짐.
+    /// → intensity(scale=0.5) < intensity(scale=1.0) (초기값이 목표보다 낮을 때).
+    #[test]
+    fn mu_scale_below_one_recovers_toward_lower_target() {
+        let personas = personas();
+        let config = config();
+
+        // active(base_rate=0.9)가 0.1(목표보다 낮음)에서 회복 중
+        let mut initial = BTreeMap::new();
+        initial.insert("quiet".to_string(), 0.3_f64); // 기준점
+        initial.insert("active".to_string(), 0.1_f64); // 목표(0.9) 아래
+        let s = state(initial, None);
+
+        let result_scale1 = HawkesEngine::update_intensities(&s, 1, &config, &personas, 1.0);
+        let result_scale_half = HawkesEngine::update_intensities(&s, 1, &config, &personas, 0.5);
+
+        let active_scale1 = intensity_at(&result_scale1, "active");
+        let active_scale_half = intensity_at(&result_scale_half, "active");
+
+        // mu_scale=0.5 목표는 0.45; 초기값 0.1에서 0.45로 회복.
+        // mu_scale=1.0 목표는 0.9; 초기값 0.1에서 0.9로 회복.
+        // 회복 방향은 같지만 scale=0.5 목표가 낮으므로 최종값도 낮다.
+        assert!(
+            active_scale_half < active_scale1,
+            "mu_scale=0.5 강도({active_scale_half}) < mu_scale=1.0 강도({active_scale1}) 이어야 한다"
+        );
     }
 }
