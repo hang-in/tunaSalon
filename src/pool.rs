@@ -1,9 +1,10 @@
-//! 백엔드 풀 (v0.4 task-21/22/27/23).
+//! 백엔드 풀 (v0.4 task-21/22/27/23/24).
 //!
 //! task-21: 데이터 구조 + 생성자.
 //! task-22: `persona -> backend_name` 라우팅 + `impl PersonaRuntime`. 세마포어/배치는 task-23.
 //! task-27: `Protocol` + `Backend` enum(Ollama|OpenAI) + `OpenAIBackend` 통합.
 //! task-23: 백엔드별 `Arc<Semaphore>` + `generate_batch` 병렬 배치 API.
+//! task-24: 폴백 체인 (`fallbacks` 맵 + `fallback_chain` + generate/generate_batch 통합).
 
 use crate::model::{Event, PersonaId};
 use crate::ollama::OllamaBackend;
@@ -151,12 +152,13 @@ impl BackendConfig {
     }
 }
 
-/// 이름붙은 백엔드 레지스트리 (v0.4 task-21/22/27/23).
+/// 이름붙은 백엔드 레지스트리 (v0.4 task-21/22/27/23/24).
 ///
 /// - task-21: 데이터 구조 + 생성자.
 /// - task-22: `persona -> backend_name` 라우팅 + `impl PersonaRuntime`.
 /// - task-27: `Backend` enum(Ollama|OpenAI)으로 이종 프로토콜 지원.
 /// - task-23: 백엔드별 `Arc<Semaphore>` + `generate_batch` 병렬 배치 API.
+/// - task-24: 폴백 체인 — 실패(None) 시 다음 백엔드로 전환, 사이클 안전.
 pub struct BackendPool {
     /// name -> Backend 맵 (Ollama|OpenAI 이종 가능)
     backends: BTreeMap<String, Backend>,
@@ -167,6 +169,9 @@ pub struct BackendPool {
     default_backend: Option<String>,
     /// persona_id -> backend_name 라우팅 맵. 비어 있으면 모든 페르소나가 default로 향한다.
     routing: BTreeMap<String, String>,
+    /// backend_name -> 폴백 backend_name 맵 (task-24).
+    /// 한 백엔드가 None을 반환하면 폴백 체인을 순서대로 시도한다.
+    fallbacks: BTreeMap<String, String>,
 }
 
 impl BackendPool {
@@ -177,6 +182,7 @@ impl BackendPool {
             semaphores: BTreeMap::new(),
             default_backend: None,
             routing: BTreeMap::new(),
+            fallbacks: BTreeMap::new(),
         }
     }
 
@@ -260,6 +266,54 @@ impl BackendPool {
             .get(speaker)
             .map(String::as_str)
             .or_else(|| self.default_backend.as_deref())
+    }
+
+    /// 백엔드 `name`의 폴백 백엔드 이름을 등록한다 (task-24).
+    ///
+    /// `name` 백엔드가 None을 반환하면 `fallback` 백엔드를 이어서 시도한다.
+    /// 같은 이름으로 두 번 호출하면 덮어쓴다.
+    /// 풀에 등록되지 않은 이름도 허용된다(등록 순서 무관).
+    pub fn set_fallback(&mut self, name: impl Into<String>, fallback: impl Into<String>) {
+        self.fallbacks.insert(name.into(), fallback.into());
+    }
+
+    /// speaker에 대한 폴백 체인(백엔드 이름 순서열)을 반환한다 (task-24, 순수 함수).
+    ///
+    /// - `resolve(speaker)`가 None이면 빈 Vec 반환.
+    /// - 첫 원소는 primary 백엔드(resolve 결과), 이어서 fallbacks 링크를 따라간다.
+    /// - 사이클/중복 안전: 방문한 이름은 즉시 중단(무한 루프 없음).
+    ///
+    /// 반환 예) primary="cloud", fallback["cloud"]="friend" → ["cloud", "friend"]
+    /// 폴백 미설정 시 → ["cloud"]
+    /// resolve None 시 → []
+    ///
+    /// 네트워크 접근 없음 → 단위 테스트에서 직접 검증 가능.
+    pub fn fallback_chain(&self, speaker: &str) -> Vec<String> {
+        // resolve가 None이면 체인 없음.
+        let primary = match self.resolve(speaker) {
+            Some(name) => name.to_string(),
+            None => return vec![],
+        };
+
+        let mut chain = Vec::new();
+        let mut visited = std::collections::BTreeSet::new();
+        let mut current = primary;
+
+        loop {
+            // 이미 방문한 이름이면 사이클 — 중단.
+            if !visited.insert(current.clone()) {
+                break;
+            }
+            chain.push(current.clone());
+
+            // 다음 폴백이 있으면 따라가고, 없으면 체인 완료.
+            match self.fallbacks.get(&current) {
+                Some(next) => current = next.clone(),
+                None => break,
+            }
+        }
+
+        chain
     }
 }
 
@@ -345,12 +399,15 @@ impl BackendPool {
         // 결과 슬롯: None = 아직 채워지지 않음(라우팅 실패 또는 초기값).
         let mut results: Vec<Option<String>> = (0..n).map(|_| None).collect();
 
-        // 라우팅 해석: 유효 job만 (original_idx, &Backend, Arc<Semaphore>, speaker, &history) 수집.
+        // 라우팅 해석: 유효 job만 수집 (task-24: 폴백 체인 포함).
+        // chain: 이 job이 시도할 백엔드 이름 순서열.
+        // backend_sems: chain 각 원소에 대응하는 (&Backend, Arc<Semaphore>) 쌍.
+        //   체인 중 backends/semaphores에 없는 이름은 건너뛴다.
         // 이 시점에 &Backend는 &self 수명에 묶여 있으며 thread::scope 내에서 안전하게 공유된다.
         struct Job<'a> {
             original_idx: usize,
-            backend: &'a Backend,
-            sem: Arc<Semaphore>,
+            /// 체인의 각 후보: (backend 참조, 세마포어). thread로 move될 때 Arc 복사.
+            candidates: Vec<(&'a Backend, Arc<Semaphore>)>,
             speaker: PersonaId,
             history: &'a [Event],
         }
@@ -359,13 +416,30 @@ impl BackendPool {
             .iter()
             .enumerate()
             .filter_map(|(i, (speaker, history))| {
-                let backend_name = self.resolve(speaker)?.to_string();
-                let backend: &Backend = self.backends.get(&backend_name)?;
-                let sem: Arc<Semaphore> = Arc::clone(self.semaphores.get(&backend_name)?);
+                // 폴백 체인을 먼저 구성한다.
+                let chain = self.fallback_chain(speaker);
+                if chain.is_empty() {
+                    return None;
+                }
+
+                // 체인 내 각 이름에 대해 (backend, sem) 쌍을 수집한다.
+                // backends 또는 semaphores에 없는 이름은 건너뛴다.
+                let candidates: Vec<(&Backend, Arc<Semaphore>)> = chain
+                    .iter()
+                    .filter_map(|name| {
+                        let backend = self.backends.get(name)?;
+                        let sem = Arc::clone(self.semaphores.get(name)?);
+                        Some((backend, sem))
+                    })
+                    .collect();
+
+                if candidates.is_empty() {
+                    return None;
+                }
+
                 Some(Job {
                     original_idx: i,
-                    backend,
-                    sem,
+                    candidates,
                     speaker: speaker.clone(),
                     history: history.as_slice(),
                 })
@@ -374,24 +448,35 @@ impl BackendPool {
 
         // thread::scope: 각 스레드가 &Backend를 빌릴 수 있다(scope가 수명 보장).
         // &Backend는 Send+Sync이므로 스코프 스레드에서 안전하게 공유된다.
-        // 각 스레드는 (original_idx, Option<String>)을 반환하고, join 후 조립한다.
+        // 각 스레드는 폴백 체인을 순서대로 시도하고 (original_idx, Option<String>)을 반환한다.
         std::thread::scope(|s| {
             let thread_handles: Vec<_> = valid_jobs
                 .iter()
                 .map(|job| {
-                    let backend = job.backend;
-                    let sem = Arc::clone(&job.sem);
+                    // Arc<Semaphore>는 clone으로 스레드에 move한다.
+                    let candidates: Vec<(&Backend, Arc<Semaphore>)> = job
+                        .candidates
+                        .iter()
+                        .map(|(b, sem)| (*b, Arc::clone(sem)))
+                        .collect();
                     let speaker = job.speaker.clone();
                     let history = job.history;
                     let original_idx = job.original_idx;
 
                     s.spawn(move || {
-                        // 세마포어 acquire: 슬롯이 생길 때까지 블록.
-                        let _permit = sem.acquire();
-                        // permit 보유 상태에서 generate 실행.
-                        let text = backend.generate(&speaker, history, tick);
-                        // _permit drop → 슬롯 반환.
-                        (original_idx, text)
+                        // 폴백 체인: 첫 Some에서 멈춘다.
+                        // 각 후보의 세마포어를 acquire → generate → permit drop(RAII).
+                        for (backend, sem) in &candidates {
+                            let _permit = sem.acquire();
+                            let text = backend.generate(&speaker, history, tick);
+                            // permit은 여기서 drop된다(다음 후보 시도 전 슬롯 반환).
+                            drop(_permit);
+                            if text.is_some() {
+                                return (original_idx, text);
+                            }
+                            // None이면 체인의 다음 백엔드로.
+                        }
+                        (original_idx, None)
                     })
                 })
                 .collect();
@@ -413,10 +498,12 @@ impl BackendPool {
 }
 
 impl PersonaRuntime for BackendPool {
-    /// speaker를 routing → default 순서로 백엔드에 라우팅해 generate를 위임한다.
+    /// speaker를 폴백 체인 순서로 시도해 첫 Some을 반환한다 (task-24).
     ///
-    /// - rng를 소비하지 않는다(Backend::generate는 &self) → 엔진 결정성 보존.
-    /// - 라우팅 대상 백엔드가 backends 맵에 없거나 default도 없으면 None 반환(panic 없음).
+    /// - `fallback_chain(speaker)` 순서로 각 백엔드를 시도한다.
+    /// - 첫 `Some(text)`을 반환하고 이후 백엔드는 시도하지 않는다.
+    /// - 모든 백엔드가 None이면 None 반환(panic 없음).
+    /// - rng를 소비하지 않는다 → 엔진 결정성 보존(INV-1).
     fn generate(
         &mut self,
         speaker: &PersonaId,
@@ -424,10 +511,23 @@ impl PersonaRuntime for BackendPool {
         tick: u64,
         _rng: &mut ChaCha8Rng,
     ) -> Option<String> {
-        // resolve는 &self를 빌리므로 이름을 String으로 복사해 borrow 충돌을 피한다.
-        let backend_name = self.resolve(speaker)?.to_string();
-        let backend = self.backends.get(&backend_name)?;
-        backend.generate(speaker, history, tick)
+        // fallback_chain은 &self를 빌리므로 Vec<String>으로 복사해 borrow 충돌을 피한다.
+        let chain = self.fallback_chain(speaker);
+
+        for backend_name in &chain {
+            if let Some(backend) = self.backends.get(backend_name) {
+                if let Some(text) = backend.generate(speaker, history, tick) {
+                    return Some(text);
+                }
+                // None이면 체인의 다음 백엔드로. 폴백이 실제로 사용됐음을 로그.
+                eprintln!(
+                    "[tunaSalon] backend '{}' returned None, trying fallback (speaker={})",
+                    backend_name, speaker
+                );
+            }
+        }
+
+        None
     }
 }
 
@@ -929,5 +1029,86 @@ mod tests {
         let jobs: Vec<(PersonaId, Vec<crate::model::Event>)> = vec![];
         let results = pool.generate_batch(&jobs, 0);
         assert!(results.is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // task-24: fallback_chain + generate_batch 폴백 체인 단위 테스트 (네트워크 없음)
+    // -------------------------------------------------------------------------
+
+    /// fallback_chain: 폴백이 설정된 경우 [primary, fallback] 순서로 반환된다.
+    #[test]
+    fn fallback_chain_returns_primary_and_fallback() {
+        let mut pool = BackendPool::new();
+        pool.add(make_config("cloud"), BTreeMap::new());
+        pool.add(make_config("friend"), BTreeMap::new());
+        pool.set_default("cloud");
+        pool.set_fallback("cloud", "friend");
+
+        let chain = pool.fallback_chain("any-speaker");
+        assert_eq!(chain, vec!["cloud".to_string(), "friend".to_string()]);
+    }
+
+    /// fallback_chain: 폴백이 없으면 [primary]만 반환된다.
+    #[test]
+    fn fallback_chain_returns_only_primary_when_no_fallback() {
+        let mut pool = BackendPool::new();
+        pool.add(make_config("cloud"), BTreeMap::new());
+        pool.set_default("cloud");
+        // set_fallback 없음
+
+        let chain = pool.fallback_chain("any-speaker");
+        assert_eq!(chain, vec!["cloud".to_string()]);
+    }
+
+    /// fallback_chain: resolve가 None(라우팅 없음)이면 빈 Vec.
+    #[test]
+    fn fallback_chain_returns_empty_when_unresolvable() {
+        let pool = BackendPool::new(); // 백엔드 없음, default 없음
+
+        let chain = pool.fallback_chain("any-speaker");
+        assert!(chain.is_empty());
+    }
+
+    /// fallback_chain: 사이클(a→b, b→a) 시 체인이 유한하게 끝난다(무한 루프·panic 없음).
+    #[test]
+    fn fallback_chain_cycle_safe() {
+        let mut pool = BackendPool::new();
+        pool.add(make_config("a"), BTreeMap::new());
+        pool.add(make_config("b"), BTreeMap::new());
+        pool.set_default("a");
+        // 사이클: a → b → a
+        pool.set_fallback("a", "b");
+        pool.set_fallback("b", "a");
+
+        let chain = pool.fallback_chain("any-speaker");
+        // 체인은 유한: ["a", "b"] (a가 재방문되는 순간 중단)
+        assert_eq!(chain.len(), 2, "사이클 시 체인 길이=2이어야 함: {:?}", chain);
+        assert_eq!(chain[0], "a");
+        assert_eq!(chain[1], "b");
+    }
+
+    /// generate_batch: 오프라인 primary + 오프라인 fallback → 모두 None, 입력 순서 보존, panic 없음.
+    #[test]
+    fn generate_batch_offline_primary_and_fallback_returns_none_preserves_order() {
+        let mut pool = BackendPool::new();
+        // 두 백엔드 모두 포트 1(연결 거부) — 빠른 타임아웃
+        pool.add(make_config("cloud"), BTreeMap::new());
+        pool.add(make_config("friend"), BTreeMap::new());
+        pool.set_default("cloud");
+        pool.set_fallback("cloud", "friend");
+
+        let jobs = vec![
+            ("alice".to_string(), vec![]),
+            ("bob".to_string(), vec![]),
+            ("carol".to_string(), vec![]),
+        ];
+
+        let results = pool.generate_batch(&jobs, 0);
+
+        assert_eq!(results.len(), 3, "결과 개수가 입력과 동일해야 함");
+        for (i, (speaker, text)) in results.iter().enumerate() {
+            assert_eq!(speaker, &jobs[i].0, "순서 불일치 idx={i}");
+            assert_eq!(*text, None, "오프라인 primary+fallback → None이어야 함(idx={i})");
+        }
     }
 }
