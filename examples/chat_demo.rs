@@ -183,12 +183,14 @@ fn main() {
             }
         }
 
-        // 발화가 새로 도착했을 때 흐름 지표 출력(매 루프 노이즈 방지).
+        // 발화가 새로 도착했을 때 흐름·식힘 지표 출력(매 루프 노이즈 방지).
         if new_utterance {
             match session.flow() {
                 Some(m) => println!("  [흐름] 수렴 {:.2}", m.convergence),
                 None => println!("  [흐름] -"),
             }
+            // 식힘 비율: content 쌓여 수렴 오르면 내려감을 전사에서 관찰.
+            println!("  [식힘] x{:.2}", session.mu_scale());
         }
 
         // 틱 사이 짧은 대기: 폴링 주기.
