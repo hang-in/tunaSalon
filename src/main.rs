@@ -1,6 +1,7 @@
 use salon::driver;
 use salon::headless::HeadlessSink;
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
+use salon::ollama::OllamaBackend;
 use salon::preset::RoomPreset;
 use salon::runtime::FakeBackend;
 use salon::sweep;
@@ -34,9 +35,17 @@ struct Cli {
     k: Option<f64>,
     delay_ms: u64,
     room: Option<String>,
+    // LLM opt-in 플래그 (기본 false → FakeBackend)
+    llm: bool,
+    model: String,
+    cloud: bool,
+    ollama_host: Option<String>,
 }
 
 fn main() {
+    // .env 파일이 있으면 환경 변수로 로드한다. 없거나 실패해도 무시.
+    dotenvy::dotenv().ok();
+
     let cli = match parse_args(env::args().skip(1)) {
         Ok(cli) => cli,
         Err(error) => {
@@ -93,6 +102,60 @@ fn main() {
         return;
     }
 
+    // --llm 없으면 FakeBackend (기본, 골든 보존).
+    // --llm 있으면 OllamaBackend 빌드.
+    if cli.llm {
+        // endpoint 결정: --ollama-host > --cloud > localhost
+        let endpoint = if let Some(ref host) = cli.ollama_host {
+            host.clone()
+        } else if cli.cloud {
+            "https://ollama.com".to_string()
+        } else {
+            "http://localhost:11434".to_string()
+        };
+
+        // api_key: --cloud일 때만 환경 변수에서 읽는다.
+        // SECURITY: 키 값을 에러 메시지에 절대 포함하지 않는다.
+        let api_key: Option<String> = if cli.cloud {
+            match env::var("OLLAMA_CLOUD_API_KEY") {
+                Ok(key) => Some(key),
+                Err(_) => {
+                    eprintln!(
+                        "error: --cloud requires OLLAMA_CLOUD_API_KEY. \
+                         Set it in .env or as an environment variable."
+                    );
+                    process::exit(1);
+                }
+            }
+        } else {
+            None
+        };
+
+        let mut backend =
+            OllamaBackend::new(cli.model.clone(), endpoint, api_key, Duration::from_secs(30));
+
+        if cli.headless {
+            let stdout = io::stdout();
+            let mut sink = HeadlessSink::new(stdout.lock());
+            driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut backend);
+            return;
+        }
+
+        let names = persona_names(&personas);
+        let mut sink =
+            match TuiSink::new(names, config.theta, Duration::from_millis(cli.delay_ms)) {
+                Ok(sink) => sink,
+                Err(error) => {
+                    eprintln!("failed to start TUI: {error}");
+                    eprintln!("Try `salon --headless` for non-interactive NDJSON output.");
+                    process::exit(1);
+                }
+            };
+        driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut backend);
+        return;
+    }
+
+    // FakeBackend 경로 (기본, --llm 없음)
     if cli.headless {
         let stdout = io::stdout();
         let mut sink = HeadlessSink::new(stdout.lock());
@@ -127,6 +190,10 @@ where
         k: None,
         delay_ms: DEFAULT_DELAY_MS,
         room: None,
+        llm: false,
+        model: "gemma4:e4b".to_string(),
+        cloud: false,
+        ollama_host: None,
     };
     let mut args = args.into_iter();
 
@@ -144,6 +211,17 @@ where
             "--room" => {
                 let raw = args.next().ok_or_else(|| "missing value for --room".to_string())?;
                 cli.room = Some(raw);
+            }
+            "--llm" => cli.llm = true,
+            "--model" => {
+                let raw = args.next().ok_or_else(|| "missing value for --model".to_string())?;
+                cli.model = raw;
+            }
+            "--cloud" => cli.cloud = true,
+            "--ollama-host" => {
+                let raw =
+                    args.next().ok_or_else(|| "missing value for --ollama-host".to_string())?;
+                cli.ollama_host = Some(raw);
             }
             "-h" | "--help" => return Err(usage().to_string()),
             unknown => return Err(format!("unknown argument: {unknown}")),
@@ -215,7 +293,7 @@ fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>]"
+    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>] [--llm] [--model <string>] [--cloud] [--ollama-host <url>]"
 }
 
 #[cfg(test)]
@@ -239,6 +317,10 @@ mod tests {
                 k: None,
                 delay_ms: DEFAULT_DELAY_MS,
                 room: None,
+                llm: false,
+                model: "gemma4:e4b".to_string(),
+                cloud: false,
+                ollama_host: None,
             })
         );
     }
@@ -266,6 +348,10 @@ mod tests {
                 k: None,
                 delay_ms: DEFAULT_DELAY_MS,
                 room: None,
+                llm: false,
+                model: "gemma4:e4b".to_string(),
+                cloud: false,
+                ollama_host: None,
             })
         );
     }
