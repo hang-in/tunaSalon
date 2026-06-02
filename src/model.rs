@@ -1,0 +1,73 @@
+// 결정성: 직렬화/반복 순서가 실행마다 동일해야 하므로 BTreeMap이 아닌 BTreeMap(정렬 순서) 사용.
+use std::collections::BTreeMap;
+
+pub type PersonaId = String;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EngineConfig {
+    pub beta: f64,
+    pub theta: f64,
+    pub k: f64,
+    pub tick_interval: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Persona {
+    pub id: PersonaId,
+    pub name: String,
+    pub base_rate: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Event {
+    pub ts: f64,
+    pub speaker: PersonaId,
+    pub mark: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EngineState {
+    pub intensities: BTreeMap<PersonaId, f64>,
+    pub history: Vec<Event>,
+    pub last_speaker: Option<PersonaId>,
+    pub rng_seed: u64,
+}
+
+// v0.2부터 사용
+#[derive(Debug, Clone, PartialEq)]
+pub struct CouplingMatrix {
+    pub values: BTreeMap<(PersonaId, PersonaId), f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructs_core_model_types() {
+        let config = EngineConfig {
+            beta: 0.2,
+            theta: 0.7,
+            k: 60.0,
+            tick_interval: 1.0,
+        };
+        let persona = Persona {
+            id: "p1".to_string(),
+            name: "Talker".to_string(),
+            base_rate: 0.8,
+        };
+        let mut intensities = BTreeMap::new();
+        intensities.insert(persona.id.clone(), persona.base_rate);
+        let state = EngineState {
+            intensities,
+            history: Vec::new(),
+            last_speaker: None,
+            rng_seed: 42,
+        };
+
+        assert_eq!(config.tick_interval, 1.0);
+        assert_eq!(persona.id, "p1");
+        assert_eq!(state.intensities.get("p1"), Some(&0.8));
+        assert_eq!(state.rng_seed, 42);
+    }
+}

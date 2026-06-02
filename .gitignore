@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Rust / Cargo (Salon 엔진 본체)
+/target/
+**/*.rs.bk
+# Cargo.lock 은 커밋합니다 (Salon 은 바이너리 앱이라 잠금 파일 추적이 관례)
+
+# 환경 / 비밀
+.env
+.env.*
+*.local
+
+# 에디터 / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 로그 / 임시
+*.log
+tmp/
+.tmp/
+
+# tunaFlow / 코드 그래프 캐시
+.code-review-graph/
+
+# 로컬 에이전트 설정 (개인용, 공개 레포 제외)
+.claude/settings.local.json
+
+# 모델 / 대용량 산출물 (로컬 LLM 자산)
+*.gguf
+*.bin
+models/
