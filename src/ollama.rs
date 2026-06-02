@@ -5,6 +5,10 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+/// Ollama 컨텍스트 윈도우 크기. ollama 기본값(~1024-4096)은 잡담 발화 수십 개로도
+/// 금방 넘치므로 명시적으로 8192로 설정한다.
+const DEFAULT_NUM_CTX: u64 = 8192;
+
 /// Ollama HTTP 백엔드. 실제 LLM에 generate 요청을 POST한다.
 ///
 /// SECURITY: `#[derive(Debug)]`를 쓰면 api_key가 노출되므로 수동 구현.
@@ -58,17 +62,39 @@ impl OllamaBackend {
         Self { client, model, endpoint, api_key, system_prompts }
     }
 
+    /// user 프롬프트를 섹션 순서대로 조립한다.
+    ///
+    /// 섹션 순서:
+    ///   1. 공유 최근 로그 (`recent`)
+    ///   2. 회상 슬롯 — `recall`이 Some(r)일 때만 `[기억]\n{r}` 삽입 (장기기억 엔진 예약 슬롯)
+    ///   3. 답변 지시문
+    ///
+    /// 페르소나 지시(system prompt)는 이 함수가 아닌 `system` 필드로 전달한다.
+    fn assemble_user_prompt(recent: &str, recall: Option<&str>) -> String {
+        let mut parts = Vec::with_capacity(3);
+        parts.push(format!("Recent lines:\n{recent}"));
+        if let Some(r) = recall {
+            parts.push(format!("[기억]\n{r}"));
+        }
+        parts.push("Reply with ONE short, in-character line. No preamble.".to_string());
+        parts.join("\n")
+    }
+
     /// `/api/generate` 요청 body JSON을 조립한다.
     ///
     /// - `system`이 Some이면 body에 `"system"` 필드를 추가한다.
     /// - None이면 `"system"` 필드를 완전히 생략한다.
+    /// - `options.num_ctx`를 `DEFAULT_NUM_CTX`로 명시 설정한다.
     ///
     /// 별도 함수로 분리해 테스트에서 네트워크 없이 직렬화를 검증한다.
     pub fn build_request_body(model: &str, prompt: &str, system: Option<&str>) -> Value {
         let mut body = serde_json::json!({
             "model": model,
             "prompt": prompt,
-            "stream": false
+            "stream": false,
+            "options": {
+                "num_ctx": DEFAULT_NUM_CTX
+            }
         });
         if let Some(sys) = system {
             body["system"] = serde_json::Value::String(sys.to_string());
@@ -129,14 +155,12 @@ impl PersonaRuntime for OllamaBackend {
         _rng: &mut ChaCha8Rng,
     ) -> Option<String> {
         let recent = Self::format_recent(history);
-        let prompt = format!(
-            "You are {speaker} in a casual group chat. Recent lines:\n{recent}\nReply with ONE short, in-character line. No preamble."
-        );
+        let user_prompt = Self::assemble_user_prompt(&recent, None);
 
         let system = self.system_prompts.get(speaker).map(String::as_str);
 
         let url = format!("{}/api/generate", self.endpoint);
-        let body = Self::build_request_body(&self.model, &prompt, system);
+        let body = Self::build_request_body(&self.model, &user_prompt, system);
 
         let mut req = self.client.post(&url).json(&body);
 
@@ -276,6 +300,63 @@ mod tests {
         assert!(
             debug_str.contains("redacted") || debug_str.contains("Some"),
             "Debug 출력이 api_key 존재 여부를 나타내야 함: {debug_str}"
+        );
+    }
+
+    /// assemble_user_prompt: recall=None이면 회상 섹션 없이 로그+지시만 포함.
+    /// recall=Some이면 회상 텍스트가 로그 뒤, 지시 앞에 삽입된다.
+    #[test]
+    fn assemble_user_prompt_sections_ordering() {
+        let log = "Recent lines:\nA: hi";
+
+        // recall=None: 회상 섹션 없음
+        let without_recall = OllamaBackend::assemble_user_prompt(log, None);
+        assert!(
+            without_recall.contains("Recent lines:\nA: hi"),
+            "로그가 포함되어야 함"
+        );
+        assert!(
+            without_recall.contains("Reply with ONE short"),
+            "지시문이 포함되어야 함"
+        );
+        assert!(
+            !without_recall.contains("[기억]"),
+            "recall=None일 때 [기억] 섹션이 없어야 함"
+        );
+
+        // recall=Some: 회상 텍스트가 로그 뒤, 지시 앞에 위치
+        let recall_text = "과거: 약속함";
+        let with_recall = OllamaBackend::assemble_user_prompt(log, Some(recall_text));
+        assert!(
+            with_recall.contains(recall_text),
+            "회상 텍스트가 포함되어야 함"
+        );
+        let pos_log = with_recall.find("Recent lines:").unwrap();
+        let pos_recall = with_recall.find(recall_text).unwrap();
+        let pos_instruction = with_recall.find("Reply with ONE short").unwrap();
+        assert!(
+            pos_log < pos_recall,
+            "로그(pos={pos_log})가 회상(pos={pos_recall}) 앞에 있어야 함"
+        );
+        assert!(
+            pos_recall < pos_instruction,
+            "회상(pos={pos_recall})이 지시문(pos={pos_instruction}) 앞에 있어야 함"
+        );
+    }
+
+    /// build_request_body의 options.num_ctx가 8192로 설정된다.
+    #[test]
+    fn build_request_body_sets_num_ctx() {
+        let body = OllamaBackend::build_request_body("m", "p", None);
+        let num_ctx = body
+            .get("options")
+            .and_then(|o| o.get("num_ctx"))
+            .and_then(|v| v.as_u64());
+        assert_eq!(
+            num_ctx,
+            Some(8192),
+            "options.num_ctx가 8192여야 함, 실제: {:?}",
+            num_ctx
         );
     }
 
