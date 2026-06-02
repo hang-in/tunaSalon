@@ -3,9 +3,9 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.2-blue)
-![tests](https://img.shields.io/badge/tests-50%20passing-brightgreen)
-![no LLM yet](https://img.shields.io/badge/v0.1--v0.2-no%20LLM%20yet-8A2BE2)
+![status](https://img.shields.io/badge/status-v0.4-blue)
+![tests](https://img.shields.io/badge/tests-125%20passing-brightgreen)
+![LLM optional](https://img.shields.io/badge/LLM-%EC%84%A0%ED%83%9D%EC%82%AC%ED%95%AD%2C%20%EA%B8%B0%EB%B3%B8%20%EA%BA%BC%EC%A7%90-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
 로컬 LLM 페르소나들을 터미널 대화방에 초대해 잡담시키는 TUI 앱입니다.
@@ -45,22 +45,6 @@ tunaSalon은 각 페르소나마다 발언 게이지를 계산합니다.
 - 어떤 방은 조용하던 페르소나가 특정 분위기에서 갑자기 말하기 시작합니다.
 
 성격은 대사에만 있는 게 아니라 타이밍에도 있습니다.
-
----
-
-## 지금 구현된 것
-
-현재 버전은 LLM 없이도 대화 리듬이 살아나는지를 검증하는 단계입니다.
-
-실제 모델이 말을 생성하기 전에, 먼저 다음을 확인합니다.
-
-- 누가 말할 상태가 되는가
-- 아무도 말하지 않는 침묵이 생기는가
-- 방 분위기에 따라 조용한 페르소나가 끌려 나오는가
-- 특정 페르소나가 대화를 독점하지 않는가
-- 같은 설정에서 항상 같은 결과가 나오는가
-
-즉 v0.1~v0.2의 목표는 "똑똑한 말"이 아니라 그럴듯한 대화 흐름입니다.
 
 ---
 
@@ -161,18 +145,64 @@ tunaSalon은 대화 흐름을 숫자로 관찰합니다.
 
 ---
 
+## 로컬 LLM 연결 (v0.3)
+
+v0.3에서 Ollama를 붙여 페르소나가 실제 대사를 생성합니다. **누가 언제 말하는지**는 여전히 엔진이 결정적으로 정하고, LLM은 발언 내용만 채웁니다.
+
+기본 실행은 LLM 없이 돌아갑니다(FakeBackend). v0.1 출력과 바이트 단위로 동일하고, 네트워크도 필요 없습니다. `--llm`을 붙이면 opt-in됩니다.
+
+실제 텍스트가 생기면 내용 기반 RRF 신호 두 가지가 활성화됩니다. **관심도**(새 화제가 이 페르소나를 얼마나 끌어당기는지)와 **잔향**(방금 들은 말을 아직 처리 중인지). 이 두 신호는 기존 λ/균형/난수 신호 위에 쌓입니다.
+
+`persona_collapse` 예제는 같은 모델에 서로 다른 페르소나 프롬프트를 주입해 출력을 나란히 기록합니다. 작은 모델이 시간이 지나도 페르소나를 유지하는지, 아니면 결국 같은 말투로 무너지는지를 관찰합니다.
+
+---
+
+## 동시 호출 + 혼합 모델 (v0.4)
+
+v0.4에서 **백엔드 풀**을 도입합니다. 프로토콜은 두 가지입니다.
+
+- **Ollama** `/api/generate` - 예: `gemma4:31b-cloud`(클라우드, 동시성 상한 3)
+- **OpenAI 호환** `/v1/chat/completions` - 예: 지인서버 vLLM (`qwen3.6-35b-fast`, 동시성 상한 1)
+
+**페르소나별 라우팅**으로 한 방 안에서 모델을 섞을 수 있습니다. 일부 페르소나는 한 백엔드, 나머지는 다른 백엔드로 보냅니다. `mixed_bench` 예제에서 둘을 같은 방에 넣습니다.
+
+라이브 틱 루프는 **순차를 유지**합니다(1명/틱, 인과적 턴테이킹). 동시 호출은 `generate_batch`를 통한 비교/벤치 전용입니다. 같은 프롬프트를 여러 백엔드에 동시에 보내 페르소나 톤을 비교하거나 지연을 측정할 때 씁니다.
+
+기본은 클라우드 모델입니다. 로컬 RAM/GPU 사용 없이, 로컬 데몬이 원격으로 요청을 프록시합니다. 로컬 모델 로딩은 막혀 있습니다.
+
+백엔드별 세마포어가 동시 in-flight를 상한 안에 묶습니다. 4xx 응답이나 타임아웃이 오면 폴백 체인이 동작합니다(다음 백엔드, 또는 FakeBackend). 패닉 없습니다.
+
+**실제 혼합 모델 출력** (`cargo run --example mixed_bench`):
+
+```
+cloud  : gemma4:31b-cloud (cap=3)   friend : qwen3.6-35b-fast (cap=1)
+routing: summarizer → friend, others → cloud
+opening> 오늘 비 와서 다들 약속 취소했대. 좀 심심하네.
+
+[friend via cloud]      비 오는 날엔 원래 좀 늘어지기 쉽지. 여기 커피나 마시면서 멍 때려.
+[chaos via cloud]       그럼 우리 집 거실에서 비 구경 대회나 열까?
+[summarizer via friend] 혼자 남아 있는 공간은 생각할 시간이 충분해진다.
+```
+
+summarizer는 더 큰 지인서버 모델로 라우팅되어 더 조용하고 사색적인 톤이 나옵니다. 서로 다른 모델에 걸쳐서도 페르소나 톤 구분이 유지됩니다.
+
+---
+
 ## 실행하기
 
-Rust만 있으면 됩니다. v0.1~v0.2는 LLM도 네트워크도 필요 없습니다.
+Rust만 있으면 됩니다. 기본 실행은 LLM도 네트워크도 필요 없습니다.
 
 ```bash
-cargo run                                    # TUI 미터 보기
-cargo run -- --headless --ticks 200          # 틱당 한 줄 NDJSON 출력
-cargo run -- --sweep                         # 파라미터 스윕
-cargo run -- --room argument                 # 방 분위기 프리셋
-cargo run -- --room chaos --fsm              # 케미 + 같은 사람 2연속 금지
-cargo run -- --theta 0.7 --k 5 --beta 0.4    # 손잡이 직접 조정
-cargo test                                   # 테스트 실행
+cargo run                                         # TUI 미터 보기. q 종료, space 일시정지
+cargo run -- --headless --ticks 200               # 틱당 한 줄 NDJSON 출력
+cargo run -- --sweep                              # 파라미터 스윕
+cargo run -- --room argument                      # 방 분위기 프리셋
+cargo run -- --room chaos --fsm                   # 케미 + 같은 사람 2연속 금지
+cargo run -- --theta 0.7 --k 5 --beta 0.4         # 손잡이 직접 조정
+cargo run -- --llm                                # LLM opt-in (기본 클라우드 모델, 네트워크 필요)
+cargo run --example persona_collapse              # 같은 모델, 두 페르소나 비교 (Ollama 필요)
+cargo run --example mixed_bench                   # 클라우드 + 지인서버 vLLM 혼합 (두 백엔드 필요)
+cargo test                                        # 125 tests
 ```
 
 주요 손잡이는 다음과 같습니다.
@@ -190,35 +220,16 @@ cargo test                                   # 테스트 실행
 
 ## 현재 상태
 
-### v0.1 - 리듬
+**v0.4 (현재):** 이종 백엔드 풀(Ollama + OpenAI 호환), 페르소나별 라우팅, 혼합 모델 방, 백엔드별 동시성 세마포어, 폴백 체인. 라이브 틱 루프는 순차 유지. LLM은 opt-in이고 기본 실행은 결정적, LLM 없음. Rust, 125 tests, 스모크 게이트 green.
 
-말수, 침묵 문턱, 화자 선택만으로 발언과 침묵의 리듬을 검증했습니다.
+**지금까지:**
+- **v0.1 - 리듬:** μ, θ, 화자 선택만으로 발언/침묵 리듬 검증.
+- **v0.2 - 케미 (α):** 누가 누구를 자극하는지. 방 프리셋 (calm / pub / argument / chaos) + 페르소나 페어링.
+- **v0.3 - 로컬 LLM:** Ollama로 페르소나가 실제 대사 생성. 엔진이 화자 결정, LLM은 내용만. `persona_collapse` 예제 추가.
+- **v0.4 - 동시 호출 / 혼합 모델:** 백엔드 풀(Ollama + OpenAI 호환), 페르소나별 라우팅, 동시성 상한, 폴백. `mixed_bench` 예제 추가.
 
-### v0.2 - 케미
-
-교차 자극 `α`를 추가했습니다. 누가 누구의 발언 압력을 끌어올리는지, 방 분위기 프리셋에 따라 대화가 어떻게 달라지는지 확인합니다.
-
-현재 구현:
-
-- Hawkes 기반 발언 압력
-- 침묵 문턱
-- RRF 화자 선택
-- 교차 자극 `α`
-- 방 프리셋 `calm / pub / argument / chaos`
-- FSM 전이 옵션
-- TUI 미터
-- 결정적 headless 출력
-- 테스트와 스모크 게이트
-
-### v0.3 - 로컬 LLM
-
-다음 단계에서는 Ollama를 붙입니다.
-
-화자 선택은 tunaSalon 엔진이 담당하고, 실제 대사 생성만 LLM이 맡습니다. 목표는 작은 로컬 모델이 서로 다른 페르소나를 유지할 수 있는지 확인하는 것입니다.
-
-특히 볼 것은 persona collapse입니다.
-
-> 같은 작은 모델에 다른 페르소나를 주입했을 때, 시간이 지나며 말투와 관점이 비슷하게 무너지는가?
+**다음:**
+- **v0.5 - FlowMeter:** 대화 수렴/발산 측정. 키워드/유사도 근사로 시작하고, 이후 BGE-M3 임베딩으로 고도화. 관찰만 하고 피드백은 아직 건드리지 않음.
 
 ---
 
@@ -237,16 +248,5 @@ tunaSalon은 그 흐름을 다루는 실험입니다.
 대사를 잘 만드는 것보다, 말할 타이밍과 침묵을 만드는 쪽이 핵심입니다.
 
 ---
-
-## 한 줄 정의
-
-tunaSalon은 로컬 LLM 페르소나를 위한 TUI 대화 흐름 엔진입니다.
-
-페르소나는 부품이고, 본체는 다음 네 가지입니다.
-
-- 누가 말할 상태가 되는가
-- 누가 실제로 말하는가
-- 언제 아무도 말하지 않는가
-- 대화가 어떻게 달아올랐다 식는가
 
 자세한 설계는 [docs/reference/salon-engine-design.md](docs/reference/salon-engine-design.md)를 참고하세요.

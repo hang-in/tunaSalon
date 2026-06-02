@@ -3,12 +3,12 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.2-blue)
-![tests](https://img.shields.io/badge/tests-50%20passing-brightgreen)
-![no LLM yet](https://img.shields.io/badge/v0.1--v0.2-no%20LLM%20yet-8A2BE2)
+![status](https://img.shields.io/badge/status-v0.4-blue)
+![tests](https://img.shields.io/badge/tests-125%20passing-brightgreen)
+![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
-A terminal app that drops local-LLM personas into a room and lets them small-talk. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet.
+A terminal app that drops LLM personas into a room and lets them small-talk. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet.
 
 Designing speech is easy. Designing silence is hard. This project is a little backwards on purpose.
 
@@ -87,18 +87,62 @@ The same summarizer (μ = 0.25) never speaks in Calm but speaks 48 times in Argu
 
 ---
 
+## Local LLMs (v0.3)
+
+v0.3 wires in Ollama so personas generate actual lines. The engine still decides **who speaks and when** — deterministic as always. The LLM only fills in the content.
+
+Default run stays LLM-off (FakeBackend) — byte-identical to v0.1 output, zero network needed. Pass `--llm` to opt in.
+
+When real text is in play, two content-based RRF signals activate: **interest** (how much a new topic pulls a persona in) and **echo** (whether a persona is still processing what was just said). These sit on top of the existing λ/fairness/randomness signals.
+
+A dedicated example, `persona_collapse`, puts the same model under two different persona prompts and logs both outputs side by side — watching whether a small model actually holds distinct personas over time or collapses toward a uniform voice.
+
+## Concurrent / mixed-model (v0.4)
+
+v0.4 adds a **backend pool** with two protocols:
+
+- **Ollama** `/api/generate` — e.g. `gemma4:31b-cloud` (cloud, concurrency cap 3)
+- **OpenAI-compatible** `/v1/chat/completions` — e.g. a friend's vLLM server (`qwen3.6-35b-fast`, concurrency cap 1)
+
+**Per-persona routing** means a single room can mix models: some personas talk through one backend, some through another. A `mixed_bench` example puts both in the same room.
+
+The live tick loop stays **sequential** (one speaker per tick, causal turn-taking). Concurrency is used for compare/bench via `generate_batch` — running the same prompt against multiple backends in parallel to compare persona tone or benchmark latency.
+
+Defaults to cloud models — no local RAM/GPU load, the local daemon just proxies the request remotely. Local model loading is guarded against.
+
+Per-backend semaphores enforce the concurrency cap. If a backend returns 4xx or times out, a fallback chain kicks in (next backend, or FakeBackend) — no panics.
+
+**Real mixed-model output** (`cargo run --example mixed_bench`):
+
+```
+cloud  : gemma4:31b-cloud (cap=3)   friend : qwen3.6-35b-fast (cap=1)
+routing: summarizer → friend, others → cloud
+opening> 오늘 비 와서 다들 약속 취소했대. 좀 심심하네.
+
+[friend via cloud]      비 오는 날엔 원래 좀 늘어지기 쉽지. 여기 커피나 마시면서 멍 때려.
+[chaos via cloud]       그럼 우리 집 거실에서 비 구경 대회나 열까?
+[summarizer via friend] 혼자 남아 있는 공간은 생각할 시간이 충분해진다.
+```
+
+The summarizer, routed to the larger friend model, reads quieter and more reflective — persona tone distinction holds even across different models.
+
+---
+
 ## Try it
 
-All you need is [Rust](https://rustup.rs). v0.1–v0.2 need no LLM and no network.
+All you need is [Rust](https://rustup.rs). The default run needs no LLM and no network.
 
 ```bash
-cargo run                                    # watch the meter live (TUI). q to quit, space to pause
-cargo run -- --headless --ticks 200          # deterministic NDJSON, one line per tick
-cargo run -- --sweep                         # θ × k grid + preset comparison
-cargo run -- --room argument                 # room mood preset (calm/pub/argument/chaos)
-cargo run -- --room chaos --fsm              # chemistry + no speaker twice in a row
-cargo run -- --theta 0.7 --k 5 --beta 0.4    # turn the knobs
-cargo test                                   # 50 tests, including the smoke gates
+cargo run                                         # watch the meter live (TUI). q to quit, space to pause
+cargo run -- --headless --ticks 200               # deterministic NDJSON, one line per tick
+cargo run -- --sweep                              # θ × k grid + preset comparison
+cargo run -- --room argument                      # room mood preset (calm/pub/argument/chaos)
+cargo run -- --room chaos --fsm                   # chemistry + no speaker twice in a row
+cargo run -- --theta 0.7 --k 5 --beta 0.4         # turn the knobs
+cargo run -- --llm                                # opt in to LLM (default cloud model, needs network)
+cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
+cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
+cargo test                                        # 125 tests, including the smoke gates
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -107,14 +151,16 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.2 (now):** the rhythm engine plus chemistry. Still no LLM — fake utterances let you check the *timing* and the *chemistry* are alive: cross-excitation (α), room presets, persona modifiers, and FSM transitions. Deterministic, with a debug meter. Rust, 50 tests, smoke gates green.
+**v0.4 (now):** backend pool with two protocols (Ollama + OpenAI-compatible), per-persona routing, mixed-model rooms, concurrency semaphores per backend, fallback chain. Live tick loop stays sequential. LLM is opt-in; default run is still deterministic and LLM-free. Rust, 125 tests, smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
 - **v0.2 — chemistry (α):** who riles up whom; room presets (calm / pub / argument / chaos) and persona pairings.
+- **v0.3 — local LLMs:** Ollama personas generate actual lines. Engine decides who speaks; LLM fills in content. `persona_collapse` example: same model, different persona prompts.
+- **v0.4 — concurrent / mixed-model:** backend pool (Ollama + OpenAI-compatible), per-persona routing, concurrency caps, fallback. `mixed_bench` example.
 
 **Next:**
-- **v0.3 — local LLMs:** Ollama personas generate the actual lines. The engine still decides who speaks; the model only fills in content. Watch whether a small model holds its persona (persona collapse).
+- **v0.5 — FlowMeter:** measure conversation convergence/divergence. Keyword/similarity approximation first, then BGE-M3 embeddings. Observe only — no feedback yet.
 
 ---
 
