@@ -78,6 +78,53 @@ pub struct LiveSession {
     human_id: PersonaId,
     /// 방 화제 태그(최대 5개). 생성 워커로 보내는 history 스냅샷에만 주입(INV-2).
     topics: Vec<String>,
+    /// 직전 사람 발화(사람 우선 지시용). human_focus와 함께 설정된다.
+    last_human_msg: Option<String>,
+    /// 사람 발화 후 그 메시지를 최우선으로 둘 남은 페르소나 턴 수.
+    human_focus: u32,
+    /// 화자 라벨 집합(소문자). 생성 결과 앞 `이름:`/`나:` echo 제거용.
+    speaker_labels: std::collections::BTreeSet<String>,
+}
+
+/// 사람 발화 후 그 메시지를 최우선으로 둘 페르소나 턴 수.
+const HUMAN_FOCUS_TURNS: u32 = 4;
+
+/// 생성 결과 앞에 모델이 echo한 화자 라벨(`이름:` / `나:`)을 1회 제거한다.
+/// `labels`에 매칭되는 짧은 라벨일 때만 제거한다(과잉 strip 방지).
+fn strip_speaker_prefix(text: &str, labels: &std::collections::BTreeSet<String>) -> String {
+    let trimmed = text.trim_start();
+    if let Some(colon) = trimmed.find(':') {
+        let label = trimmed[..colon].trim();
+        if !label.is_empty()
+            && label.chars().count() <= 20
+            && labels.contains(&label.to_lowercase())
+        {
+            return trimmed[colon + 1..].trim_start().to_string();
+        }
+    }
+    text.to_string()
+}
+
+/// 생성 워커에 주입할 "[진행 지시]" 텍스트(순수). 우선순위: 사람 우선 > 화제 > 없음.
+fn build_directive(
+    human_msg: Option<&str>,
+    human_focus_active: bool,
+    topics: &[String],
+) -> Option<String> {
+    if human_focus_active {
+        if let Some(h) = human_msg {
+            return Some(format!(
+                "[진행 지시] 사용자(나)가 \"{h}\"라고 했습니다. 지금은 이게 최우선 — 다른 화제로 절대 새지 말고 사용자의 말/질문에 직접·구체적으로 답하세요."
+            ));
+        }
+    }
+    if !topics.is_empty() {
+        return Some(format!(
+            "[진행 지시] 지금부터 '{}' 주제로만 구체적으로 이야기하세요. 멍때리기·쉬기·계획 같은 일반론으로 새지 말고 이 주제 자체를 깊게 파고드세요.",
+            topics.join("', '")
+        ));
+    }
+    None
 }
 
 impl LiveSession {
@@ -159,6 +206,21 @@ impl LiveSession {
         }
         store.join(&room, &human_id);
 
+        // 화자 라벨(소문자): 페르소나 이름·id + 이름의 각 단어 + 사람 id + "나" + "(진행)".
+        // 생성 결과 앞에 모델이 붙이는 `이름:`/`나:` echo를 제거할 때 매칭에 쓴다.
+        let mut speaker_labels: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for p in &personas {
+            speaker_labels.insert(p.name.to_lowercase());
+            speaker_labels.insert(p.id.to_lowercase());
+            for w in p.name.split_whitespace() {
+                speaker_labels.insert(w.to_lowercase());
+            }
+        }
+        speaker_labels.insert(human_id.to_lowercase());
+        speaker_labels.insert("나".to_string());
+        speaker_labels.insert("(진행)".to_string());
+
         Self {
             config,
             personas,
@@ -176,6 +238,9 @@ impl LiveSession {
             room,
             human_id,
             topics: Vec::new(),
+            last_human_msg: None,
+            human_focus: 0,
+            speaker_labels,
         }
     }
 
@@ -190,6 +255,10 @@ impl LiveSession {
         // 엔진 상태에 반영(excitation 상승, history push).
         self.human
             .speak(&mut self.state, &self.personas, text.clone(), ts);
+        // 사람 메시지를 이후 HUMAN_FOCUS_TURNS 페르소나 턴 동안 최우선 화제로 둔다
+        // (사람이 화제를 바꾸면 페르소나가 몇 턴 확실히 따라오게).
+        self.last_human_msg = Some(text.clone());
+        self.human_focus = HUMAN_FOCUS_TURNS;
         // 회상 스토어에 사람 발화 기록(task-41). 페르소나가 사람 말을 회상할 수 있다.
         self.store.record(MemoryEvent {
             room: self.room.clone(),
@@ -340,33 +409,18 @@ impl LiveSession {
         // 진행 지시 주입 (INV-2): 생성 워커로 보내는 스냅샷에만. state.history/flow/recall 불변.
         // query/flow/recall은 이미 위에서 계산 완료됨 — 스냅샷 조작은 그 이후.
         //
-        // 우선순위: 최근(마지막 3줄 내) 사람(나) 발화가 있으면 그것을 "토픽급"으로 올려
-        // 먼저 직접 반응하게 한다(사람이 화제를 바꾸면 페르소나가 따라오도록). 없으면 표준 화제 지시.
-        let recent_human_msg: Option<&str> = self
-            .state
-            .history
-            .iter()
-            .rev()
-            .take(3)
-            .find(|e| e.speaker == self.human_id && e.content.is_some())
-            .and_then(|e| e.content.as_deref());
-        let topics_joined = self.topics.join("', '");
-        let directive: Option<String> = match (recent_human_msg, self.topics.is_empty()) {
-            // 사람이 방금 말함 → 토픽급으로 우선 반응
-            (Some(h), true) => Some(format!(
-                "[진행 지시] 사용자(나)가 방금 \"{h}\"라고 했습니다. 다른 화제로 새지 말고 먼저 여기에 직접 구체적으로 반응하세요."
-            )),
-            (Some(h), false) => Some(format!(
-                "[진행 지시] 사용자(나)가 방금 \"{h}\"라고 했습니다. 먼저 여기에 직접 구체적으로 반응하세요(이게 최우선). 그 뒤에야 '{topics_joined}' 주제로 돌아가세요."
-            )),
-            // 사람 발화 없음 + 화제 있음 → 표준 화제 지시
-            (None, false) => Some(format!(
-                "[진행 지시] 지금부터 '{topics_joined}' 주제로만 구체적으로 이야기하세요. 멍때리기·쉬기·계획 같은 일반론으로 새지 말고 이 주제 자체를 깊게 파고드세요."
-            )),
-            // 화제도 사람 발화도 없음 → 주입 안 함(자유 스몰토크)
-            (None, true) => None,
-        };
+        // 우선순위: submit_human 후 human_focus 턴 동안은 사람 메시지를 최우선 화제로
+        // 둔다(사람이 화제를 바꾸면 페르소나가 몇 턴 확실히 따라오게). 그 외엔 표준 화제 지시.
+        let directive = build_directive(
+            self.last_human_msg.as_deref(),
+            self.human_focus > 0,
+            &self.topics,
+        );
         if let Some(content) = directive {
+            // 사람 우선 지시를 실제로 쓴 경우(human_focus>0) 1턴 소모.
+            if self.human_focus > 0 {
+                self.human_focus -= 1;
+            }
             let topic_event = crate::model::Event {
                 ts: tick as f64 * self.config.tick_interval,
                 speaker: "(진행)".to_string(),
@@ -396,6 +450,8 @@ impl LiveSession {
     pub fn poll_generation(&mut self) -> Option<Event> {
         match self.result_rx.try_recv() {
             Ok((idx, text)) => {
+                // 모델이 앞에 붙인 화자 라벨(`이름:`/`나:`) echo 제거.
+                let text = text.map(|t| strip_speaker_prefix(&t, &self.speaker_labels));
                 // placeholder 채우기.
                 if idx < self.state.history.len() {
                     self.state.history[idx].content = text;
@@ -524,6 +580,32 @@ impl Drop for LiveSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── 채팅 픽스 단위 테스트(순수 함수) ──────────────────────────────────
+    #[test]
+    fn strip_speaker_prefix_removes_echoed_label() {
+        let mut labels = std::collections::BTreeSet::new();
+        labels.insert("grounded realist".to_string());
+        labels.insert("realist".to_string());
+        labels.insert("나".to_string());
+        assert_eq!(strip_speaker_prefix("Realist: 집착을 버려", &labels), "집착을 버려");
+        assert_eq!(strip_speaker_prefix("나: 근데 말이야", &labels), "근데 말이야");
+        // 라벨 매칭 안 됨 → 그대로(과잉 strip 방지)
+        assert_eq!(strip_speaker_prefix("오늘 날씨 좋다", &labels), "오늘 날씨 좋다");
+        assert_eq!(strip_speaker_prefix("넷플릭스: 추천", &labels), "넷플릭스: 추천");
+    }
+
+    #[test]
+    fn build_directive_prioritizes_human() {
+        // 사람 우선 활성 → 사람 메시지 지시
+        let d = build_directive(Some("드라마 추천 좀"), true, &["부처님".to_string()]).unwrap();
+        assert!(d.contains("드라마 추천 좀") && d.contains("최우선"));
+        // 사람 우선 비활성 + 화제 → 화제 지시(사람 메시지 미포함)
+        let d = build_directive(Some("드라마 추천 좀"), false, &["부처님".to_string()]).unwrap();
+        assert!(d.contains("부처님") && !d.contains("드라마 추천 좀"));
+        // 둘 다 없음 → None
+        assert!(build_directive(None, false, &[]).is_none());
+    }
     use crate::model::CouplingMatrix;
     use crate::pool::{BackendConfig, BackendPool};
     use std::collections::BTreeMap;
