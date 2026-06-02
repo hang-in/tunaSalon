@@ -4,6 +4,7 @@ Plan document index. Register new plans here.
 
 | slug | 상태 | 버전 | 요약 |
 |------|------|------|------|
+| [salon-engine-v10](salon-engine-v10.md) | planned | v0.10 | **friend engine Stage 2 = 의미 회상**. BGE-M3 임베딩(ORT/ONNX in-process, CoreML) + usearch HNSW + hybrid RRF(BM25 어휘 + 벡터 의미). seCall embedding/ann/hybrid lift. "어휘 다른데 의미 같은" 회상. ML 스택은 새 `friend-engine-semantic` feature 뒤(v0.9·골든 무손상). recall_eval은 mock embedder 결정적 + 실모델 #[ignore]. task 47~50 |
 | [salon-engine-v9](salon-engine-v9.md) | done | v0.9 | **구현 완료**(222 tests/feature 230, smoke_v9+smoke_chat+recall_eval). friend engine 심화 1단계: Stage 0(Lindera 한국어 형태소) + Stage 1(SQLite 영속 + FTS5 BM25 회상, `~/.local/share/tunaSalon/memory.db`). seCall 검색코어 lift. `friend-engine` feature 뒤(기본 off→골든·기본빌드 lean), 회상 라이브 전용→골든 보존. 채팅 생동감(3-way config+/topic) 동반. BGE-M3/usearch/hybrid는 v0.10. task 43~46 |
 | [salon-web-frontend](salon-web-frontend.md) | planned | web(병렬) | **파킹(착수 전, 결정 기록)**. "프로덕션 레벨 앱" 목표로 채팅 UI를 web으로. Rust 엔진 그대로 + axum **WebSocket** 새 sink(엔진 push↔사람 입력, blocking 엔진↔async 채널 브리지) + 정적 HTML/CSS/JS 1장. TUI는 디버그 sink로 강등(유지). golden/headless 무손상, 키는 서버에만(WASM-only 불가). feature flag로 기본 빌드 무영향 |
 | [salon-engine-v1](salon-engine-v1.md) | in_progress | v1 | Salon 대화 흐름 엔진 실행 플랜. **v0.1 구현 완료**(Rust, 27 tests, 스모크 게이트 green) ~ v0.6(MetaController) 로드맵 |
