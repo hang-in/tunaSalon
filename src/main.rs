@@ -113,7 +113,7 @@ fn main() {
         let pool = Arc::new(pool);
         let theta = config.theta;
         let session =
-            LiveSession::new(config, demo_personas(), cli.seed, pool, "나");
+            LiveSession::with_store(config, demo_personas(), cli.seed, pool, "나", salon::memory::live_store());
         let names = persona_names(&personas);
         match ChatApp::new(session, names, theta) {
             Ok(mut app) => {

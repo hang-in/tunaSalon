@@ -83,12 +83,33 @@ impl LiveSession {
     ///
     /// 워커는 `pool.generate_one`을 off-thread에서 호출하며,
     /// `job_tx`가 Drop되면 recv 오류로 루프를 탈출해 종료한다.
+    ///
+    /// 내부적으로 `MemoryStore::new()`(`:memory:`)를 사용한다.
+    /// 모든 테스트/스모크가 이 생성자를 통해 디스크에 쓰지 않도록 보장한다.
     pub fn new(
         config: EngineConfig,
         personas: Vec<Persona>,
         seed: u64,
         pool: Arc<BackendPool>,
         human_speaker_id: impl Into<String>,
+    ) -> Self {
+        Self::with_store(config, personas, seed, pool, human_speaker_id, MemoryStore::new())
+    }
+
+    /// 외부에서 주입한 `MemoryStore`를 사용해 LiveSession을 생성한다.
+    ///
+    /// `new()`와 동일하지만 `store`를 직접 받는다.
+    /// - 테스트/스모크: `new()`를 사용(`:memory:` 고정, 디스크 쓰기 0).
+    /// - 라이브(`--chat`, main.rs): `with_store(..., salon::memory::live_store())`로 호출.
+    ///
+    /// 서명이 `new`와 동일하므로 기존 호출처는 변경 없이 유지된다.
+    pub fn with_store(
+        config: EngineConfig,
+        personas: Vec<Persona>,
+        seed: u64,
+        pool: Arc<BackendPool>,
+        human_speaker_id: impl Into<String>,
+        store: MemoryStore,
     ) -> Self {
         let (job_tx, job_rx) = mpsc::channel::<Job>();
         let (result_tx, result_rx) = mpsc::channel::<Result>();
@@ -130,7 +151,7 @@ impl LiveSession {
 
         // 회상 스토어 초기화: 모든 페르소나 + 사람 화자를 방에 join(참여 격리 기준).
         let room = "salon".to_string();
-        let mut store = MemoryStore::new();
+        let mut store = store;
         for p in &personas {
             store.join(&room, &p.id);
         }

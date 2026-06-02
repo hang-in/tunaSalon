@@ -158,6 +158,34 @@ mod vec_impl {
 mod sqlite_impl {
     use super::{MemoryEvent, format_recall_impl};
     use rusqlite::{Connection, params};
+    use std::path::Path;
+
+    /// 공유 DDL: `new()`(:memory:)와 `open()`(파일) 양쪽에서 호출한다.
+    ///
+    /// `CREATE TABLE IF NOT EXISTS` + `CREATE VIRTUAL TABLE IF NOT EXISTS`를 사용해
+    /// 기존 DB 재오픈 시에도 안전하게 멱등 실행된다.
+    fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memories (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                room    TEXT NOT NULL,
+                ts      INTEGER NOT NULL,
+                speaker TEXT NOT NULL,
+                content TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS participation (
+                room    TEXT NOT NULL,
+                persona TEXT NOT NULL,
+                UNIQUE(room, persona)
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                tokens,
+                room    UNINDEXED,
+                mem_id  UNINDEXED,
+                tokenize='unicode61'
+            );",
+        )
+    }
 
     /// 메모리 스토어: `:memory:` SQLite + FTS5 BM25 구현.
     ///
@@ -179,27 +207,91 @@ mod sqlite_impl {
         pub fn new() -> Self {
             let conn = Connection::open_in_memory()
                 .expect("in-memory sqlite must open");
-            conn.execute_batch(
-                "CREATE TABLE memories (
-                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                    room    TEXT NOT NULL,
-                    ts      INTEGER NOT NULL,
-                    speaker TEXT NOT NULL,
-                    content TEXT NOT NULL
-                );
-                CREATE TABLE participation (
-                    room    TEXT NOT NULL,
-                    persona TEXT NOT NULL,
-                    UNIQUE(room, persona)
-                );
-                CREATE VIRTUAL TABLE memories_fts USING fts5(
-                    tokens,
-                    room    UNINDEXED,
-                    mem_id  UNINDEXED,
-                    tokenize='unicode61'
-                );",
-            ).expect("in-memory sqlite schema must init");
+            init_schema(&conn).expect("in-memory sqlite schema must init");
             Self { conn }
+        }
+
+        /// 파일 경로 SQLite를 열거나 생성한다(영속 스토어).
+        ///
+        /// - 부모 디렉터리를 재귀적으로 생성한다(`create_dir_all`).
+        /// - `PRAGMA journal_mode=WAL`(크래시 내성, 단일 writer).
+        /// - 스키마는 `init_schema`(IF NOT EXISTS → 기존 DB 재오픈 안전).
+        ///
+        /// 런타임 경로이므로 `Result`를 반환한다(호출처 `live_store`가 fallback).
+        pub fn open(path: &Path) -> rusqlite::Result<Self> {
+            // 부모 디렉터리가 없으면 생성.
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        rusqlite::Error::InvalidPath(
+                            std::path::PathBuf::from(format!(
+                                "create_dir_all failed for {:?}: {e}",
+                                parent
+                            ))
+                        )
+                    })?;
+                }
+            }
+            let conn = Connection::open(path)?;
+            // WAL 모드: 크래시 복구·동시 읽기 성능 향상. 단일 writer(라이브 틱 순차) 환경에 적합.
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+            init_schema(&conn)?;
+            Ok(Self { conn })
+        }
+
+        /// 기본 DB 경로를 반환한다(순수, 디스크 I/O 없음).
+        ///
+        /// 우선순위:
+        ///   1. `$SALON_MEMORY_DB` 환경 변수 (비어 있지 않으면)
+        ///   2. `$HOME/.local/share/tunaSalon/memory.db`
+        ///   3. `HOME`도 없으면 `None`
+        pub fn default_db_path() -> Option<std::path::PathBuf> {
+            // 1. 환경 변수 override
+            if let Ok(val) = std::env::var("SALON_MEMORY_DB") {
+                if !val.is_empty() {
+                    return Some(std::path::PathBuf::from(val));
+                }
+            }
+            // 2. $HOME 기반 기본 경로
+            if let Ok(home) = std::env::var("HOME") {
+                if !home.is_empty() {
+                    return Some(std::path::PathBuf::from(home)
+                        .join(".local/share/tunaSalon/memory.db"));
+                }
+            }
+            // 3. HOME 없음
+            None
+        }
+
+        /// 라이브(`--chat`) 전용 스토어를 반환한다.
+        ///
+        /// - `default_db_path()`가 Some → `open(path)`. 실패 시 eprintln 경고 + `new()`.
+        /// - `default_db_path()`가 None → `new()`(`:memory:`).
+        ///
+        /// **테스트에서 호출 금지**: 실제 `~/.local/share/tunaSalon/` 경로를 사용한다.
+        pub fn live_store() -> Self {
+            match Self::default_db_path() {
+                Some(path) => {
+                    match Self::open(&path) {
+                        Ok(store) => store,
+                        Err(e) => {
+                            eprintln!(
+                                "[tunaSalon] warning: 영속 메모리 DB를 열 수 없습니다 ({:?}: {e}). \
+                                 이 세션은 :memory: 로 동작합니다(재시작 시 기억 없음).",
+                                path
+                            );
+                            Self::new()
+                        }
+                    }
+                }
+                None => {
+                    eprintln!(
+                        "[tunaSalon] warning: $HOME 환경 변수가 없어 영속 메모리 DB 경로를 \
+                         결정할 수 없습니다. 이 세션은 :memory: 로 동작합니다."
+                    );
+                    Self::new()
+                }
+            }
         }
 
         /// `persona`를 `room`의 참여자로 등록한다(멱등).
@@ -377,6 +469,38 @@ pub use vec_impl::MemoryStore;
 
 #[cfg(feature = "friend-engine")]
 pub use sqlite_impl::MemoryStore;
+
+/// 기본 DB 경로를 반환한다(순수, 디스크 I/O 없음).
+///
+/// feature on: `$SALON_MEMORY_DB` → `$HOME/.local/share/tunaSalon/memory.db` → None.
+/// feature off: 항상 None(파일 영속 없음, Vec 인메모리).
+#[cfg(feature = "friend-engine")]
+pub fn default_db_path() -> Option<std::path::PathBuf> {
+    MemoryStore::default_db_path()
+}
+
+/// feature off 시 default_db_path는 None(Vec 구현, 파일 영속 없음).
+#[cfg(not(feature = "friend-engine"))]
+pub fn default_db_path() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// 라이브(`--chat`) 전용 스토어를 반환한다.
+///
+/// feature on: `default_db_path()`의 경로로 파일 SQLite 열기(실패 시 :memory: fallback).
+/// feature off: `MemoryStore::new()`(Vec, 인메모리).
+///
+/// **테스트에서 호출 금지**: feature on 시 실제 `~/.local/share/tunaSalon/` 경로를 사용한다.
+#[cfg(feature = "friend-engine")]
+pub fn live_store() -> MemoryStore {
+    MemoryStore::live_store()
+}
+
+/// feature off 시 live_store는 단순 Vec 인메모리 스토어.
+#[cfg(not(feature = "friend-engine"))]
+pub fn live_store() -> MemoryStore {
+    MemoryStore::new()
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 단위 테스트
@@ -562,5 +686,80 @@ mod tests {
             "OR-MATCH 결과에 '등산' 포함 사건이 없다. 결과: {:?}",
             result.iter().map(|e| &e.content).collect::<Vec<_>>()
         );
+    }
+
+    /// (task-45, feature-on 전용) 영속 roundtrip:
+    /// 임시 경로 `open()` → record+join → drop → 재오픈 → recall에 사건 존재.
+    ///
+    /// **임시 디렉터리 사용**: `std::env::temp_dir()` 하위 고유 경로.
+    /// 기본 경로(`~/.local/share/tunaSalon/`)는 절대 사용하지 않는다(테스트 격리).
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn persistence_roundtrip_open_close_reopen() {
+        let tmp_dir = std::env::temp_dir();
+        let db_path = tmp_dir.join(format!("tunasalon_test_roundtrip_{}.db", std::process::id()));
+
+        // 시작 시 잔여 파일 정리(이전 실패 잔재 등).
+        for suffix in &["", "-wal", "-shm"] {
+            let p = tmp_dir.join(format!("tunasalon_test_roundtrip_{}{suffix}.db", std::process::id()));
+            let _ = std::fs::remove_file(&p);
+        }
+
+        // 1단계: 파일 DB 열고 사건 기록 후 drop.
+        {
+            let mut store = MemoryStore::open(&db_path)
+                .expect("임시 경로 open()이 성공해야 한다");
+            store.join("salon", "alice");
+            store.record(ev("salon", 1, "alice", "영속 테스트 안녕"));
+        }
+        // drop → 커넥션 닫힘, WAL checkpoint 발생.
+
+        // 2단계: 같은 경로로 재오픈 → 이전 사건 recall.
+        {
+            let store = MemoryStore::open(&db_path)
+                .expect("재오픈이 성공해야 한다(IF NOT EXISTS 멱등 스키마)");
+            let result = store.recall("alice", "영속 테스트 안녕", 5);
+            assert!(
+                !result.is_empty(),
+                "재오픈 후 recall에 이전 사건이 있어야 한다(영속 roundtrip 실패)"
+            );
+            assert!(
+                result.iter().any(|e| e.content.contains("영속 테스트 안녕")),
+                "재오픈 recall 결과에 '영속 테스트 안녕'이 없다: {:?}",
+                result.iter().map(|e| &e.content).collect::<Vec<_>>()
+            );
+        }
+
+        // 정리: 임시 DB 파일 + WAL/SHM 사이드카 삭제.
+        for suffix in &["", "-wal", "-shm"] {
+            let p = tmp_dir.join(format!("tunasalon_test_roundtrip_{}{suffix}.db", std::process::id()));
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+
+    /// (task-45) default_db_path: `$SALON_MEMORY_DB` override 해석.
+    ///
+    /// 순수 함수(디스크 무접촉) → env 조작 후 반환값 확인.
+    /// 테스트 격리: 이 테스트는 env를 직접 조작하므로 단독 검증한다.
+    /// 다른 테스트와 병렬 실행 시 env 공유 충돌 위험 → 단순히 반환값 확인(set→check→restore).
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn default_db_path_respects_salon_memory_db_env() {
+        let prev = std::env::var("SALON_MEMORY_DB").ok();
+
+        // SALON_MEMORY_DB 설정 시 그 경로를 반환해야 한다.
+        std::env::set_var("SALON_MEMORY_DB", "/tmp/test_custom_salon_memory.db");
+        let path = MemoryStore::default_db_path();
+        assert_eq!(
+            path.as_deref(),
+            Some(std::path::Path::new("/tmp/test_custom_salon_memory.db")),
+            "SALON_MEMORY_DB override가 default_db_path에 반영되어야 한다"
+        );
+
+        // 원래 값 복원.
+        match prev {
+            Some(v) => std::env::set_var("SALON_MEMORY_DB", v),
+            None => std::env::remove_var("SALON_MEMORY_DB"),
+        }
     }
 }
