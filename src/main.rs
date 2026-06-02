@@ -360,6 +360,8 @@ fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
 ///   - friend : OpenAI(qwen3.6-35b-fast, yongseek.iptime.org:8008, cap=1, max_tokens=256)
 ///   - 양쪽에 demo_persona_system_prompts() 적용.
 ///   - default = "cloud", summarizer → "friend" 라우팅, friend→cloud 폴백.
+///   - `SALON_CLOUD_ONLY` 설정 시: friend 백엔드/라우팅/폴백을 건너뛰고 cloud(cap=3) x3만.
+///     지인 vLLM 서버가 죽었을 때 라이브 테스트용(비파괴적 — 토글만 끄면 원복).
 ///
 /// SECURITY: api_key 없음(cloud는 localhost 프록시, friend는 내부망 서버).
 fn build_demo_room_pool() -> BackendPool {
@@ -378,6 +380,16 @@ fn build_demo_room_pool() -> BackendPool {
         ),
         demo_persona_system_prompts(),
     );
+
+    // SALON_CLOUD_ONLY: 지인(friend) vLLM 서버가 죽었을 때 cloud x3만으로 라이브 테스트.
+    // friend 백엔드/라우팅/폴백을 통째로 건너뛴다(서버 복구 시 토글만 끄면 원복).
+    let cloud_only = std::env::var("SALON_CLOUD_ONLY")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    if cloud_only {
+        pool.set_default("cloud");
+        return pool;
+    }
 
     // friend 백엔드: OpenAI 호환(vLLM), qwen3.6-35b-fast, cap=1, max_tokens=256.
     pool.add(
