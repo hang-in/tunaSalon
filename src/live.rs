@@ -337,21 +337,44 @@ impl LiveSession {
         // history 스냅샷(워커로 전달; placeholder는 content=None으로 포함됨).
         let mut history_snapshot = self.state.history.clone();
 
-        // 토픽 컨텍스트 주입 (INV-2): 생성 워커로 보내는 스냅샷에만. state.history/flow/recall 불변.
+        // 진행 지시 주입 (INV-2): 생성 워커로 보내는 스냅샷에만. state.history/flow/recall 불변.
         // query/flow/recall은 이미 위에서 계산 완료됨 — 스냅샷 조작은 그 이후.
-        if !self.topics.is_empty() {
-            let topic_content = format!(
-                "[진행 지시] 지금부터 '{}' 주제로만 구체적으로 이야기하세요. 멍때리기·쉬기·계획 같은 일반론으로 새지 말고 이 주제 자체를 깊게 파고드세요.",
-                self.topics.join("', '")
-            );
+        //
+        // 우선순위: 최근(마지막 3줄 내) 사람(나) 발화가 있으면 그것을 "토픽급"으로 올려
+        // 먼저 직접 반응하게 한다(사람이 화제를 바꾸면 페르소나가 따라오도록). 없으면 표준 화제 지시.
+        let recent_human_msg: Option<&str> = self
+            .state
+            .history
+            .iter()
+            .rev()
+            .take(3)
+            .find(|e| e.speaker == self.human_id && e.content.is_some())
+            .and_then(|e| e.content.as_deref());
+        let topics_joined = self.topics.join("', '");
+        let directive: Option<String> = match (recent_human_msg, self.topics.is_empty()) {
+            // 사람이 방금 말함 → 토픽급으로 우선 반응
+            (Some(h), true) => Some(format!(
+                "[진행 지시] 사용자(나)가 방금 \"{h}\"라고 했습니다. 다른 화제로 새지 말고 먼저 여기에 직접 구체적으로 반응하세요."
+            )),
+            (Some(h), false) => Some(format!(
+                "[진행 지시] 사용자(나)가 방금 \"{h}\"라고 했습니다. 먼저 여기에 직접 구체적으로 반응하세요(이게 최우선). 그 뒤에야 '{topics_joined}' 주제로 돌아가세요."
+            )),
+            // 사람 발화 없음 + 화제 있음 → 표준 화제 지시
+            (None, false) => Some(format!(
+                "[진행 지시] 지금부터 '{topics_joined}' 주제로만 구체적으로 이야기하세요. 멍때리기·쉬기·계획 같은 일반론으로 새지 말고 이 주제 자체를 깊게 파고드세요."
+            )),
+            // 화제도 사람 발화도 없음 → 주입 안 함(자유 스몰토크)
+            (None, true) => None,
+        };
+        if let Some(content) = directive {
             let topic_event = crate::model::Event {
                 ts: tick as f64 * self.config.tick_interval,
                 speaker: "(진행)".to_string(),
                 mark: 0.0,
-                content: Some(topic_content),
+                content: Some(content),
             };
             // 맨 앞(insert 0)이 아니라 맨 뒤(push)에 넣는다: 생성은 history 마지막 4줄만
-            // 보므로(ollama::format_recent), 대화가 길어져도 토픽 지시가 항상 컨텍스트에 들어간다.
+            // 보므로(ollama::format_recent), 대화가 길어져도 지시가 항상 컨텍스트에 들어간다.
             history_snapshot.push(topic_event);
         }
 
