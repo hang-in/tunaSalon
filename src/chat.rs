@@ -44,6 +44,7 @@ const BAR_WIDTH: usize = 12;
 /// - `theta`    : 게이트 임계값 (막대에 `|` 마커 표시).
 /// - `input`    : 현재 입력 버퍼.
 /// - `pending`  : true면 생성 진행 중 → 사이드바 하단에 "· 생각 중…" 표시(입력창은 건드리지 않음).
+/// - `flow`     : 수렴/발산 지표. None이면 "흐름 -", Some이면 게이지 막대 + 값 표시.
 pub fn render_chat(
     frame: &mut Frame,
     history: &[Event],
@@ -52,6 +53,7 @@ pub fn render_chat(
     theta: f64,
     input: &str,
     pending: bool,
+    flow: Option<crate::flow::FlowMetric>,
 ) {
     // 세로 분할: 상단(채팅+사이드바) | 하단(입력창)
     let root = Layout::default()
@@ -108,6 +110,29 @@ pub fn render_chat(
         gauge_lines.push(Line::from(""));
         gauge_lines.push(Line::from("· 생각 중…"));
     }
+
+    // ── 흐름 게이지 (persona-ui §5 "수렴 ▓░ 발산 ▓▓") ──────────────────
+    // convergence ∈ [0,1]: 1.0=수렴(식는 중), 0.0=발산(살아있음).
+    gauge_lines.push(Line::from(""));
+    match flow {
+        Some(m) => {
+            // 너비 10 채움 막대: convergence 비율로 '#' 채우기.
+            const FLOW_BAR_WIDTH: usize = 10;
+            let filled = (m.convergence * FLOW_BAR_WIDTH as f64)
+                .round()
+                .clamp(0.0, FLOW_BAR_WIDTH as f64) as usize;
+            let bar: String = (0..FLOW_BAR_WIDTH)
+                .map(|i| if i < filled { '#' } else { '.' })
+                .collect();
+            gauge_lines.push(Line::from(vec![
+                Span::raw(format!("흐름 수렴 {bar} {:.2}", m.convergence)),
+            ]));
+        }
+        None => {
+            gauge_lines.push(Line::from("흐름 -"));
+        }
+    }
+
     frame.render_widget(
         Paragraph::new(gauge_lines)
             .block(Block::default().title("gauges").borders(Borders::ALL)),
@@ -213,6 +238,8 @@ impl ChatApp {
             let names = self.names.clone();
             let theta = self.theta;
             let input_snapshot = input_buf.clone();
+            // 수렴/발산 지표: 매 루프 갱신 (content 쌓이면 자동으로 움직임).
+            let flow = self.session.flow();
 
             if let Some(ref mut terminal) = self.terminal {
                 if terminal
@@ -225,6 +252,7 @@ impl ChatApp {
                             theta,
                             &input_snapshot,
                             pending,
+                            flow,
                         )
                     })
                     .is_err()
@@ -392,7 +420,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false))
+            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None))
             .expect("render ok");
 
         let text = buffer_text(&terminal);
@@ -424,7 +452,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false))
+            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None))
             .expect("render ok");
 
         let text = buffer_text(&terminal);
@@ -464,6 +492,7 @@ mod tests {
                     0.65,
                     "test-input-buffer",
                     false,
+                    None,
                 )
             })
             .expect("render ok");
@@ -501,7 +530,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("test terminal");
         // panic이 없어야 한다
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", true))
+            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", true, None))
             .expect("render ok (panic 없음)");
 
         let text = buffer_text(&terminal);

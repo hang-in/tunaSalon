@@ -165,6 +165,7 @@ fn main() {
         session.tick();
 
         // 생성 결과 drain: 도착한 발화마다 출력.
+        let mut new_utterance = false;
         while let Some(ev) = session.poll_generation() {
             let name = display_name(&personas, &ev.speaker);
             match &ev.content {
@@ -172,12 +173,21 @@ fn main() {
                 None => println!("{name}: (…)"),
             }
             utterance_count += 1;
+            new_utterance = true;
 
             // HUMAN_TURN_AFTER번째 발화 도착 후 사람 턴 1회 삽입.
             if utterance_count > HUMAN_TURN_AFTER && !human_sent {
                 println!("나: {HUMAN_TEXT}");
                 session.submit_human(HUMAN_TEXT.to_string());
                 human_sent = true;
+            }
+        }
+
+        // 발화가 새로 도착했을 때 흐름 지표 출력(매 루프 노이즈 방지).
+        if new_utterance {
+            match session.flow() {
+                Some(m) => println!("  [흐름] 수렴 {:.2}", m.convergence),
+                None => println!("  [흐름] -"),
             }
         }
 
