@@ -1,5 +1,7 @@
+use salon::chat::ChatApp;
 use salon::driver;
 use salon::headless::HeadlessSink;
+use salon::live::LiveSession;
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
 use salon::pool::{BackendConfig, BackendPool};
 use salon::preset::RoomPreset;
@@ -10,6 +12,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::io;
 use std::process;
+use std::sync::Arc;
 use std::time::Duration;
 
 const DEFAULT_SEED: u64 = 42;
@@ -39,6 +42,8 @@ struct Cli {
     llm: bool,
     model: String,
     ollama_host: Option<String>,
+    // 인터랙티브 채팅 TUI 모드 (기본 false; 실제 터미널 필요)
+    chat: bool,
 }
 
 fn main() {
@@ -98,6 +103,28 @@ fn main() {
 
     if cli.sweep {
         sweep::run(cli.seed, cli.ticks);
+        return;
+    }
+
+    // --chat: 데모 룸 풀(cloud + friend) + LiveSession + ChatApp.
+    // headless/--llm/기본 경로와 완전히 분리된 모드이므로 최우선 처리.
+    if cli.chat {
+        let pool = build_demo_room_pool();
+        let pool = Arc::new(pool);
+        let theta = config.theta;
+        let session =
+            LiveSession::new(config, demo_personas(), cli.seed, pool, "나");
+        let names = persona_names(&personas);
+        match ChatApp::new(session, names, theta) {
+            Ok(mut app) => {
+                let _ = app.run();
+            }
+            Err(e) => {
+                eprintln!("채팅 TUI를 시작할 수 없습니다: {e}");
+                eprintln!("실제 터미널에서 실행하세요. (비대화형이면 cargo run --example chat_demo)");
+                process::exit(1);
+            }
+        }
         return;
     }
 
@@ -213,6 +240,7 @@ where
         // 기본은 cloud 모델(원격 프록시, 로컬 RAM 0). 로컬 ollama는 맥북 랙으로 금지.
         model: "gemma4:31b-cloud".to_string(),
         ollama_host: None,
+        chat: false,
     };
     let mut args = args.into_iter();
 
@@ -232,6 +260,7 @@ where
                 cli.room = Some(raw);
             }
             "--llm" => cli.llm = true,
+            "--chat" => cli.chat = true,
             "--model" => {
                 let raw = args.next().ok_or_else(|| "missing value for --model".to_string())?;
                 cli.model = raw;
@@ -318,6 +347,54 @@ fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
     m
 }
 
+/// --chat 및 chat_demo 공용 데모 룸 풀을 빌드한다.
+///
+/// 구성:
+///   - cloud  : Ollama(gemma4:31b-cloud, localhost:11434, cap=3, num_ctx=None)
+///   - friend : OpenAI(qwen3.6-35b-fast, yongseek.iptime.org:8008, cap=1, max_tokens=256)
+///   - 양쪽에 demo_persona_system_prompts() 적용.
+///   - default = "cloud", summarizer → "friend" 라우팅, friend→cloud 폴백.
+///
+/// SECURITY: api_key 없음(cloud는 localhost 프록시, friend는 내부망 서버).
+fn build_demo_room_pool() -> BackendPool {
+    let mut pool = BackendPool::new();
+
+    // cloud 백엔드: Ollama, gemma4:31b-cloud, cap=3, num_ctx=None(원격 auto-max).
+    pool.add(
+        BackendConfig::new(
+            "cloud",
+            "gemma4:31b-cloud",
+            "http://localhost:11434",
+            None,
+            3,
+            None,
+            Duration::from_secs(60),
+        ),
+        demo_persona_system_prompts(),
+    );
+
+    // friend 백엔드: OpenAI 호환(vLLM), qwen3.6-35b-fast, cap=1, max_tokens=256.
+    pool.add(
+        BackendConfig::new_openai(
+            "friend",
+            "qwen3.6-35b-fast",
+            "http://yongseek.iptime.org:8008",
+            None,
+            1,
+            Some(256),
+            Duration::from_secs(60),
+        ),
+        demo_persona_system_prompts(),
+    );
+
+    pool.set_default("cloud");
+    pool.add_route("summarizer", "friend");
+    // friend 서버 다운 시 cloud로 폴백.
+    pool.set_fallback("friend", "cloud");
+
+    pool
+}
+
 fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
     personas
         .iter()
@@ -326,7 +403,7 @@ fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>] [--llm] [--model <name>] [--ollama-host <url>]"
+    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>] [--llm] [--model <name>] [--ollama-host <url>] [--chat]"
 }
 
 #[cfg(test)]
@@ -353,6 +430,7 @@ mod tests {
                 llm: false,
                 model: "gemma4:31b-cloud".to_string(),
                 ollama_host: None,
+                chat: false,
             })
         );
     }
@@ -383,6 +461,7 @@ mod tests {
                 llm: false,
                 model: "gemma4:31b-cloud".to_string(),
                 ollama_host: None,
+                chat: false,
             })
         );
     }
