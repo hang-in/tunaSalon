@@ -39,19 +39,20 @@ fn demo_prompts() -> BTreeMap<String, String> {
 }
 
 fn main() {
-    let model = std::env::args().nth(1).unwrap_or_else(|| "gemma4:e4b".to_string());
+    // 기본은 cloud(gemma4:31b-cloud) — 로컬 ollama는 맥북 랙으로 금지. 인자로 다른 모델 지정 가능.
+    let model = std::env::args().nth(1).unwrap_or_else(|| "gemma4:31b-cloud".to_string());
     let endpoint = "http://localhost:11434".to_string();
 
     let prompts = demo_prompts();
-    // 로컬 모델(e4b)은 RAM 상한을 위해 8192 ctx 명시. cloud 모델이면 None(auto-max)이 맞지만
-    // 이 example은 로컬 우선이므로 Some(8192)로 고정한다.
+    // cloud(:cloud) 모델은 num_ctx None(원격 auto-max), 로컬 모델만 RAM 상한 8192.
+    let num_ctx = if model.ends_with(":cloud") { None } else { Some(8192) };
     let mut backend = OllamaBackend::new(
         model.clone(),
         endpoint,
         None,
         prompts,
         Duration::from_secs(60),
-        Some(8192),
+        num_ctx,
     );
 
     // 세 페르소나가 똑같이 답할 공통 맥락 한 줄.

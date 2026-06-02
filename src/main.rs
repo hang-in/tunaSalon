@@ -112,6 +112,18 @@ fn main() {
             .clone()
             .unwrap_or_else(|| "http://localhost:11434".to_string());
 
+        // 로컬 모델 적재 금지(맥북 RAM/Metal 랙). localhost 데몬은 ":cloud" 아닌 모델을
+        // 로컬로 적재하므로 거부한다. cloud(:cloud, 원격 프록시) 또는 원격 --ollama-host(https)만 허용.
+        let local_daemon = endpoint.contains("localhost") || endpoint.contains("127.0.0.1");
+        if local_daemon && !cli.model.ends_with(":cloud") {
+            eprintln!(
+                "error: 로컬 모델 '{}'은 localhost 데몬이 RAM/Metal에 적재해 랙을 유발합니다(로컬 ollama 금지).",
+                cli.model
+            );
+            eprintln!("cloud 모델(예: --model gemma4:31b-cloud)을 쓰거나 원격 --ollama-host를 지정하세요.");
+            process::exit(1);
+        }
+
         // 직접 원격(https) 엔드포인트를 가리킬 때만 API 키를 첨부한다. localhost 데몬은 키 불필요.
         // SECURITY: 키 값을 로그/에러/출력에 절대 넣지 않는다.
         let api_key: Option<String> = if endpoint.starts_with("https://") {
@@ -198,7 +210,8 @@ where
         delay_ms: DEFAULT_DELAY_MS,
         room: None,
         llm: false,
-        model: "gemma4:e4b".to_string(),
+        // 기본은 cloud 모델(원격 프록시, 로컬 RAM 0). 로컬 ollama는 맥북 랙으로 금지.
+        model: "gemma4:31b-cloud".to_string(),
         ollama_host: None,
     };
     let mut args = args.into_iter();
@@ -338,7 +351,7 @@ mod tests {
                 delay_ms: DEFAULT_DELAY_MS,
                 room: None,
                 llm: false,
-                model: "gemma4:e4b".to_string(),
+                model: "gemma4:31b-cloud".to_string(),
                 ollama_host: None,
             })
         );
@@ -368,7 +381,7 @@ mod tests {
                 delay_ms: DEFAULT_DELAY_MS,
                 room: None,
                 llm: false,
-                model: "gemma4:e4b".to_string(),
+                model: "gemma4:31b-cloud".to_string(),
                 ollama_host: None,
             })
         );
