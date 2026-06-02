@@ -98,7 +98,11 @@ pub fn render_chat(
     );
 
     // ── 사이드바 (우측) ───────────────────────────────────────────────
+    // 참여자 수: 페르소나(λ 게이지 있음) + 사람 "나"(외부 이벤트라 λ 없음).
+    let persona_count = intensities.len();
     let mut gauge_lines: Vec<Line> = Vec::new();
+    gauge_lines.push(Line::from(format!("나 + 페르소나 {persona_count}")));
+    gauge_lines.push(Line::from(""));
     for (id, &lambda) in intensities {
         let name = names.get(id).map(String::as_str).unwrap_or(id.as_str());
         // 이름 줄
@@ -142,8 +146,11 @@ pub fn render_chat(
     gauge_lines.push(Line::from(format!("식힘 x{mu_scale:.2}")));
 
     frame.render_widget(
-        Paragraph::new(gauge_lines)
-            .block(Block::default().title("gauges").borders(Borders::ALL)),
+        Paragraph::new(gauge_lines).block(
+            Block::default()
+                .title(format!("참여자 {}명", persona_count + 1))
+                .borders(Borders::ALL),
+        ),
         columns[1],
     );
 

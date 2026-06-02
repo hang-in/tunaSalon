@@ -297,9 +297,10 @@ fn demo_personas() -> Vec<Persona> {
             name: "Friendly Regular".to_string(),
             base_rate: 0.80,
         },
+        // id "chaos"는 골든 보존 위해 유지. 역할/표시는 realist로 교체(2026-06-03).
         Persona {
             id: "chaos".to_string(),
-            name: "Chaos Guest".to_string(),
+            name: "Grounded Realist".to_string(),
             base_rate: 0.70,
         },
         Persona {
@@ -317,16 +318,17 @@ fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
     let lang = salon::locale::reply_language();
     // 공통 꼬리말: 언어 지시 + 행동 가드레일.
     let common = format!(
-        " A real person takes part in this chat; their messages are labelled \"나\". When 나 says or asks something, respond to 나 directly and follow their lead (answer the question, do what they ask) instead of just riffing with the other personas. Always respond in {lang}, even if others write in another language. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue)."
+        " A real person takes part in this chat; their messages are labelled \"나\". When 나 says or asks something, respond to 나 directly and follow their lead (answer the question, do what they ask) instead of just riffing with the other personas. Always respond in {lang}, even if others write in another language. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue). Use chat-laughter like ㅋㅋㅋ/ㅎㅎ and emoji very sparingly — at most occasionally, never in every message."
     );
     let mut m = BTreeMap::new();
     m.insert(
         "friend".to_string(),
         format!("You are a warm, easygoing regular in this group chat. React to the mood and feelings with 2-3 natural, conversational sentences.{common}"),
     );
+    // id는 "chaos"로 유지(골든 보존)하되 역할은 realist로 교체(사용자 결정 2026-06-03).
     m.insert(
         "chaos".to_string(),
-        format!("You are a playful chaos-stirrer. Toss in a couple of short, slightly absurd sentences that provoke a reaction, then bow out.{common}"),
+        format!("You are a level-headed realist in this group chat. When the talk drifts into exaggeration, hype, or wishful thinking, gently bring it back to earth with one or two grounded, practical sentences — concrete and matter-of-fact, never absurd or random.{common}"),
     );
     m.insert(
         "summarizer".to_string(),
@@ -338,9 +340,10 @@ fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
 /// --room 사용 시 적용되는 데모 모디파이어.
 fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
     let mut m = BTreeMap::new();
+    // realist: 과장·비현실에 반응(중간 reactivity), 도발은 낮게. (id는 "chaos" 유지)
     m.insert(
         "chaos".to_string(),
-        PersonaModifier { reactivity: 0.6, provocativeness: 2.0 },
+        PersonaModifier { reactivity: 1.0, provocativeness: 0.8 },
     );
     m.insert(
         "friend".to_string(),
