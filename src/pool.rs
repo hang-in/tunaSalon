@@ -497,19 +497,16 @@ impl BackendPool {
     }
 }
 
-impl PersonaRuntime for BackendPool {
-    /// speaker를 폴백 체인 순서로 시도해 첫 Some을 반환한다 (task-24).
+impl BackendPool {
+    /// 워커 스레드에서 Arc<BackendPool>로 호출하기 위한 &self 생성 경로 (task-29).
     ///
-    /// - `fallback_chain(speaker)` 순서로 각 백엔드를 시도한다.
-    /// - 첫 `Some(text)`을 반환하고 이후 백엔드는 시도하지 않는다.
-    /// - 모든 백엔드가 None이면 None 반환(panic 없음).
-    /// - rng를 소비하지 않는다 → 엔진 결정성 보존(INV-1).
-    fn generate(
-        &mut self,
+    /// `fallback_chain(speaker)` 순서로 각 백엔드를 시도해 첫 `Some(text)`을 반환한다.
+    /// 모든 백엔드가 None이면 None 반환(panic 없음). rng 불요 → 엔진 결정성 보존.
+    pub fn generate_one(
+        &self,
         speaker: &PersonaId,
         history: &[Event],
         tick: u64,
-        _rng: &mut ChaCha8Rng,
     ) -> Option<String> {
         // fallback_chain은 &self를 빌리므로 Vec<String>으로 복사해 borrow 충돌을 피한다.
         let chain = self.fallback_chain(speaker);
@@ -528,6 +525,22 @@ impl PersonaRuntime for BackendPool {
         }
 
         None
+    }
+}
+
+impl PersonaRuntime for BackendPool {
+    /// speaker를 폴백 체인 순서로 시도해 첫 Some을 반환한다 (task-24).
+    ///
+    /// - `generate_one`에 위임한다(task-29: 동작 동일, &mut 불필요하나 트레이트 서명 유지).
+    /// - rng를 소비하지 않는다 → 엔진 결정성 보존(INV-1).
+    fn generate(
+        &mut self,
+        speaker: &PersonaId,
+        history: &[Event],
+        tick: u64,
+        _rng: &mut ChaCha8Rng,
+    ) -> Option<String> {
+        self.generate_one(speaker, history, tick)
     }
 }
 

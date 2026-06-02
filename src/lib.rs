@@ -3,6 +3,7 @@ pub mod gate;
 pub mod hawkes;
 pub mod headless;
 pub mod human;
+pub mod live;
 pub mod model;
 pub mod ollama;
 pub mod openai;
