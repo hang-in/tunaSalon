@@ -53,7 +53,7 @@ v0.3(`salon-engine-v3.md`)이 LLM 1명을 결정적 엔진에 붙였다. v0.4는
 - (G7) 백엔드 추상화: `enum Backend { Ollama, OpenAI }` + 신규 `OpenAIBackend`(vLLM chat completions). 풀이 프로토콜 2종을 담는다.
 
 ### Non-goals
-- ❌ 라이브 burst(같은 맥락 다중 페르소나 동시 반응) - **보류**. 순차 라이브 지연을 먼저 측정한 뒤 v0.4.x/v0.5에서 결정(인과적 턴테이킹과 충돌).
+- ❌ 라이브 burst(같은 맥락 다중 페르소나 동시 반응) - **보류**. 순차 라이브 지연을 먼저 측정한 뒤 v0.4.x/v0.5에서 결정(인과적 턴테이킹과 충돌). (task-25 측정 2026-06-02: cloud `gemma4:31b-cloud` 순차 1발화 warm avg ~1.6s, max ~3.4s. 순차 틱이 체감될 만큼 블록 → burst/파이프라이닝은 생동감에 유의미하나 인과성 충돌로 v0.4.x/v0.5로.)
 - ❌ async/tokio 전환. ❌ FlowMeter 임베딩(v0.5), MetaController(v0.6).
 - ❌ 잔여 cloud budget 프로그램 조회(Ollama가 API 미노출, #15663) - 사용자 모니터링으로 커버. ❌ prompt cache 효과 측정(별도, 필요 시).
 

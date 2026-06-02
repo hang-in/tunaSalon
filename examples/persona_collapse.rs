@@ -1,20 +1,22 @@
-//! persona collapse 관전 도구.
+//! persona collapse 관전 도구 (v0.4 병렬 버전).
 //!
-//! 같은 작은 모델에 서로 다른 페르소나 system prompt를 주고, **같은 맥락**에 답하게 해서
+//! 같은 모델에 서로 다른 페르소나 system prompt를 주고, **같은 맥락**에 동시에 답하게 해서
 //! 출력 톤이 페르소나마다 다른지(유지) 비슷하게 무너지는지(collapse)를 사람이 비교한다.
 //!
-//! 실제 Ollama 호출이 필요하다(로컬 데몬 + 모델). 예:
-//!   ollama pull gemma4:e4b   # 또는 cloud 모델: ollama pull <model>:cloud
-//!   cargo run --example persona_collapse                 # 기본 gemma4:e4b
-//!   cargo run --example persona_collapse -- glm-5.1:cloud # cloud 모델
+//! v0.4: BackendPool + generate_batch로 3 페르소나를 동시 호출한다(순차 → 병렬).
+//! cap=3이므로 세 요청이 동시에 in-flight로 나간다.
 //!
-//! Ollama가 안 떠 있으면 각 줄이 "(no response)"로 나온다(panic 없음).
+//! 실제 Ollama cloud 호출이 필요하다. 예:
+//!   cargo run --example persona_collapse                         # 기본 gemma4:31b-cloud
+//!   cargo run --example persona_collapse -- gemma4:31b-cloud     # 동일
+//!   SALON_CLOUD_MODEL=gemma4:31b-cloud cargo run --example persona_collapse
+//!
+//! Ollama가 안 떠 있거나 모델이 없으면 각 줄이 "(no response)"로 나온다(panic 없음).
 
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use salon::model::Event;
-use salon::ollama::OllamaBackend;
-use salon::runtime::PersonaRuntime;
+use salon::pool::{BackendConfig, BackendPool};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -39,42 +41,64 @@ fn demo_prompts() -> BTreeMap<String, String> {
 }
 
 fn main() {
-    // 기본은 cloud(gemma4:31b-cloud) — 로컬 ollama는 맥북 랙으로 금지. 인자로 다른 모델 지정 가능.
-    let model = std::env::args().nth(1).unwrap_or_else(|| "gemma4:31b-cloud".to_string());
-    let endpoint = "http://localhost:11434".to_string();
+    // 기본은 cloud(gemma4:31b-cloud) — 로컬 ollama는 맥북 랙으로 금지.
+    // 인자1 또는 SALON_CLOUD_MODEL 환경변수로 모델 지정 가능.
+    let model = std::env::args()
+        .nth(1)
+        .or_else(|| std::env::var("SALON_CLOUD_MODEL").ok())
+        .unwrap_or_else(|| "gemma4:31b-cloud".to_string());
 
-    let prompts = demo_prompts();
-    // cloud(:cloud) 모델은 num_ctx None(원격 auto-max), 로컬 모델만 RAM 상한 8192.
+    // cloud 모델은 num_ctx None(원격 auto-max), 로컬 모델만 RAM 상한 8192.
     let num_ctx = if model.ends_with(":cloud") { None } else { Some(8192) };
-    let mut backend = OllamaBackend::new(
-        model.clone(),
-        endpoint,
-        None,
-        prompts,
-        Duration::from_secs(60),
-        num_ctx,
+
+    // BackendPool: 단일 cloud 백엔드, cap=3으로 3 페르소나 동시 가능.
+    let mut pool = BackendPool::new();
+    pool.add(
+        BackendConfig::new(
+            "cloud",
+            model.clone(),
+            "http://localhost:11434",
+            None,          // api_key 없음
+            3,             // cloud cap: 동시 3
+            num_ctx,
+            Duration::from_secs(60),
+        ),
+        demo_prompts(),
     );
+    pool.set_default("cloud");
 
     // 세 페르소나가 똑같이 답할 공통 맥락 한 줄.
     let opening = "오늘 비 와서 다들 약속 취소했대. 좀 심심하네.";
-    let history = vec![Event {
+    let opening_event = Event {
         ts: 0.0,
         speaker: "사람".to_string(),
         mark: 1.0,
         content: Some(opening.to_string()),
-    }];
-    // rng는 OllamaBackend가 소비하지 않지만 시그니처상 필요하다.
-    let mut rng = ChaCha8Rng::seed_from_u64(0);
+    };
+
+    // 각 페르소나에 같은 opening history를 배정한다.
+    let jobs: Vec<(String, Vec<Event>)> = vec![
+        ("friend".to_string(), vec![opening_event.clone()]),
+        ("chaos".to_string(), vec![opening_event.clone()]),
+        ("summarizer".to_string(), vec![opening_event.clone()]),
+    ];
 
     println!("model: {model}");
     println!("opening> {opening}\n");
+    println!("(3 페르소나 동시 호출 중 — cap=3, BackendPool::generate_batch)\n");
 
-    for persona in ["friend", "chaos", "summarizer"] {
-        let out = backend
-            .generate(&persona.to_string(), &history, 1, &mut rng)
-            .unwrap_or_else(|| "(no response / Ollama 안 떠 있거나 모델 없음)".to_string());
+    // generate_batch: 세 요청이 동시에 나가고 입력 순서대로 결과가 반환된다.
+    let results = pool.generate_batch(&jobs, 1);
+
+    for (persona, text) in &results {
+        let out = text
+            .as_deref()
+            .unwrap_or("(no response / 서버 미가동·모델 없음)");
         println!("[{persona}] {out}\n");
     }
 
     println!("세 줄의 톤이 서로 다르면 페르소나 유지, 비슷하면 collapse.");
+
+    // rng: PersonaRuntime::generate 시그니처용으로 예약. generate_batch는 사용하지 않는다.
+    let _rng = ChaCha8Rng::seed_from_u64(0);
 }
