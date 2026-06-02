@@ -3,8 +3,8 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.7-blue)
-![tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.8-blue)
+![tests](https://img.shields.io/badge/tests-210%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
@@ -204,6 +204,21 @@ A note worth stating: in the chaos-room demo, the conversation keeps diverging, 
 
 ---
 
+## Long-term memory — friend engine, first increment (v0.8)
+
+The original engine-layer roadmap (v0.1–v0.7) is complete. v0.8 opens a separate track: **personas that remember**. A persona who's been in the room with you starts recalling what was said and weaves it back into what it says next.
+
+This first increment is deliberately small:
+- **Participation-based memory**: an in-memory store of events `{room, ts, speaker, content}` plus who was present in each room. A persona can only recall from rooms it actually sat in — no recalling a conversation it wasn't part of.
+- **Keyword recall**: token-overlap scoring (reusing the FlowMeter tokenizer) picks the top-K past lines for the current context. Injected into the recall slot the v0.3 context interface already reserved.
+- **Recall eval harness**: the real payoff. A headless scenario plants a known fact (SSOT) plus distractors across rooms, then auto-scores the retrieval layer for recall/precision and participation isolation — deterministically.
+
+What's **not** here yet (later): BGE-M3 semantic search, SQLite persistence (L1), forgetting, subjective per-persona storage, cross-room impressions of people.
+
+**Content-gated / golden preserved**: recall is wired into the **live chat path only**. The deterministic headless/driver path never injects recall, so with no LLM content there are no events, no recall, and the output stays byte-identical to v0.1.
+
+---
+
 ## Try it
 
 All you need is [Rust](https://rustup.rs). The default run needs no LLM and no network.
@@ -220,7 +235,7 @@ cargo run -- --llm                                # opt in to LLM (default cloud
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
 cargo run --example chat_demo                     # non-interactive chat loop with flow readout per line
-cargo test                                        # 184 tests, including the smoke gates
+cargo test                                        # 210 tests, including the smoke gates + recall eval
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -229,7 +244,7 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.7 (now):** MetaController — macro→micro feedback: convergence → cooling (`mu_scale`). Weak gain + floor for stability; content-gated so the default deterministic run is unchanged. "식힘" gauge in TUI sidebar and `chat_demo`. Rust, 184 tests, smoke gates green.
+**v0.8 (now):** Long-term memory (friend engine), first increment — participation-based in-memory store, keyword recall into the v0.3 recall slot, and an SSOT recall-eval harness. Live chat path only, so the deterministic run stays byte-identical. Rust, 210 tests, smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
@@ -239,11 +254,12 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 - **v0.5 — join the room:** human-in-the-loop chat (HumanChannel + `--chat` TUI). `chat_demo` example.
 - **v0.6 — FlowMeter:** convergence/divergence measurement (observe-only). Token-overlap approximation; BGE-M3 embeddings later. Live gauge in TUI + `chat_demo` readout.
 - **v0.7 — MetaController:** macro→micro feedback (cool the room as it converges). The original engine-layer roadmap — rhythm → chemistry → LLM → concurrency → chat → flow-meter → meta-controller — is now complete.
+- **v0.8 — friend engine (first increment):** participation-based memory + keyword recall + recall-eval harness. Personas start remembering what was said in rooms they were in.
 
 **What's next (separate tracks, no fixed order):**
-- **Long-term memory (friend engine):** personas remembering past conversations across sessions. The recall slot in the v0.3 context interface is already reserved. Design notes in `docs/temp/`.
-- **BGE-M3 embeddings:** drop into the FlowMeter interface for a more precise convergence signal than token overlap.
-- **Persona invite / visuals:** bringing new personas in mid-conversation; richer TUI representation.
+- **Friend engine, deeper:** BGE-M3 semantic search, SQLite persistence, forgetting, subjective storage, cross-room impressions — building on the v0.8 increment.
+- **Web frontend:** moving the chat UI to the browser for a production-grade, shareable app (Rust engine kept as-is, served over WebSocket; the TUI stays as a debug tool). Planned, parked — see `docs/plans/salon-web-frontend.md`.
+- **Persona invite / visuals:** bringing new personas in mid-conversation; richer representation.
 
 ---
 

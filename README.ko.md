@@ -3,8 +3,8 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.7-blue)
-![tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.8-blue)
+![tests](https://img.shields.io/badge/tests-210%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-%EC%84%A0%ED%83%9D%EC%82%AC%ED%95%AD%2C%20%EA%B8%B0%EB%B3%B8%20%EA%BA%BC%EC%A7%90-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
@@ -264,6 +264,21 @@ v0.6은 수렴을 측정했습니다. v0.7은 **그것에 반응합니다**.
 
 ---
 
+## 장기기억 - friend engine 첫 증분 (v0.8)
+
+원래 엔진 레이어 로드맵(v0.1~v0.7)은 완성됐습니다. v0.8은 별도 트랙을 엽니다: **기억하는 페르소나**. 같은 방에 있던 페르소나가 무슨 말이 오갔는지 회상해 다음 발화에 끼워 넣기 시작합니다.
+
+첫 증분은 의도적으로 작게 잡았습니다.
+- **참여 기반 기억**: 사건 `{방, ts, 화자, 내용}` + 각 방에 누가 있었는지를 인메모리로 저장. 페르소나는 **자기가 실제로 앉아 있던 방**만 회상합니다. 참여하지 않은 대화는 회상 금지.
+- **키워드 회상**: 토큰 중복 점수(FlowMeter 토크나이저 재사용)로 현재 맥락에 맞는 과거 발화 상위 K개를 골라, v0.3이 이미 예약해둔 회상 슬롯에 주입.
+- **회상 평가 하네스**: 진짜 이점. 헤드리스 시나리오에 정답(SSOT)과 distractor를 방마다 심어두고, 검색층을 재현율/정확도와 참여 격리로 자동 채점합니다 - 결정적으로.
+
+아직 **없는 것**(이후): BGE-M3 의미 검색, SQLite 영속(L1), 망각, 캐릭터별 주관적 저장, 방을 가로지르는 인물 인상.
+
+**콘텐츠 게이트 / 골든 보존**: 회상은 **라이브 채팅 경로에만** 연결됩니다. 결정적 헤드리스/driver 경로는 회상을 주입하지 않으므로, LLM 콘텐츠가 없으면 사건도 회상도 없고 출력은 v0.1과 바이트 단위로 동일합니다.
+
+---
+
 ## 실행하기
 
 Rust만 있으면 됩니다. 기본 실행은 LLM도 네트워크도 필요 없습니다.
@@ -280,7 +295,7 @@ cargo run -- --llm                                # LLM opt-in (기본 클라우
 cargo run --example persona_collapse              # 같은 모델, 두 페르소나 비교 (Ollama 필요)
 cargo run --example mixed_bench                   # 클라우드 + 지인서버 vLLM 혼합 (두 백엔드 필요)
 cargo run --example chat_demo                     # 흐름 수렴 수치 출력이 포함된 비대화형 채팅 루프
-cargo test                                        # 184 tests
+cargo test                                        # 210 tests (스모크 게이트 + 회상 평가 포함)
 ```
 
 주요 손잡이는 다음과 같습니다.
@@ -298,7 +313,7 @@ cargo test                                        # 184 tests
 
 ## 현재 상태
 
-**v0.7 (현재):** MetaController - 거시→미시 피드백: 수렴 → 냉각(`mu_scale`). 약한 게인 + 하한선으로 안정성 확보. 콘텐츠 게이트로 기본 결정적 실행은 그대로. TUI 사이드바와 `chat_demo`에 "식힘" 게이지. Rust, 184 tests, 스모크 게이트 green.
+**v0.8 (현재):** 장기기억(friend engine) 첫 증분 - 참여 기반 인메모리 저장 + 키워드 회상(v0.3 회상 슬롯 주입) + SSOT 회상 평가 하네스. 라이브 채팅 경로에만 연결돼 결정적 실행은 그대로. Rust, 210 tests, 스모크 게이트 green.
 
 **지금까지:**
 - **v0.1 - 리듬:** μ, θ, 화자 선택만으로 발언/침묵 리듬 검증.
@@ -308,11 +323,12 @@ cargo test                                        # 184 tests
 - **v0.5 - 방에 참여:** 사람이 직접 채팅(HumanChannel + `--chat` TUI). `chat_demo` 예제 추가.
 - **v0.6 - FlowMeter:** 대화 수렴/발산 측정(관찰 전용). 토큰 중복 근사, 이후 BGE-M3 임베딩. TUI 게이지 + `chat_demo` 수치 출력.
 - **v0.7 - MetaController:** 거시→미시 피드백(수렴하면 방을 식힘). 원래 설계의 엔진 레이어 로드맵 - 리듬 → 케미 → LLM → 동시성 → 채팅 → 흐름측정 → 메타컨트롤러 - 이 완성됐습니다.
+- **v0.8 - friend engine (첫 증분):** 참여 기반 기억 + 키워드 회상 + 회상 평가 하네스. 페르소나가 자기가 있던 방의 지난 대화를 기억하기 시작합니다.
 
 **다음 (별도 트랙, 순서 미정):**
-- **장기기억 (friend engine):** 세션을 넘어 과거 대화를 기억하는 페르소나. v0.3 컨텍스트 인터페이스에 회상 슬롯이 이미 예약돼 있습니다. 설계 노트는 `docs/temp/`.
-- **BGE-M3 임베딩:** 토큰 중복보다 정밀한 수렴 신호가 필요해지면 FlowMeter 인터페이스에 교체 장착.
-- **페르소나 초대 / 시각화:** 대화 중 새 페르소나를 불러오기, TUI 표현 강화.
+- **friend engine 심화:** BGE-M3 의미 검색, SQLite 영속, 망각, 주관적 저장, 방을 가로지르는 인물 인상 - v0.8 증분 위에 쌓습니다.
+- **web 프런트엔드:** 채팅 UI를 브라우저로 옮겨 프로덕션 레벨의 공유 가능한 앱으로(Rust 엔진은 그대로, WebSocket으로 서빙. TUI는 디버그용으로 유지). planned·파킹 - `docs/plans/salon-web-frontend.md` 참조.
+- **페르소나 초대 / 시각화:** 대화 중 새 페르소나를 불러오기, 표현 강화.
 
 ---
 
