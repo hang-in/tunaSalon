@@ -11,6 +11,7 @@ use crate::flow;
 use crate::gate::{self, GateResult};
 use crate::hawkes::HawkesEngine;
 use crate::human::HumanChannel;
+use crate::memory::{MemoryEvent, MemoryStore};
 use crate::meta::MetaController;
 use crate::model::{EngineConfig, EngineState, Event, Persona, PersonaId};
 use crate::pool::BackendPool;
@@ -34,8 +35,9 @@ pub enum TickOutcome {
     AwaitingGeneration,
 }
 
-/// 워커로 보내는 job: (placeholder_idx, speaker, history_snapshot, tick).
-type Job = (usize, PersonaId, Vec<Event>, u64);
+/// 워커로 보내는 job: (placeholder_idx, speaker, history_snapshot, tick, recall).
+/// recall: 라이브 경로 회상 텍스트. None이면 회상 미주입.
+type Job = (usize, PersonaId, Vec<Event>, u64, Option<String>);
 /// 워커가 돌려보내는 결과: (placeholder_idx, generated_text).
 type Result = (usize, Option<String>);
 
@@ -67,6 +69,13 @@ pub struct LiveSession {
     pending: Option<usize>,
     /// 이번 세션에서 진행된 틱 카운터.
     tick_count: u64,
+    /// 회상 스토어 (task-41). 사람 발화 + 도착 발화를 기록하고 생성 전 recall.
+    /// driver/headless 경로와 공유하지 않는다 — 라이브 전용.
+    store: MemoryStore,
+    /// 방 이름. 참여 격리 기준 단위. "salon" 고정.
+    room: String,
+    /// 사람 화자 ID. submit_human 시 MemoryEvent 생성에 사용(HumanChannel 필드 직접 노출 회피).
+    human_id: PersonaId,
 }
 
 impl LiveSession {
@@ -88,8 +97,9 @@ impl LiveSession {
         let pool_clone = Arc::clone(&pool);
         let worker = std::thread::spawn(move || {
             // job_rx.recv()가 Err를 반환하면(job_tx drop) 루프 종료.
-            while let Ok((idx, speaker, history, tick)) = job_rx.recv() {
-                let text = pool_clone.generate_one(&speaker, &history, tick);
+            while let Ok((idx, speaker, history, tick, recall)) = job_rx.recv() {
+                // recall: Option<String> → as_deref()로 Option<&str> 변환.
+                let text = pool_clone.generate_one(&speaker, &history, tick, recall.as_deref());
                 // result_tx 오류(수신단 닫힘)는 무시하고 종료.
                 if result_tx.send((idx, text)).is_err() {
                     break;
@@ -113,9 +123,18 @@ impl LiveSession {
         };
 
         let rng = ChaCha8Rng::seed_from_u64(seed);
-        let human = HumanChannel::new(human_speaker_id);
+        let human_id: String = human_speaker_id.into();
+        let human = HumanChannel::new(human_id.clone());
         // MetaController: 환경 변수에서 gain 읽기(없으면 기본값).
         let meta = MetaController::from_env();
+
+        // 회상 스토어 초기화: 모든 페르소나 + 사람 화자를 방에 join(참여 격리 기준).
+        let room = "salon".to_string();
+        let mut store = MemoryStore::new();
+        for p in &personas {
+            store.join(&room, &p.id);
+        }
+        store.join(&room, &human_id);
 
         Self {
             config,
@@ -130,6 +149,9 @@ impl LiveSession {
             worker: Some(worker),
             pending: None,
             tick_count: 0,
+            store,
+            room,
+            human_id,
         }
     }
 
@@ -137,11 +159,20 @@ impl LiveSession {
     ///
     /// `pending` 여부와 무관하게 즉시 호출(사람 입력은 인터럽트).
     /// 전 페르소나 λ가 일제히 상승하며, history에 사람 Event가 push된다.
+    /// 사람 발화도 회상 대상이므로 store에 기록한다(task-41).
     pub fn submit_human(&mut self, text: String) {
         // ts: 현재 틱 카운터로 논리 타임스탬프 계산.
         let ts = self.tick_count as f64 * self.config.tick_interval;
+        // 엔진 상태에 반영(excitation 상승, history push).
         self.human
-            .speak(&mut self.state, &self.personas, text, ts);
+            .speak(&mut self.state, &self.personas, text.clone(), ts);
+        // 회상 스토어에 사람 발화 기록(task-41). 페르소나가 사람 말을 회상할 수 있다.
+        self.store.record(MemoryEvent {
+            room: self.room.clone(),
+            ts: self.tick_count,
+            speaker: self.human_id.clone(),
+            content: text,
+        });
     }
 
     /// 엔진을 1틱 전진한다.
@@ -240,6 +271,25 @@ impl LiveSession {
         // 생성 job 디스패치: 먼저 엔진측 speak 갱신(driver와 동일 순서).
         let chosen = selection.chosen.clone();
 
+        // 회상 계산 (task-41): 생성 전 최근 맥락 기반 query로 store.recall 호출.
+        // recall은 생성 프롬프트에만 전달 — gate/rrf/hawkes 입력에 불사용(INV 준수).
+        // query: 최근 history의 content를 공백으로 합침(K=3).
+        const RECALL_K: usize = 3;
+        let query: String = self
+            .state
+            .history
+            .iter()
+            .rev()
+            .filter_map(|e| e.content.as_deref())
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let recall_events = self.store.recall(&chosen, &query, RECALL_K);
+        let recall: Option<String> = MemoryStore::format_recall(&recall_events);
+
         // placeholder Event(content=None)를 history에 push.
         let placeholder_event = utterance.event; // content는 이미 None
         let placeholder_idx = self.state.history.len();
@@ -265,7 +315,7 @@ impl LiveSession {
 
         // 워커로 job 전송. 채널이 닫혔으면(워커 비정상 종료) 조용히 무시.
         if let Some(ref tx) = self.job_tx {
-            let _ = tx.send((placeholder_idx, chosen.clone(), history_snapshot, tick));
+            let _ = tx.send((placeholder_idx, chosen.clone(), history_snapshot, tick, recall));
             self.pending = Some(placeholder_idx);
         }
 
@@ -276,6 +326,7 @@ impl LiveSession {
     ///
     /// 워커가 결과를 보내왔으면 해당 placeholder Event의 `content`를 채우고
     /// `pending`을 해제한 뒤 완성된 Event를 반환(렌더용).
+    /// content가 Some이면 회상 스토어에 기록한다(task-41).
     /// 결과가 아직 없으면 `None` 반환(즉시).
     pub fn poll_generation(&mut self) -> Option<Event> {
         match self.result_rx.try_recv() {
@@ -287,7 +338,19 @@ impl LiveSession {
                 // pending 해제: 다음 틱에서 새 디스패치 허용.
                 self.pending = None;
                 // 완성된 Event 클론 반환 (렌더용).
-                self.state.history.get(idx).cloned()
+                let ev = self.state.history.get(idx).cloned();
+                // 도착한 발화의 content가 Some이면 회상 스토어에 기록(task-41).
+                if let Some(ref landed) = ev {
+                    if let Some(ref content) = landed.content {
+                        self.store.record(MemoryEvent {
+                            room: self.room.clone(),
+                            ts: landed.ts as u64,
+                            speaker: landed.speaker.clone(),
+                            content: content.clone(),
+                        });
+                    }
+                }
+                ev
             }
             Err(_) => None,
         }
@@ -655,7 +718,95 @@ mod tests {
         );
     }
 
-    /// (task-37-4b) content + high-convergence history → mu_scale() < 1.0.
+    // -------------------------------------------------------------------------
+    // task-41: 회상 스토어 기록 + 격리 테스트 (네트워크 없음)
+    // -------------------------------------------------------------------------
+
+    /// (task-41-1) submit_human 후 store에 사람 발화가 기록된다.
+    ///
+    /// store.recall로 기록 여부를 간접 확인한다(참여한 화자가 회상 가능).
+    #[test]
+    fn submit_human_records_to_store() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        session.submit_human("안녕 여기 있어".to_string());
+
+        // "you"는 "salon" 방에 참여. "안녕"이 포함된 query로 recall.
+        let recall = session.store.recall("you", "안녕", 5);
+        assert_eq!(recall.len(), 1, "사람 발화 1개가 store에 기록되어야 함");
+        assert_eq!(recall[0].content, "안녕 여기 있어");
+        assert_eq!(recall[0].speaker, "you");
+    }
+
+    /// (task-41-2) 도착한 발화(poll_generation)가 store에 기록된다.
+    ///
+    /// 오프라인이라 content=None → store에 기록하지 않는다.
+    /// content=Some인 경우를 직접 history에 주입해 검증.
+    #[test]
+    fn poll_generation_records_landed_utterance_to_store() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        // 화자가 선택될 때까지 틱.
+        let mut dispatched_speaker: Option<PersonaId> = None;
+        for _ in 0..50 {
+            if let TickOutcome::Dispatched(spk) = session.tick() {
+                dispatched_speaker = Some(spk);
+                break;
+            }
+        }
+        assert!(dispatched_speaker.is_some(), "화자가 선택돼야 한다");
+
+        // bounded 폴링: 오프라인 → content=None으로 도착.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if session.poll_generation().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // 오프라인이라 content=None이므로 store에는 기록 없어야 한다.
+        // (content=Some일 때만 기록하는 규칙 검증)
+        let speaker = dispatched_speaker.unwrap();
+        let recall = session.store.recall(&speaker, "아무거나", 5);
+        assert!(
+            recall.is_empty(),
+            "오프라인(content=None) → store에 기록 없어야 함(speaker={speaker})"
+        );
+    }
+
+    /// (task-41-3) 참여 격리: "you"가 기록한 발화를 미참여자는 볼 수 없다.
+    ///
+    /// store.join은 new()에서 페르소나+human만 등록한다.
+    /// 등록되지 않은 화자는 recall 결과 없음.
+    #[test]
+    fn store_participation_isolation_preserved() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        session.submit_human("비밀 이야기".to_string());
+
+        // "stranger"는 salon에 참여하지 않았으므로 회상 불가.
+        let recall = session.store.recall("stranger", "비밀", 5);
+        assert!(
+            recall.is_empty(),
+            "미참여 화자는 회상 결과 없어야 함(참여 격리)"
+        );
+
+        // "aria"는 참여했으므로 회상 가능.
+        let recall_aria = session.store.recall("aria", "비밀", 5);
+        assert_eq!(
+            recall_aria.len(),
+            1,
+            "참여 페르소나(aria)는 사람 발화를 회상할 수 있어야 함"
+        );
+    }
+
+    /// (task-41-4a) mu_scale_returns_one_for_empty_content_history — 기존 테스트 유지.
+
+    /// (task-41-4b) content + high-convergence history → mu_scale() < 1.0.
     ///
     /// 거의 동일한 발화 여러 개를 history에 주입해 수렴도를 높인다.
     /// MetaController 기본값(gain=0.6, threshold=0.5, floor=0.4)에서

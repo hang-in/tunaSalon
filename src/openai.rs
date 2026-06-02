@@ -155,14 +155,26 @@ impl OpenAIBackend {
     }
 
     /// user 프롬프트를 조립한다(OllamaBackend::assemble_user_prompt와 동일 로직).
-    fn assemble_user_prompt(recent: &str) -> String {
-        format!(
-            "Recent lines:\n{recent}\nReply with ONE short, in-character line. No preamble."
-        )
+    ///
+    /// 섹션 순서:
+    ///   1. 공유 최근 로그 (`recent`)
+    ///   2. 회상 슬롯 — `recall`이 Some(r)일 때만 `[기억]\n{r}` 삽입
+    ///   3. 답변 지시문
+    ///
+    /// 라이브 경로에서만 recall=Some. driver/headless는 recall=None.
+    fn assemble_user_prompt(recent: &str, recall: Option<&str>) -> String {
+        let mut parts = Vec::with_capacity(3);
+        parts.push(format!("Recent lines:\n{recent}"));
+        if let Some(r) = recall {
+            parts.push(format!("[기억]\n{r}"));
+        }
+        parts.push("Reply with ONE short, in-character line. No preamble.".to_string());
+        parts.join("\n")
     }
 
     /// OpenAI 호환 서버에 발화 텍스트 생성을 요청한다.
     ///
+    /// - `recall`: 라이브 경로에서만 Some으로 전달. driver/headless 경로는 항상 None.
     /// - rng를 소비하지 않는다 → 엔진 결정성 보존.
     /// - 에러/비2xx/타임아웃/파싱 실패 → None(panic 없음).
     /// - SECURITY: api_key는 Authorization 헤더에만, 에러 메시지에 절대 포함하지 않는다.
@@ -171,9 +183,10 @@ impl OpenAIBackend {
         speaker: &PersonaId,
         history: &[Event],
         _tick: u64,
+        recall: Option<&str>,
     ) -> Option<String> {
         let recent = Self::format_recent(history);
-        let user_prompt = Self::assemble_user_prompt(&recent);
+        let user_prompt = Self::assemble_user_prompt(&recent, recall);
 
         let system = self.system_prompts.get(speaker).map(String::as_str);
         let url = format!("{}/v1/chat/completions", self.endpoint);
@@ -391,6 +404,71 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // task-41: recall 슬롯 테스트 (네트워크 없음)
+    // -------------------------------------------------------------------------
+
+    /// recall=Some이면 assemble_user_prompt의 user 메시지에 [기억] 섹션이 포함된다.
+    /// 순서: 최근 로그 → [기억] → 지시문.
+    #[test]
+    fn assemble_user_prompt_with_recall_includes_memory_section() {
+        let recent = "A: 안녕\nB: 반가워";
+        let recall_text = "지난 대화에서:\n- A: 약속했어";
+
+        let prompt = OpenAIBackend::assemble_user_prompt(recent, Some(recall_text));
+
+        assert!(
+            prompt.contains("[기억]"),
+            "recall=Some이면 [기억] 섹션이 포함되어야 함"
+        );
+        assert!(
+            prompt.contains(recall_text),
+            "회상 텍스트가 포함되어야 함"
+        );
+        // 순서: 로그 < [기억] < 지시문
+        let pos_log = prompt.find("Recent lines:").unwrap();
+        let pos_mem = prompt.find("[기억]").unwrap();
+        let pos_inst = prompt.find("Reply with ONE short").unwrap();
+        assert!(pos_log < pos_mem, "로그가 [기억] 앞에 있어야 함");
+        assert!(pos_mem < pos_inst, "[기억]이 지시문 앞에 있어야 함");
+    }
+
+    /// recall=None이면 assemble_user_prompt의 user 메시지에 [기억] 섹션이 없다.
+    #[test]
+    fn assemble_user_prompt_without_recall_has_no_memory_section() {
+        let recent = "A: 안녕\nB: 반가워";
+
+        let prompt = OpenAIBackend::assemble_user_prompt(recent, None);
+
+        assert!(
+            !prompt.contains("[기억]"),
+            "recall=None이면 [기억] 섹션이 없어야 함"
+        );
+        assert!(
+            prompt.contains("Recent lines:"),
+            "최근 로그가 포함되어야 함"
+        );
+        assert!(
+            prompt.contains("Reply with ONE short"),
+            "지시문이 포함되어야 함"
+        );
+    }
+
+    /// PersonaRuntime::generate(driver 경로)는 recall=None으로 호출한다.
+    /// OpenAIBackend는 PersonaRuntime을 구현하지 않으므로(BackendPool이 함), BackendPool을 통해 확인.
+    /// → pool::generate(PersonaRuntime)는 generate_one(..., None)을 호출함을 pool 테스트에서 검증.
+    /// 여기서는 직접 generate(recall=None)가 [기억] 없는 프롬프트를 만드는지만 검증.
+    #[test]
+    fn generate_with_none_recall_produces_no_memory_section_in_prompt() {
+        // assemble_user_prompt를 직접 호출해 recall=None이면 [기억] 섹션 없음을 확인한다.
+        let recent = "A: hi";
+        let prompt = OpenAIBackend::assemble_user_prompt(recent, None);
+        assert!(
+            !prompt.contains("[기억]"),
+            "driver 경로(recall=None) → [기억] 섹션 없어야 함(골든 보존)"
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // 라이브 테스트 (네트워크 필요, CI에서는 skip)
     // -------------------------------------------------------------------------
 
@@ -428,7 +506,7 @@ mod tests {
             },
         ];
 
-        let result = backend.generate(&speaker, &history, 0);
+        let result = backend.generate(&speaker, &history, 0, None);
         println!("live friend-server result (model={model}, endpoint={endpoint}): {result:?}");
         // 서버가 응답하면 Some(텍스트), 오프라인이면 None — 어느 쪽이든 panic 없어야 한다.
         // Architect가 수동으로 Some 여부를 확인한다.

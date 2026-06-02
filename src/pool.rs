@@ -39,15 +39,18 @@ pub enum Backend {
 
 impl Backend {
     /// 프로토콜에 맞게 발화 텍스트 생성을 위임한다. rng 불요.
+    ///
+    /// - `recall`: 라이브 경로(generate_one 경유)에서만 Some. generate_batch/PersonaRuntime은 None.
     pub fn generate(
         &self,
         speaker: &PersonaId,
         history: &[Event],
         tick: u64,
+        recall: Option<&str>,
     ) -> Option<String> {
         match self {
-            Backend::Ollama(b) => b.generate_shared(speaker, history, tick),
-            Backend::OpenAI(b) => b.generate(speaker, history, tick),
+            Backend::Ollama(b) => b.generate_shared(speaker, history, tick, recall),
+            Backend::OpenAI(b) => b.generate(speaker, history, tick, recall),
         }
     }
 }
@@ -466,9 +469,10 @@ impl BackendPool {
                     s.spawn(move || {
                         // 폴백 체인: 첫 Some에서 멈춘다.
                         // 각 후보의 세마포어를 acquire → generate → permit drop(RAII).
+                        // recall=None: generate_batch는 bench/비교 전용 경로 — 회상 불사용.
                         for (backend, sem) in &candidates {
                             let _permit = sem.acquire();
-                            let text = backend.generate(&speaker, history, tick);
+                            let text = backend.generate(&speaker, history, tick, None);
                             // permit은 여기서 drop된다(다음 후보 시도 전 슬롯 반환).
                             drop(_permit);
                             if text.is_some() {
@@ -502,18 +506,21 @@ impl BackendPool {
     ///
     /// `fallback_chain(speaker)` 순서로 각 백엔드를 시도해 첫 `Some(text)`을 반환한다.
     /// 모든 백엔드가 None이면 None 반환(panic 없음). rng 불요 → 엔진 결정성 보존.
+    ///
+    /// - `recall`: 라이브 LiveSession 경로에서만 Some. generate_batch/PersonaRuntime은 None.
     pub fn generate_one(
         &self,
         speaker: &PersonaId,
         history: &[Event],
         tick: u64,
+        recall: Option<&str>,
     ) -> Option<String> {
         // fallback_chain은 &self를 빌리므로 Vec<String>으로 복사해 borrow 충돌을 피한다.
         let chain = self.fallback_chain(speaker);
 
         for backend_name in &chain {
             if let Some(backend) = self.backends.get(backend_name) {
-                if let Some(text) = backend.generate(speaker, history, tick) {
+                if let Some(text) = backend.generate(speaker, history, tick, recall) {
                     return Some(text);
                 }
                 // None이면 체인의 다음 백엔드로. 폴백이 실제로 사용됐음을 로그.
@@ -532,6 +539,7 @@ impl PersonaRuntime for BackendPool {
     /// speaker를 폴백 체인 순서로 시도해 첫 Some을 반환한다 (task-24).
     ///
     /// - `generate_one`에 위임한다(task-29: 동작 동일, &mut 불필요하나 트레이트 서명 유지).
+    /// - recall=None: driver/headless 경로는 회상 미주입 → 골든 바이트 동일 보존.
     /// - rng를 소비하지 않는다 → 엔진 결정성 보존(INV-1).
     fn generate(
         &mut self,
@@ -540,7 +548,7 @@ impl PersonaRuntime for BackendPool {
         tick: u64,
         _rng: &mut ChaCha8Rng,
     ) -> Option<String> {
-        self.generate_one(speaker, history, tick)
+        self.generate_one(speaker, history, tick, None)
     }
 }
 
