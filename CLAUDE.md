@@ -36,7 +36,7 @@ tunaSalon는 **사용자가 LLM 페르소나들과 스몰토크하는 채팅방*
 
 ## 3. 빌드 / 테스트
 
-Rust 프로젝트. `src/` 모듈: model, sink, hawkes, gate, rrf, utterance, driver, headless, tui, sweep, preset, runtime, ollama, openai, pool, semaphore, human(v0.5), live(v0.5 LiveSession), chat(v0.5 채팅 TUI).
+Rust 프로젝트. `src/` 모듈: model, sink, hawkes, gate, rrf, utterance, driver, headless, tui, sweep, preset, runtime, ollama, openai, pool, semaphore, human(v0.5), live(v0.5 LiveSession), chat(v0.5 채팅 TUI), locale(v0.5 응답 언어 감지 $LANG, 기본 한국어, SALON_LANG override).
 
 ```bash
 cargo test                                       # 전체 148 tests (스모크 게이트 5종: smoke=v0.1 ~ smoke_v5=v0.5)

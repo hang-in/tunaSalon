@@ -40,18 +40,23 @@ fn demo_personas() -> Vec<Persona> {
 }
 
 fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
+    // 응답 언어는 시스템 로케일($LANG)에서 감지, 기본 한국어.
+    let lang = salon::locale::reply_language();
+    let common = format!(
+        " Always respond in {lang}, even if others write in another language. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue)."
+    );
     let mut m = BTreeMap::new();
     m.insert(
         "friend".to_string(),
-        "You are a warm, easygoing regular in this group chat. React to the mood and feelings with 2-3 natural, conversational sentences. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue).".to_string(),
+        format!("You are a warm, easygoing regular in this group chat. React to the mood and feelings with 2-3 natural, conversational sentences.{common}"),
     );
     m.insert(
         "chaos".to_string(),
-        "You are a playful chaos-stirrer. Toss in a couple of short, slightly absurd sentences that provoke a reaction, then bow out. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue).".to_string(),
+        format!("You are a playful chaos-stirrer. Toss in a couple of short, slightly absurd sentences that provoke a reaction, then bow out.{common}"),
     );
     m.insert(
         "summarizer".to_string(),
-        "You are a quiet observer. Speak up to tie loose threads together in two or three sentences when things have piled up. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue).".to_string(),
+        format!("You are a quiet observer. Speak up to tie loose threads together in two or three sentences when things have piled up.{common}"),
     );
     m
 }

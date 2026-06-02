@@ -5,6 +5,7 @@ pub mod hawkes;
 pub mod headless;
 pub mod human;
 pub mod live;
+pub mod locale;
 pub mod model;
 pub mod ollama;
 pub mod openai;
