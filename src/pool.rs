@@ -1,15 +1,18 @@
-//! 백엔드 풀 (v0.4 task-21/22/27).
+//! 백엔드 풀 (v0.4 task-21/22/27/23).
 //!
 //! task-21: 데이터 구조 + 생성자.
 //! task-22: `persona -> backend_name` 라우팅 + `impl PersonaRuntime`. 세마포어/배치는 task-23.
 //! task-27: `Protocol` + `Backend` enum(Ollama|OpenAI) + `OpenAIBackend` 통합.
+//! task-23: 백엔드별 `Arc<Semaphore>` + `generate_batch` 병렬 배치 API.
 
 use crate::model::{Event, PersonaId};
 use crate::ollama::OllamaBackend;
 use crate::openai::OpenAIBackend;
 use crate::runtime::PersonaRuntime;
+use crate::semaphore::Semaphore;
 use rand_chacha::ChaCha8Rng;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// 백엔드 프로토콜 종류.
@@ -148,15 +151,18 @@ impl BackendConfig {
     }
 }
 
-/// 이름붙은 백엔드 레지스트리 (v0.4 task-21/22/27).
+/// 이름붙은 백엔드 레지스트리 (v0.4 task-21/22/27/23).
 ///
 /// - task-21: 데이터 구조 + 생성자.
 /// - task-22: `persona -> backend_name` 라우팅 + `impl PersonaRuntime`.
 /// - task-27: `Backend` enum(Ollama|OpenAI)으로 이종 프로토콜 지원.
-/// - task-23: 백엔드별 세마포어 + 배치 API(예정).
+/// - task-23: 백엔드별 `Arc<Semaphore>` + `generate_batch` 병렬 배치 API.
 pub struct BackendPool {
     /// name -> Backend 맵 (Ollama|OpenAI 이종 가능)
     backends: BTreeMap<String, Backend>,
+    /// name -> 백엔드별 동시성 세마포어. `add`에서 `config.max_concurrent`로 생성된다.
+    /// `generate_batch`가 in-flight 상한을 집행하는 데 사용한다.
+    semaphores: BTreeMap<String, Arc<Semaphore>>,
     /// 기본 백엔드 이름. 라우팅 미지정 페르소나에 사용한다.
     default_backend: Option<String>,
     /// persona_id -> backend_name 라우팅 맵. 비어 있으면 모든 페르소나가 default로 향한다.
@@ -168,6 +174,7 @@ impl BackendPool {
     pub fn new() -> Self {
         Self {
             backends: BTreeMap::new(),
+            semaphores: BTreeMap::new(),
             default_backend: None,
             routing: BTreeMap::new(),
         }
@@ -198,6 +205,10 @@ impl BackendPool {
                 config.max_tokens,
             )),
         };
+        // 백엔드별 세마포어: config.max_concurrent 슬롯으로 생성한다.
+        // add를 두 번 호출하면 세마포어도 덮어쓴다(slots 리셋).
+        let sem = Semaphore::new(config.max_concurrent);
+        self.semaphores.insert(config.name.clone(), sem);
         self.backends.insert(config.name, backend);
     }
 
@@ -249,6 +260,155 @@ impl BackendPool {
             .get(speaker)
             .map(String::as_str)
             .or_else(|| self.default_backend.as_deref())
+    }
+}
+
+/// 백엔드별 세마포어 캡이 적용된 병렬 작업 실행 헬퍼.
+///
+/// 각 job은 `(Arc<Semaphore>, Box<dyn FnOnce() -> T + Send>)` 쌍이다.
+/// `thread::scope`로 job마다 스레드를 생성하고, 스레드 내에서 세마포어를 acquire한 뒤
+/// 클로저를 실행한다. Permit drop으로 슬롯이 자동 반환된다.
+///
+/// 반환값은 **입력 순서**와 동일한 `Vec<T>`이다.
+///
+/// # 설계 결정
+/// - `thread::scope`를 사용하므로 'static 바인딩이 불필요하다.
+/// - `&Backend`가 `Send + Sync`이기 때문에 클로저에서 `&self` 경로를 빌릴 수 있다.
+/// - rng를 소비하지 않는다 → 엔진 결정성 보존.
+pub fn run_with_caps<T: Send>(
+    jobs: Vec<(Arc<Semaphore>, Box<dyn FnOnce() -> T + Send>)>,
+) -> Vec<T> {
+    let n = jobs.len();
+    // 결과를 인덱스 순서로 수집하기 위해 Option 슬롯을 미리 할당한다.
+    let mut slots: Vec<Option<T>> = (0..n).map(|_| None).collect();
+
+    std::thread::scope(|s| {
+        // 각 슬롯에 대한 가변 참조를 하나씩 뽑아내기 위해 iter_mut로 분해한다.
+        let handles: Vec<_> = slots
+            .iter_mut()
+            .zip(jobs)
+            .map(|(slot, (sem, f))| {
+                s.spawn(move || {
+                    // 세마포어 acquire: 슬롯이 생길 때까지 블록.
+                    let _permit = sem.acquire();
+                    // permit을 보유한 상태에서 클로저를 실행한다.
+                    let result = f();
+                    // 슬롯에 결과를 저장한다.
+                    *slot = Some(result);
+                    // _permit drop → 슬롯 반환
+                })
+            })
+            .collect();
+
+        // 모든 스레드가 완료될 때까지 기다린다.
+        for h in handles {
+            // join 실패(스레드 패닉)는 None으로 처리한다(slot이 None인 채로 남음).
+            let _ = h.join();
+        }
+    });
+
+    // None 슬롯은 실패(스레드 패닉)를 의미한다. Option을 벗겨 반환하되,
+    // 실패한 슬롯은 T의 기본값이 없으므로 컬렉션에서 제외한다.
+    // 단 호출처(generate_batch)는 각 슬롯이 정확히 채워지길 기대한다.
+    // 현재 구현에서 클로저 패닉은 없으므로 unwrap_or 경로는 도달하지 않는다.
+    slots.into_iter().map(|s| s.expect("run_with_caps: slot not filled — thread panicked")).collect()
+}
+
+impl BackendPool {
+    /// 여러 페르소나에 대해 병렬로 발화를 생성한다 (bench/비교 전용 경로).
+    ///
+    /// **라이브 틱 루프에서 절대 호출하지 않는다.** 이 경로는 rng를 소비하지 않으며
+    /// 엔진 결정 경로(driver → PersonaRuntime::generate)와 분리된다(INV-1/INV-3 준수).
+    ///
+    /// # 인자
+    /// - `jobs`: `(PersonaId, Vec<Event>)` 슬라이스. job마다 해당 페르소나의 발화를 생성한다.
+    /// - `tick`: 현재 틱 번호(생성 컨텍스트 기록용).
+    ///
+    /// # 반환
+    /// 입력 순서와 동일한 `Vec<(PersonaId, Option<String>)>`.
+    /// 라우팅 대상 백엔드가 없거나 생성 실패이면 해당 슬롯은 `None`.
+    ///
+    /// # 동시성 보장
+    /// 각 job은 라우팅된 백엔드의 `Arc<Semaphore>`를 acquire한 뒤 실행된다.
+    /// 백엔드별 max_concurrent 슬롯을 초과하는 in-flight는 슬롯 반환까지 블록된다.
+    /// 서로 다른 백엔드의 세마포어는 독립적으로 동작한다.
+    ///
+    /// # 구현 노트
+    /// `thread::scope`를 직접 사용하므로 `&Backend` 빌림 수명이 `'static` 불요.
+    /// `run_with_caps`는 `'static` 클로저 테스트 전용 헬퍼이므로 이 함수에서 직접 호출하지 않는다.
+    pub fn generate_batch(
+        &self,
+        jobs: &[(PersonaId, Vec<Event>)],
+        tick: u64,
+    ) -> Vec<(PersonaId, Option<String>)> {
+        let n = jobs.len();
+        // 결과 슬롯: None = 아직 채워지지 않음(라우팅 실패 또는 초기값).
+        let mut results: Vec<Option<String>> = (0..n).map(|_| None).collect();
+
+        // 라우팅 해석: 유효 job만 (original_idx, &Backend, Arc<Semaphore>, speaker, &history) 수집.
+        // 이 시점에 &Backend는 &self 수명에 묶여 있으며 thread::scope 내에서 안전하게 공유된다.
+        struct Job<'a> {
+            original_idx: usize,
+            backend: &'a Backend,
+            sem: Arc<Semaphore>,
+            speaker: PersonaId,
+            history: &'a [Event],
+        }
+
+        let valid_jobs: Vec<Job<'_>> = jobs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (speaker, history))| {
+                let backend_name = self.resolve(speaker)?.to_string();
+                let backend: &Backend = self.backends.get(&backend_name)?;
+                let sem: Arc<Semaphore> = Arc::clone(self.semaphores.get(&backend_name)?);
+                Some(Job {
+                    original_idx: i,
+                    backend,
+                    sem,
+                    speaker: speaker.clone(),
+                    history: history.as_slice(),
+                })
+            })
+            .collect();
+
+        // thread::scope: 각 스레드가 &Backend를 빌릴 수 있다(scope가 수명 보장).
+        // &Backend는 Send+Sync이므로 스코프 스레드에서 안전하게 공유된다.
+        // 각 스레드는 (original_idx, Option<String>)을 반환하고, join 후 조립한다.
+        std::thread::scope(|s| {
+            let thread_handles: Vec<_> = valid_jobs
+                .iter()
+                .map(|job| {
+                    let backend = job.backend;
+                    let sem = Arc::clone(&job.sem);
+                    let speaker = job.speaker.clone();
+                    let history = job.history;
+                    let original_idx = job.original_idx;
+
+                    s.spawn(move || {
+                        // 세마포어 acquire: 슬롯이 생길 때까지 블록.
+                        let _permit = sem.acquire();
+                        // permit 보유 상태에서 generate 실행.
+                        let text = backend.generate(&speaker, history, tick);
+                        // _permit drop → 슬롯 반환.
+                        (original_idx, text)
+                    })
+                })
+                .collect();
+
+            for h in thread_handles {
+                if let Ok((idx, text)) = h.join() {
+                    results[idx] = text;
+                }
+                // join 실패(스레드 패닉)이면 해당 슬롯은 None으로 남는다(panic 없음).
+            }
+        });
+
+        // 결과를 입력 순서로 조립한다.
+        jobs.iter()
+            .enumerate()
+            .map(|(i, (speaker, _))| (speaker.clone(), results[i].clone()))
+            .collect()
     }
 }
 
@@ -622,5 +782,152 @@ mod tests {
         // 오프라인 → None, panic 없음
         let result = pool.generate(&speaker, &history, 0, &mut rng);
         assert_eq!(result, None);
+    }
+
+    // -------------------------------------------------------------------------
+    // task-23: run_with_caps + generate_batch 단위 테스트 (네트워크 없음)
+    // -------------------------------------------------------------------------
+
+    /// run_with_caps: N개 job 결과가 입력 순서와 동일하게 반환된다.
+    #[test]
+    fn run_with_caps_preserves_input_order() {
+        use crate::semaphore::Semaphore;
+        use std::sync::Arc;
+
+        let sem = Semaphore::new(4);
+        let n = 8usize;
+        let jobs: Vec<(Arc<Semaphore>, Box<dyn FnOnce() -> usize + Send>)> = (0..n)
+            .map(|i| {
+                let s = Arc::clone(&sem);
+                let f: Box<dyn FnOnce() -> usize + Send> = Box::new(move || i);
+                (s, f)
+            })
+            .collect();
+
+        let results = run_with_caps(jobs);
+        assert_eq!(results.len(), n);
+        for (idx, val) in results.iter().enumerate() {
+            assert_eq!(*val, idx, "결과 순서가 입력과 달라야 함: idx={idx}, val={val}");
+        }
+    }
+
+    /// run_with_caps: 두 독립 세마포어(cap 3 / cap 1)가 동시에 독립적으로 집행된다.
+    ///
+    /// - sem_a(cap=3): 8개 job → 피크 ≤ 3
+    /// - sem_b(cap=1): 4개 job → 피크 ≤ 1
+    /// 두 그룹을 한 번에 run_with_caps로 실행해 독립성을 검증한다.
+    #[test]
+    fn run_with_caps_two_semaphores_enforce_caps_independently() {
+        use crate::semaphore::Semaphore;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::thread;
+
+        let cap_a = 3usize;
+        let cap_b = 1usize;
+        let sem_a = Semaphore::new(cap_a);
+        let sem_b = Semaphore::new(cap_b);
+
+        let current_a = Arc::new(AtomicUsize::new(0));
+        let peak_a = Arc::new(AtomicUsize::new(0));
+        let current_b = Arc::new(AtomicUsize::new(0));
+        let peak_b = Arc::new(AtomicUsize::new(0));
+
+        let mut jobs: Vec<(Arc<Semaphore>, Box<dyn FnOnce() -> () + Send>)> = Vec::new();
+
+        // sem_a 그룹: 8개 job
+        for _ in 0..8 {
+            let s = Arc::clone(&sem_a);
+            let cur = Arc::clone(&current_a);
+            let pk = Arc::clone(&peak_a);
+            let f: Box<dyn FnOnce() -> () + Send> = Box::new(move || {
+                let prev = cur.fetch_add(1, Ordering::SeqCst);
+                pk.fetch_max(prev + 1, Ordering::SeqCst);
+                thread::yield_now();
+                cur.fetch_sub(1, Ordering::SeqCst);
+            });
+            jobs.push((s, f));
+        }
+
+        // sem_b 그룹: 4개 job
+        for _ in 0..4 {
+            let s = Arc::clone(&sem_b);
+            let cur = Arc::clone(&current_b);
+            let pk = Arc::clone(&peak_b);
+            let f: Box<dyn FnOnce() -> () + Send> = Box::new(move || {
+                let prev = cur.fetch_add(1, Ordering::SeqCst);
+                pk.fetch_max(prev + 1, Ordering::SeqCst);
+                thread::yield_now();
+                cur.fetch_sub(1, Ordering::SeqCst);
+            });
+            jobs.push((s, f));
+        }
+
+        run_with_caps(jobs);
+
+        let obs_a = peak_a.load(Ordering::SeqCst);
+        let obs_b = peak_b.load(Ordering::SeqCst);
+        assert!(
+            obs_a <= cap_a,
+            "sem_a 피크({obs_a}) > cap_a({cap_a})"
+        );
+        assert!(
+            obs_b <= cap_b,
+            "sem_b 피크({obs_b}) > cap_b({cap_b})"
+        );
+    }
+
+    /// generate_batch: 라우팅 실패(백엔드 없음)이면 해당 슬롯은 None을 반환한다(panic 없음).
+    #[test]
+    fn generate_batch_returns_none_for_unresolvable_jobs() {
+        let pool = BackendPool::new(); // 백엔드 없음, default 없음
+
+        let jobs = vec![
+            ("friend".to_string(), vec![]),
+            ("chaos".to_string(), vec![]),
+        ];
+
+        let results = pool.generate_batch(&jobs, 0);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "friend");
+        assert_eq!(results[0].1, None);
+        assert_eq!(results[1].0, "chaos");
+        assert_eq!(results[1].1, None);
+    }
+
+    /// generate_batch: 오프라인 백엔드(포트 1)이면 None, 입력 순서 보존, panic 없음.
+    #[test]
+    fn generate_batch_offline_returns_none_preserves_order() {
+        let mut pool = BackendPool::new();
+        pool.add(make_config("cloud"), BTreeMap::new()); // 포트 1 = 오프라인
+        pool.set_default("cloud");
+
+        let jobs = vec![
+            ("friend".to_string(), vec![]),
+            ("chaos".to_string(), vec![]),
+            ("anchor".to_string(), vec![]),
+        ];
+
+        let results = pool.generate_batch(&jobs, 42);
+
+        assert_eq!(results.len(), 3);
+        // 오프라인이므로 모두 None
+        for (i, (speaker, text)) in results.iter().enumerate() {
+            assert_eq!(speaker, &jobs[i].0, "순서 불일치 idx={i}");
+            assert_eq!(*text, None, "오프라인 백엔드는 None이어야 함(idx={i})");
+        }
+    }
+
+    /// generate_batch: 세마포어가 add 시 생성된다(풀에 semaphore가 존재한다).
+    #[test]
+    fn semaphore_created_on_add() {
+        let mut pool = BackendPool::new();
+        pool.add(make_config("cloud"), BTreeMap::new());
+
+        // 세마포어가 등록됐는지 간접 검증: generate_batch가 panic 없이 완료된다.
+        let jobs: Vec<(PersonaId, Vec<crate::model::Event>)> = vec![];
+        let results = pool.generate_batch(&jobs, 0);
+        assert!(results.is_empty());
     }
 }

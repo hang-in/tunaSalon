@@ -1,7 +1,7 @@
 ---
 title: "Salon v0.4 Task 23: 병렬 배치 API + 백엔드별 세마포어"
 type: plan-task
-status: todo
+status: done
 updated_at: 2026-06-02
 parent_plan: salon-engine-v4.md
 task_id: "23"
