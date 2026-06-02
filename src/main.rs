@@ -38,7 +38,6 @@ struct Cli {
     // LLM opt-in 플래그 (기본 false → FakeBackend)
     llm: bool,
     model: String,
-    cloud: bool,
     ollama_host: Option<String>,
 }
 
@@ -105,28 +104,18 @@ fn main() {
     // --llm 없으면 FakeBackend (기본, 골든 보존).
     // --llm 있으면 OllamaBackend 빌드.
     if cli.llm {
-        // endpoint 결정: --ollama-host > --cloud > localhost
-        let endpoint = if let Some(ref host) = cli.ollama_host {
-            host.clone()
-        } else if cli.cloud {
-            "https://ollama.com".to_string()
-        } else {
-            "http://localhost:11434".to_string()
-        };
+        // 앱은 항상 Ollama 데몬(기본 localhost:11434)에 요청한다.
+        // cloud 모델은 ":cloud" 이름(예: glm-5.1:cloud)으로 로컬 데몬이 원격 프록시하므로
+        // 로컬 RAM을 쓰지 않고, 앱이 키를 직접 다룰 필요도 없다.
+        let endpoint = cli
+            .ollama_host
+            .clone()
+            .unwrap_or_else(|| "http://localhost:11434".to_string());
 
-        // api_key: --cloud일 때만 환경 변수에서 읽는다.
-        // SECURITY: 키 값을 에러 메시지에 절대 포함하지 않는다.
-        let api_key: Option<String> = if cli.cloud {
-            match env::var("OLLAMA_CLOUD_API_KEY") {
-                Ok(key) => Some(key),
-                Err(_) => {
-                    eprintln!(
-                        "error: --cloud requires OLLAMA_CLOUD_API_KEY. \
-                         Set it in .env or as an environment variable."
-                    );
-                    process::exit(1);
-                }
-            }
+        // 직접 원격(https) 엔드포인트를 가리킬 때만 API 키를 첨부한다. localhost 데몬은 키 불필요.
+        // SECURITY: 키 값을 로그/에러/출력에 절대 넣지 않는다.
+        let api_key: Option<String> = if endpoint.starts_with("https://") {
+            env::var("OLLAMA_CLOUD_API_KEY").ok()
         } else {
             None
         };
@@ -192,7 +181,6 @@ where
         room: None,
         llm: false,
         model: "gemma4:e4b".to_string(),
-        cloud: false,
         ollama_host: None,
     };
     let mut args = args.into_iter();
@@ -217,7 +205,6 @@ where
                 let raw = args.next().ok_or_else(|| "missing value for --model".to_string())?;
                 cli.model = raw;
             }
-            "--cloud" => cli.cloud = true,
             "--ollama-host" => {
                 let raw =
                     args.next().ok_or_else(|| "missing value for --ollama-host".to_string())?;
@@ -293,7 +280,7 @@ fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>] [--llm] [--model <string>] [--cloud] [--ollama-host <url>]"
+    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>] [--llm] [--model <name>] [--ollama-host <url>]"
 }
 
 #[cfg(test)]
@@ -319,7 +306,6 @@ mod tests {
                 room: None,
                 llm: false,
                 model: "gemma4:e4b".to_string(),
-                cloud: false,
                 ollama_host: None,
             })
         );
@@ -350,7 +336,6 @@ mod tests {
                 room: None,
                 llm: false,
                 model: "gemma4:e4b".to_string(),
-                cloud: false,
                 ollama_host: None,
             })
         );
