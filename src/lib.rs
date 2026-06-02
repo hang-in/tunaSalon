@@ -3,6 +3,7 @@ pub mod gate;
 pub mod hawkes;
 pub mod headless;
 pub mod model;
+pub mod preset;
 pub mod rrf;
 pub mod sink;
 pub mod sweep;

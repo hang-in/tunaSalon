@@ -1,6 +1,7 @@
 use salon::driver;
 use salon::headless::HeadlessSink;
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId};
+use salon::preset::RoomPreset;
 use salon::sweep;
 use salon::tui::TuiSink;
 use std::collections::BTreeMap;
@@ -26,10 +27,11 @@ struct Cli {
     sweep: bool,
     seed: u64,
     ticks: u64,
-    beta: f64,
-    theta: f64,
-    k: f64,
+    beta: Option<f64>,
+    theta: Option<f64>,
+    k: Option<f64>,
     delay_ms: u64,
+    room: Option<String>,
 }
 
 fn main() {
@@ -42,14 +44,42 @@ fn main() {
         }
     };
 
-    let config = EngineConfig {
-        beta: cli.beta,
-        theta: cli.theta,
-        k: cli.k,
-        tick_interval: TICK_INTERVAL,
-        alpha: CouplingMatrix::default(),
+    let mut personas = demo_personas();
+
+    let mut config = if let Some(ref room_str) = cli.room {
+        let preset = match RoomPreset::parse(room_str) {
+            Ok(p) => p,
+            Err(error) => {
+                eprintln!("{error}");
+                eprintln!("{}", usage());
+                process::exit(1);
+            }
+        };
+        let mu = preset.mu_scale();
+        for p in &mut personas {
+            p.base_rate *= mu;
+        }
+        preset.build_config(&personas)
+    } else {
+        EngineConfig {
+            beta: cli.beta.unwrap_or(DEFAULT_BETA),
+            theta: cli.theta.unwrap_or(DEFAULT_THETA),
+            k: cli.k.unwrap_or(DEFAULT_K),
+            tick_interval: TICK_INTERVAL,
+            alpha: CouplingMatrix::default(),
+        }
     };
-    let personas = demo_personas();
+
+    // 명시적 플래그가 있으면 preset 값을 덮어쓴다 (우선순위: 명시 플래그 > preset > 기본).
+    if let Some(beta) = cli.beta {
+        config.beta = beta;
+    }
+    if let Some(theta) = cli.theta {
+        config.theta = theta;
+    }
+    if let Some(k) = cli.k {
+        config.k = k;
+    }
 
     if cli.sweep {
         sweep::run(cli.seed, cli.ticks);
@@ -84,10 +114,11 @@ where
         sweep: false,
         seed: DEFAULT_SEED,
         ticks: DEFAULT_TICKS,
-        beta: DEFAULT_BETA,
-        theta: DEFAULT_THETA,
-        k: DEFAULT_K,
+        beta: None,
+        theta: None,
+        k: None,
         delay_ms: DEFAULT_DELAY_MS,
+        room: None,
     };
     let mut args = args.into_iter();
 
@@ -97,10 +128,14 @@ where
             "--sweep" => cli.sweep = true,
             "--seed" => cli.seed = parse_u64_arg("--seed", args.next())?,
             "--ticks" => cli.ticks = parse_u64_arg("--ticks", args.next())?,
-            "--beta" => cli.beta = parse_f64_arg("--beta", args.next())?,
-            "--theta" => cli.theta = parse_f64_arg("--theta", args.next())?,
-            "--k" => cli.k = parse_f64_arg("--k", args.next())?,
+            "--beta" => cli.beta = Some(parse_f64_arg("--beta", args.next())?),
+            "--theta" => cli.theta = Some(parse_f64_arg("--theta", args.next())?),
+            "--k" => cli.k = Some(parse_f64_arg("--k", args.next())?),
             "--delay-ms" => cli.delay_ms = parse_u64_arg("--delay-ms", args.next())?,
+            "--room" => {
+                let raw = args.next().ok_or_else(|| "missing value for --room".to_string())?;
+                cli.room = Some(raw);
+            }
             "-h" | "--help" => return Err(usage().to_string()),
             unknown => return Err(format!("unknown argument: {unknown}")),
         }
@@ -149,7 +184,7 @@ fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: salon [--headless] [--sweep] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>]"
+    "Usage: salon [--headless] [--sweep] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>]"
 }
 
 #[cfg(test)]
@@ -167,10 +202,11 @@ mod tests {
                 sweep: false,
                 seed: DEFAULT_SEED,
                 ticks: DEFAULT_TICKS,
-                beta: DEFAULT_BETA,
-                theta: DEFAULT_THETA,
-                k: DEFAULT_K,
+                beta: None,
+                theta: None,
+                k: None,
                 delay_ms: DEFAULT_DELAY_MS,
+                room: None,
             })
         );
     }
@@ -192,10 +228,11 @@ mod tests {
                 sweep: false,
                 seed: 7,
                 ticks: 12,
-                beta: DEFAULT_BETA,
-                theta: DEFAULT_THETA,
-                k: DEFAULT_K,
+                beta: None,
+                theta: None,
+                k: None,
                 delay_ms: DEFAULT_DELAY_MS,
+                room: None,
             })
         );
     }
@@ -216,9 +253,9 @@ mod tests {
 
         let cli = parse_args(args).expect("valid args");
         assert!(!cli.sweep);
-        assert_eq!(cli.theta, 0.4);
-        assert_eq!(cli.k, 30.0);
-        assert_eq!(cli.beta, 0.3);
+        assert_eq!(cli.theta, Some(0.4));
+        assert_eq!(cli.k, Some(30.0));
+        assert_eq!(cli.beta, Some(0.3));
         assert_eq!(cli.delay_ms, 25);
     }
 
@@ -241,5 +278,25 @@ mod tests {
         assert!(cli.sweep);
         assert!(!cli.headless);
         assert_eq!(cli.seed, 9);
+    }
+
+    #[test]
+    fn parses_room_flag() {
+        let args = vec![
+            "--headless".to_string(),
+            "--room".to_string(),
+            "argument".to_string(),
+            "--seed".to_string(),
+            "1".to_string(),
+        ];
+        let cli = parse_args(args).expect("valid args");
+        assert_eq!(cli.room, Some("argument".to_string()));
+        assert_eq!(cli.seed, 1);
+    }
+
+    #[test]
+    fn rejects_missing_room_value() {
+        let args = vec!["--headless".to_string(), "--room".to_string()];
+        assert!(parse_args(args).is_err());
     }
 }
