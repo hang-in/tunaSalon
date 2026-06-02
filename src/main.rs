@@ -120,12 +120,20 @@ fn main() {
             None
         };
 
+        // cloud 모델은 None → auto-max(우리가 num_ctx를 보내면 모델 최대 ctx를 오히려 깎는다).
+        // cloud 판정: (1) 직접 원격(https) 엔드포인트, 또는 (2) ":cloud" 모델명(localhost 데몬이 원격 프록시).
+        // 그 외 로컬 모델(e4b 등)만 RAM 상한을 위해 8192 ctx 명시.
+        let is_cloud =
+            endpoint.starts_with("https://") || cli.model.ends_with(":cloud");
+        let num_ctx: Option<u64> = if is_cloud { None } else { Some(8192) };
+
         let mut backend = OllamaBackend::new(
             cli.model.clone(),
             endpoint,
             api_key,
             demo_persona_system_prompts(),
             Duration::from_secs(30),
+            num_ctx,
         );
 
         if cli.headless {

@@ -43,8 +43,16 @@ fn main() {
     let endpoint = "http://localhost:11434".to_string();
 
     let prompts = demo_prompts();
-    let mut backend =
-        OllamaBackend::new(model.clone(), endpoint, None, prompts, Duration::from_secs(60));
+    // 로컬 모델(e4b)은 RAM 상한을 위해 8192 ctx 명시. cloud 모델이면 None(auto-max)이 맞지만
+    // 이 example은 로컬 우선이므로 Some(8192)로 고정한다.
+    let mut backend = OllamaBackend::new(
+        model.clone(),
+        endpoint,
+        None,
+        prompts,
+        Duration::from_secs(60),
+        Some(8192),
+    );
 
     // 세 페르소나가 똑같이 답할 공통 맥락 한 줄.
     let opening = "오늘 비 와서 다들 약속 취소했대. 좀 심심하네.";

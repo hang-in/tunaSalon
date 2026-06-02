@@ -4,6 +4,7 @@ pub mod hawkes;
 pub mod headless;
 pub mod model;
 pub mod ollama;
+pub mod pool;
 pub mod preset;
 pub mod rrf;
 pub mod runtime;
