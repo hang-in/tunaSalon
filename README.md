@@ -3,8 +3,8 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.6-blue)
-![tests](https://img.shields.io/badge/tests-168%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.7-blue)
+![tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
@@ -184,6 +184,26 @@ Determinism preserved: the metric is computed only from utterance content. In th
 
 ---
 
+## MetaController — closing the feedback loop (v0.7)
+
+v0.6 measured convergence. v0.7 **acts on it**.
+
+When the conversation **converges** — people circling the same ground — the engine lowers **μ (base chattiness)** via a cooling factor `mu_scale` (∈ [floor, 1]). The room speaks less, lets silence stretch, and winds down on its own. When talk is diverging and lively, the controller leaves μ alone.
+
+This is a **heuristic** macro→micro layer, not an LLM. One direction only: convergence → cooling.
+
+**Stability is the main design concern** — a feedback loop can oscillate or get stuck, and this is the least stable part of the whole system. Two guards are in place:
+- **Weak gain by default**: the cooling response is deliberately slow (tunable via `SALON_META_GAIN`).
+- **Floor**: `mu_scale` never drops below ~0.4, so the room never goes permanently silent.
+
+**Observe it**: the TUI sidebar and `chat_demo` show a "식힘 ×{value}" (cooling) line. `1.00` means no cooling is active.
+
+**Content-gated / golden preserved**: with no LLM content (the default deterministic run), there is no convergence signal, so `mu_scale` stays at 1.0 and the engine is byte-identical to before. The deterministic headless path is unchanged.
+
+A note worth stating: in the chaos-room demo, the conversation keeps diverging, so the cooling gauge idles at `식힘 ×1.00`. That is correct behavior — cooling only engages when a conversation actually circles a topic long enough to cross the convergence threshold. A room that never converges never gets cooled.
+
+---
+
 ## Try it
 
 All you need is [Rust](https://rustup.rs). The default run needs no LLM and no network.
@@ -200,7 +220,7 @@ cargo run -- --llm                                # opt in to LLM (default cloud
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
 cargo run --example chat_demo                     # non-interactive chat loop with flow readout per line
-cargo test                                        # 168 tests, including the smoke gates
+cargo test                                        # 184 tests, including the smoke gates
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -209,7 +229,7 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.6 (now):** FlowMeter — convergence/divergence measurement (observe-only). Token-overlap approximation (average pairwise Jaccard); live gauge in TUI sidebar and per-line readout in `chat_demo`. Default run stays deterministic and LLM-free. Rust, 168 tests, smoke gates green.
+**v0.7 (now):** MetaController — macro→micro feedback: convergence → cooling (`mu_scale`). Weak gain + floor for stability; content-gated so the default deterministic run is unchanged. "식힘" gauge in TUI sidebar and `chat_demo`. Rust, 184 tests, smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
@@ -218,11 +238,12 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 - **v0.4 — concurrent / mixed-model:** backend pool (Ollama + OpenAI-compatible), per-persona routing, concurrency caps, fallback. `mixed_bench` example.
 - **v0.5 — join the room:** human-in-the-loop chat (HumanChannel + `--chat` TUI). `chat_demo` example.
 - **v0.6 — FlowMeter:** convergence/divergence measurement (observe-only). Token-overlap approximation; BGE-M3 embeddings later. Live gauge in TUI + `chat_demo` readout.
+- **v0.7 — MetaController:** macro→micro feedback (cool the room as it converges). The original engine-layer roadmap — rhythm → chemistry → LLM → concurrency → chat → flow-meter → meta-controller — is now complete.
 
-**Next:**
-- **v0.7 — MetaController:** macro→micro feedback — cool the room when it converges; ramp it back up when it stalls. Deliberately last, weak gain.
-
-*(Deferred: long-term memory / friend engine — design notes in `docs/temp/`.)*
+**What's next (separate tracks, no fixed order):**
+- **Long-term memory (friend engine):** personas remembering past conversations across sessions. The recall slot in the v0.3 context interface is already reserved. Design notes in `docs/temp/`.
+- **BGE-M3 embeddings:** drop into the FlowMeter interface for a more precise convergence signal than token overlap.
+- **Persona invite / visuals:** bringing new personas in mid-conversation; richer TUI representation.
 
 ---
 

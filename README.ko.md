@@ -3,8 +3,8 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.6-blue)
-![tests](https://img.shields.io/badge/tests-168%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.7-blue)
+![tests](https://img.shields.io/badge/tests-184%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-%EC%84%A0%ED%83%9D%EC%82%AC%ED%95%AD%2C%20%EA%B8%B0%EB%B3%B8%20%EA%BA%BC%EC%A7%90-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
@@ -244,6 +244,26 @@ v0.6은 **수렴 게이지**를 추가합니다. 0에서 1 사이의 숫자로, 
 
 ---
 
+## 피드백 루프 완성 (v0.7 — MetaController)
+
+v0.6은 수렴을 측정했습니다. v0.7은 **그것에 반응합니다**.
+
+대화가 **수렴**하면 - 같은 말을 맴돌기 시작하면 - 엔진이 **μ(기본 말수)를 낮춥니다**. 냉각 계수 `mu_scale` (∈ [하한, 1])을 통해서입니다. 방은 말이 줄고, 침묵이 길어지고, 스스로 식어갑니다. 대화가 발산 중이고 활발하면 컨트롤러는 μ를 건드리지 않습니다.
+
+이것은 **휴리스틱** 거시→미시 레이어입니다. LLM이 아닙니다. 한 방향만입니다: 수렴 → 냉각.
+
+**안정성이 핵심 설계 과제입니다** - 피드백 루프는 진동하거나 고착될 수 있고, 이 부분이 시스템 전체에서 가장 불안정합니다. 두 가지 안전장치를 뒀습니다.
+- **기본 게인은 약하게**: 냉각 반응은 의도적으로 느립니다(`SALON_META_GAIN`으로 조정 가능).
+- **하한선**: `mu_scale`은 ~0.4 아래로 내려가지 않습니다. 방이 영구적으로 조용해지거나 고착되지 않습니다.
+
+**관찰하기**: TUI 사이드바와 `chat_demo`에 "식힘 ×{값}" 줄이 표시됩니다. `1.00`은 냉각이 없는 상태입니다.
+
+**콘텐츠 게이트 / 골든 보존**: LLM 콘텐츠가 없는 기본 결정적 실행에서는 수렴 신호가 없으므로 `mu_scale`이 1.0을 유지하고, 엔진은 이전과 바이트 단위로 동일합니다. 결정적 헤드리스 경로는 변하지 않습니다.
+
+한 가지 덧붙이면: 혼돈방 데모에서 대화는 계속 발산하기 때문에 냉각 게이지가 `식힘 ×1.00`에 머뭅니다. 이것은 올바른 동작입니다 - 냉각은 대화가 실제로 한 화제를 맴돌 만큼 수렴 임계값을 넘어설 때만 작동합니다. 한 번도 수렴하지 않는 방은 냉각되지 않습니다.
+
+---
+
 ## 실행하기
 
 Rust만 있으면 됩니다. 기본 실행은 LLM도 네트워크도 필요 없습니다.
@@ -260,7 +280,7 @@ cargo run -- --llm                                # LLM opt-in (기본 클라우
 cargo run --example persona_collapse              # 같은 모델, 두 페르소나 비교 (Ollama 필요)
 cargo run --example mixed_bench                   # 클라우드 + 지인서버 vLLM 혼합 (두 백엔드 필요)
 cargo run --example chat_demo                     # 흐름 수렴 수치 출력이 포함된 비대화형 채팅 루프
-cargo test                                        # 168 tests
+cargo test                                        # 184 tests
 ```
 
 주요 손잡이는 다음과 같습니다.
@@ -278,7 +298,7 @@ cargo test                                        # 168 tests
 
 ## 현재 상태
 
-**v0.6 (현재):** FlowMeter - 대화 수렴/발산 측정(관찰 전용). 토큰 중복 근사(평균 쌍별 Jaccard). TUI 사이드바 실시간 게이지 + `chat_demo` 줄별 수치 출력. 기본 실행은 결정적, LLM 없음. Rust, 168 tests, 스모크 게이트 green.
+**v0.7 (현재):** MetaController - 거시→미시 피드백: 수렴 → 냉각(`mu_scale`). 약한 게인 + 하한선으로 안정성 확보. 콘텐츠 게이트로 기본 결정적 실행은 그대로. TUI 사이드바와 `chat_demo`에 "식힘" 게이지. Rust, 184 tests, 스모크 게이트 green.
 
 **지금까지:**
 - **v0.1 - 리듬:** μ, θ, 화자 선택만으로 발언/침묵 리듬 검증.
@@ -287,11 +307,12 @@ cargo test                                        # 168 tests
 - **v0.4 - 동시 호출 / 혼합 모델:** 백엔드 풀(Ollama + OpenAI 호환), 페르소나별 라우팅, 동시성 상한, 폴백. `mixed_bench` 예제 추가.
 - **v0.5 - 방에 참여:** 사람이 직접 채팅(HumanChannel + `--chat` TUI). `chat_demo` 예제 추가.
 - **v0.6 - FlowMeter:** 대화 수렴/발산 측정(관찰 전용). 토큰 중복 근사, 이후 BGE-M3 임베딩. TUI 게이지 + `chat_demo` 수치 출력.
+- **v0.7 - MetaController:** 거시→미시 피드백(수렴하면 방을 식힘). 원래 설계의 엔진 레이어 로드맵 - 리듬 → 케미 → LLM → 동시성 → 채팅 → 흐름측정 → 메타컨트롤러 - 이 완성됐습니다.
 
-**다음:**
-- **v0.7 - MetaController:** 거시→미시 피드백 - 수렴하면 방을 식히고, 침체하면 다시 끌어올림. 가장 불안정한 부분이라 의도적으로 마지막에, 약한 게인으로.
-
-*(미룸: 장기기억 / friend engine - 설계 노트는 `docs/temp/`.)*
+**다음 (별도 트랙, 순서 미정):**
+- **장기기억 (friend engine):** 세션을 넘어 과거 대화를 기억하는 페르소나. v0.3 컨텍스트 인터페이스에 회상 슬롯이 이미 예약돼 있습니다. 설계 노트는 `docs/temp/`.
+- **BGE-M3 임베딩:** 토큰 중복보다 정밀한 수렴 신호가 필요해지면 FlowMeter 인터페이스에 교체 장착.
+- **페르소나 초대 / 시각화:** 대화 중 새 페르소나를 불러오기, TUI 표현 강화.
 
 ---
 
