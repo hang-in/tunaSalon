@@ -3,9 +3,9 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.1-blue)
-![tests](https://img.shields.io/badge/tests-27%20passing-brightgreen)
-![no LLM required](https://img.shields.io/badge/v0.1-no%20LLM%20required-8A2BE2)
+![status](https://img.shields.io/badge/status-v0.2-blue)
+![tests](https://img.shields.io/badge/tests-50%20passing-brightgreen)
+![no LLM yet](https://img.shields.io/badge/v0.1--v0.2-no%20LLM%20yet-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
 A terminal app that drops local-LLM personas into a room and lets them small-talk. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet.
@@ -41,7 +41,7 @@ nudge every λ back toward μ  →  gate: if nobody clears θ, stay silent
                              →  drop that speaker's λ  →  repeat
 ```
 
-No LLM needed to get a rhythm — v0.1 uses contentless fake utterances. The personality lives in the **timing**.
+No LLM needed to get a rhythm — a fake one-word utterance is enough. The personality lives in the **timing**.
 
 ### What the knobs do (real output)
 
@@ -53,7 +53,18 @@ No LLM needed to get a rhythm — v0.1 uses contentless fake utterances. The per
 θ=0.78  silence 171   friend  29  chaos   0  summarizer 0   # gate harsh → only the chattiest gets a word in
 ```
 
-Same μ, but a single θ turns the room from nonstop, to rhythmic, to nearly silent. (Aside: spread is actually governed more by the *fairness signal* than by k — which is why changing k barely moves these numbers. You learn things like this by watching the meter.)
+Same μ, but a single θ turns the room from nonstop, to rhythmic, to nearly silent. (Aside: spread is actually governed more by the *fairness signal* than by k — which is why changing k barely moves these numbers.)
+
+### Chemistry (v0.2)
+
+v0.2 adds **cross-excitation (α)**: one persona speaking lifts the others' urge. Who riles up whom *is* the room's chemistry, and you pick the mood with a preset.
+
+```
+preset=Calm      silence 99   friend 67  chaos 34  summarizer  0   # weak α → the quiet one stays quiet
+preset=Argument  silence  0   friend 76  chaos 76  summarizer 48   # strong α → cross-excitation drags the quiet one in
+```
+
+The same summarizer (μ = 0.25) never speaks in Calm but speaks 48 times in Argument. The personas are identical — the **room's mood pulls the quiet one into the conversation**.
 
 ### The meter
 
@@ -78,14 +89,16 @@ Same μ, but a single θ turns the room from nonstop, to rhythmic, to nearly sil
 
 ## Try it
 
-All you need is [Rust](https://rustup.rs). v0.1 needs no LLM and no network.
+All you need is [Rust](https://rustup.rs). v0.1–v0.2 need no LLM and no network.
 
 ```bash
-cargo run                                   # watch the meter live (TUI). q to quit, space to pause
-cargo run -- --headless --ticks 200         # deterministic NDJSON, one line per tick
-cargo run -- --sweep                        # compare rhythms across θ × k
-cargo run -- --theta 0.7 --k 5 --beta 0.4   # turn the knobs
-cargo test                                  # 27 tests, including the smoke gate
+cargo run                                    # watch the meter live (TUI). q to quit, space to pause
+cargo run -- --headless --ticks 200          # deterministic NDJSON, one line per tick
+cargo run -- --sweep                         # θ × k grid + preset comparison
+cargo run -- --room argument                 # room mood preset (calm/pub/argument/chaos)
+cargo run -- --room chaos --fsm              # chemistry + no speaker twice in a row
+cargo run -- --theta 0.7 --k 5 --beta 0.4    # turn the knobs
+cargo test                                   # 50 tests, including the smoke gates
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -94,11 +107,14 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.1 (now):** the rhythm engine. No LLM yet — fake utterances let you check the *timing* is alive (chatty / quiet / occasional personas, emergent silence) before any model is involved. Deterministic, with a debug meter. Rust, 27 tests, smoke gate green.
+**v0.2 (now):** the rhythm engine plus chemistry. Still no LLM — fake utterances let you check the *timing* and the *chemistry* are alive: cross-excitation (α), room presets, persona modifiers, and FSM transitions. Deterministic, with a debug meter. Rust, 50 tests, smoke gates green.
+
+**So far:**
+- **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
+- **v0.2 — chemistry (α):** who riles up whom; room presets (calm / pub / argument / chaos) and persona pairings.
 
 **Next:**
-- **v0.2 — chemistry (α):** who riles up whom. An ENTP critic needles the INTJ; the poet reacts to emotional lines. Plus room presets (calm / pub / argument / chaos).
-- **v0.3 — real local LLMs:** Ollama personas generate the actual lines. The engine still decides who speaks; the model only fills in content. Watch whether a small model holds its persona (persona collapse).
+- **v0.3 — local LLMs:** Ollama personas generate the actual lines. The engine still decides who speaks; the model only fills in content. Watch whether a small model holds its persona (persona collapse).
 
 ---
 
