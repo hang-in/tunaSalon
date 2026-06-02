@@ -311,20 +311,20 @@ fn demo_personas() -> Vec<Persona> {
 }
 
 /// 데모 3인(friend / chaos / summarizer)의 역할 기반 system prompt를 반환한다.
-/// 짧고 선명하게 — 작은 모델도 긴 프롬프트는 뭉개므로 1~2문장.
+/// 2~3문장 — 한마디 툭 던지고 끝이 아니라 조금 더 대화하게(단, 독백은 금지).
 fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
     let mut m = BTreeMap::new();
     m.insert(
         "friend".to_string(),
-        "You are a warm, easygoing regular in this group chat. React to the mood and feelings in the conversation with 1-2 short, light sentences. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it short.".to_string(),
+        "You are a warm, easygoing regular in this group chat. React to the mood and feelings with 2-3 natural, conversational sentences. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue).".to_string(),
     );
     m.insert(
         "chaos".to_string(),
-        "You are a playful chaos-stirrer. Throw in one short, slightly absurd remark that provokes a reaction, then bow out. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it short.".to_string(),
+        "You are a playful chaos-stirrer. Toss in a couple of short, slightly absurd sentences that provoke a reaction, then bow out. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue).".to_string(),
     );
     m.insert(
         "summarizer".to_string(),
-        "You are a quiet observer. Only speak up to tie loose threads together in one brief sentence. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it short.".to_string(),
+        "You are a quiet observer. Speak up to tie loose threads together in two or three sentences when things have piled up. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it conversational (not a monologue).".to_string(),
     );
     m
 }

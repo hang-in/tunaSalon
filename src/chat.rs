@@ -43,7 +43,7 @@ const BAR_WIDTH: usize = 12;
 /// - `names`    : PersonaId → 표시 이름.
 /// - `theta`    : 게이트 임계값 (막대에 `|` 마커 표시).
 /// - `input`    : 현재 입력 버퍼.
-/// - `pending`  : true면 생성 진행 중 → 입력창에 "(…생각 중)" 힌트.
+/// - `pending`  : true면 생성 진행 중 → 사이드바 하단에 "· 생각 중…" 표시(입력창은 건드리지 않음).
 pub fn render_chat(
     frame: &mut Frame,
     history: &[Event],
@@ -103,6 +103,11 @@ pub fn render_chat(
             Span::raw(format!(" {lambda:.2}")),
         ]));
     }
+    // 생성 진행 중 표시는 사이드바 하단에. 입력창은 타이핑에 방해되지 않게 건드리지 않는다.
+    if pending {
+        gauge_lines.push(Line::from(""));
+        gauge_lines.push(Line::from("· 생각 중…"));
+    }
     frame.render_widget(
         Paragraph::new(gauge_lines)
             .block(Block::default().title("gauges").borders(Borders::ALL)),
@@ -110,11 +115,8 @@ pub fn render_chat(
     );
 
     // ── 입력창 (하단) ─────────────────────────────────────────────────
-    let input_text = if pending {
-        format!("> {} (…생각 중)", input)
-    } else {
-        format!("> {}", input)
-    };
+    // 입력창은 항상 깨끗하게 — "생각 중" 표시는 사이드바에만(입력 방해 방지).
+    let input_text = format!("> {}", input);
     frame.render_widget(
         Paragraph::new(input_text).block(Block::default().borders(Borders::ALL)),
         root[1],
