@@ -1,5 +1,7 @@
 pub mod chat;
 pub mod driver;
+#[cfg(feature = "friend-engine-semantic")]
+mod embed;
 pub mod flow;
 #[cfg(feature = "friend-engine")]
 mod tokenize_ko;
