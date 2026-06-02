@@ -1,7 +1,7 @@
 ---
 title: Salon 엔진 플랜 v0.8 - friend engine (장기기억, 최소 증분)
 type: plan
-status: in_progress
+status: done
 priority: P1
 updated_at: 2026-06-03
 owner: shared
