@@ -2,6 +2,7 @@ use crate::model::{Event, PersonaId};
 use crate::runtime::PersonaRuntime;
 use rand_chacha::ChaCha8Rng;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// Ollama HTTP 백엔드. 실제 LLM에 generate 요청을 POST한다.
@@ -13,9 +14,11 @@ pub struct OllamaBackend {
     model: String,
     endpoint: String,
     api_key: Option<String>,
+    system_prompts: BTreeMap<PersonaId, String>,
 }
 
 /// SECURITY: api_key를 절대 출력하지 않는다. Some/None 여부만 표시한다.
+/// system_prompts는 민감 정보가 아니므로 표시해도 된다.
 impl std::fmt::Debug for OllamaBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OllamaBackend")
@@ -25,6 +28,7 @@ impl std::fmt::Debug for OllamaBackend {
                 "api_key",
                 &self.api_key.as_ref().map(|_| "<redacted>"),
             )
+            .field("system_prompts", &self.system_prompts)
             .finish()
     }
 }
@@ -35,6 +39,7 @@ impl OllamaBackend {
     /// - `model`: 사용할 Ollama 모델 이름 (예: "gemma4:e4b")
     /// - `endpoint`: Ollama 서버 주소 (예: "http://localhost:11434")
     /// - `api_key`: Ollama Cloud 인증 키. None이면 Authorization 헤더를 붙이지 않는다.
+    /// - `system_prompts`: 화자별 system prompt 맵. PersonaId → 역할 지시문.
     /// - `timeout`: HTTP 요청 타임아웃
     ///
     /// reqwest Client 빌드에 실패하면 기본 Client로 폴백한다(panic 없음).
@@ -42,6 +47,7 @@ impl OllamaBackend {
         model: String,
         endpoint: String,
         api_key: Option<String>,
+        system_prompts: BTreeMap<PersonaId, String>,
         timeout: Duration,
     ) -> Self {
         let client = reqwest::blocking::Client::builder()
@@ -49,18 +55,25 @@ impl OllamaBackend {
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-        Self { client, model, endpoint, api_key }
+        Self { client, model, endpoint, api_key, system_prompts }
     }
 
     /// `/api/generate` 요청 body JSON을 조립한다.
     ///
+    /// - `system`이 Some이면 body에 `"system"` 필드를 추가한다.
+    /// - None이면 `"system"` 필드를 완전히 생략한다.
+    ///
     /// 별도 함수로 분리해 테스트에서 네트워크 없이 직렬화를 검증한다.
-    pub fn build_request_body(model: &str, prompt: &str) -> Value {
-        serde_json::json!({
+    pub fn build_request_body(model: &str, prompt: &str, system: Option<&str>) -> Value {
+        let mut body = serde_json::json!({
             "model": model,
             "prompt": prompt,
             "stream": false
-        })
+        });
+        if let Some(sys) = system {
+            body["system"] = serde_json::Value::String(sys.to_string());
+        }
+        body
     }
 
     /// 응답 JSON에서 "response" 필드를 추출한다.
@@ -120,8 +133,10 @@ impl PersonaRuntime for OllamaBackend {
             "You are {speaker} in a casual group chat. Recent lines:\n{recent}\nReply with ONE short, in-character line. No preamble."
         );
 
+        let system = self.system_prompts.get(speaker).map(String::as_str);
+
         let url = format!("{}/api/generate", self.endpoint);
-        let body = Self::build_request_body(&self.model, &prompt);
+        let body = Self::build_request_body(&self.model, &prompt, system);
 
         let mut req = self.client.post(&url).json(&body);
 
@@ -168,11 +183,49 @@ mod tests {
 
     #[test]
     fn build_request_body_has_required_fields() {
-        let body = OllamaBackend::build_request_body("gemma4:e4b", "Hello, who are you?");
+        let body = OllamaBackend::build_request_body("gemma4:e4b", "Hello, who are you?", None);
 
         assert_eq!(body["model"], "gemma4:e4b");
         assert_eq!(body["prompt"], "Hello, who are you?");
         assert_eq!(body["stream"], false);
+    }
+
+    #[test]
+    fn build_request_body_includes_system_when_some() {
+        let body =
+            OllamaBackend::build_request_body("m", "p", Some("you are X"));
+        assert_eq!(body["model"], "m");
+        assert_eq!(body["prompt"], "p");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["system"], "you are X");
+    }
+
+    #[test]
+    fn build_request_body_omits_system_when_none() {
+        let body = OllamaBackend::build_request_body("m", "p", None);
+        assert!(
+            body.get("system").is_none(),
+            "system 필드가 None일 때 body에 포함되어서는 안 됨"
+        );
+    }
+
+    #[test]
+    fn system_prompts_map_returns_correct_prompt_per_speaker() {
+        let mut map = BTreeMap::new();
+        map.insert("friend".to_string(), "Be warm and friendly.".to_string());
+        map.insert("chaos".to_string(), "Stir things up.".to_string());
+
+        // 맵 직접 조회 검증
+        assert_eq!(
+            map.get("friend").map(String::as_str),
+            Some("Be warm and friendly.")
+        );
+        assert_eq!(
+            map.get("chaos").map(String::as_str),
+            Some("Stir things up.")
+        );
+        // 없는 화자는 None
+        assert_eq!(map.get("summarizer").map(String::as_str), None);
     }
 
     #[test]
@@ -209,6 +262,7 @@ mod tests {
             "gemma4:e4b".to_string(),
             "http://localhost:11434".to_string(),
             Some("SECRET_TOKEN_123".to_string()),
+            BTreeMap::new(),
             Duration::from_secs(30),
         );
 
@@ -234,6 +288,7 @@ mod tests {
             "gemma4:e4b".to_string(),
             "http://localhost:11434".to_string(),
             None,
+            BTreeMap::new(),
             Duration::from_secs(30),
         );
         let speaker = "friend".to_string();

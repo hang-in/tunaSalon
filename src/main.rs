@@ -120,8 +120,13 @@ fn main() {
             None
         };
 
-        let mut backend =
-            OllamaBackend::new(cli.model.clone(), endpoint, api_key, Duration::from_secs(30));
+        let mut backend = OllamaBackend::new(
+            cli.model.clone(),
+            endpoint,
+            api_key,
+            demo_persona_system_prompts(),
+            Duration::from_secs(30),
+        );
 
         if cli.headless {
             let stdout = io::stdout();
@@ -250,11 +255,26 @@ fn demo_personas() -> Vec<Persona> {
     ]
 }
 
+/// 데모 3인(friend / chaos / summarizer)의 역할 기반 system prompt를 반환한다.
+/// 짧고 선명하게 — 작은 모델도 긴 프롬프트는 뭉개므로 1~2문장.
+fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
+    let mut m = BTreeMap::new();
+    m.insert(
+        "friend".to_string(),
+        "You are a warm, easygoing regular in this group chat. React to the mood and feelings in the conversation with 1-2 short, light sentences. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it short.".to_string(),
+    );
+    m.insert(
+        "chaos".to_string(),
+        "You are a playful chaos-stirrer. Throw in one short, slightly absurd remark that provokes a reaction, then bow out. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it short.".to_string(),
+    );
+    m.insert(
+        "summarizer".to_string(),
+        "You are a quiet observer. Only speak up to tie loose threads together in one brief sentence. Don't act like a therapist, skip excessive apologies or praise, don't repeat the previous line, and keep it short.".to_string(),
+    );
+    m
+}
+
 /// --room 사용 시 적용되는 데모 모디파이어.
-/// 대비되는 값으로 비대칭 케미를 가시화한다.
-///   chaos:      높은 도발성(2.0), 낮은 반응성(0.6) — 남을 많이 자극하지만 자신은 덜 반응.
-///   friend:     높은 반응성(2.0), 보통 도발성(1.0) — 남의 발화에 민감하게 반응.
-///   summarizer: 둘 다 낮음(0.5) — 조용하고 덜 자극하는 역할.
 fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
     let mut m = BTreeMap::new();
     m.insert(
