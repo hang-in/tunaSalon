@@ -3,9 +3,13 @@ name = "salon"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+friend-engine = ["dep:lindera"]
+
 [dependencies]
 crossterm = "0.29.0"
 dotenvy = "0.15.7"
+lindera = { version = "2.3.4", features = ["embed-ko-dic"], optional = true }
 rand = "0.8"
 rand_chacha = "0.3"
 ratatui = "0.30.0"

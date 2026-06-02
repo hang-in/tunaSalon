@@ -1,6 +1,8 @@
 pub mod chat;
 pub mod driver;
 pub mod flow;
+#[cfg(feature = "friend-engine")]
+mod tokenize_ko;
 pub mod gate;
 pub mod hawkes;
 pub mod headless;
