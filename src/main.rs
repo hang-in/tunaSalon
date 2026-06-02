@@ -1,7 +1,7 @@
 use salon::driver;
 use salon::headless::HeadlessSink;
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
-use salon::ollama::OllamaBackend;
+use salon::pool::{BackendConfig, BackendPool};
 use salon::preset::RoomPreset;
 use salon::runtime::FakeBackend;
 use salon::sweep;
@@ -102,7 +102,7 @@ fn main() {
     }
 
     // --llm 없으면 FakeBackend (기본, 골든 보존).
-    // --llm 있으면 OllamaBackend 빌드.
+    // --llm 있으면 BackendPool(단일 백엔드) 빌드. v0.3 OllamaBackend 단일 경로와 동일 동작.
     if cli.llm {
         // 앱은 항상 Ollama 데몬(기본 localhost:11434)에 요청한다.
         // cloud 모델은 ":cloud" 이름(예: glm-5.1:cloud)으로 로컬 데몬이 원격 프록시하므로
@@ -123,23 +123,28 @@ fn main() {
         // cloud 모델은 None → auto-max(우리가 num_ctx를 보내면 모델 최대 ctx를 오히려 깎는다).
         // cloud 판정: (1) 직접 원격(https) 엔드포인트, 또는 (2) ":cloud" 모델명(localhost 데몬이 원격 프록시).
         // 그 외 로컬 모델(e4b 등)만 RAM 상한을 위해 8192 ctx 명시.
-        let is_cloud =
-            endpoint.starts_with("https://") || cli.model.ends_with(":cloud");
+        let is_cloud = endpoint.starts_with("https://") || cli.model.ends_with(":cloud");
         let num_ctx: Option<u64> = if is_cloud { None } else { Some(8192) };
 
-        let mut backend = OllamaBackend::new(
+        // BackendPool 구성: 단일 백엔드 "default" + routing 없음 = 모든 페르소나가 동일 백엔드로.
+        // v0.3의 단일 OllamaBackend 경로와 동일 동작이다.
+        let cfg = BackendConfig::new(
+            "default",
             cli.model.clone(),
             endpoint,
             api_key,
-            demo_persona_system_prompts(),
-            Duration::from_secs(30),
+            1, // 라이브 순차 유지(task-23에서 세마포어로 관리)
             num_ctx,
+            Duration::from_secs(30),
         );
+        let mut pool = BackendPool::new();
+        pool.add(cfg, demo_persona_system_prompts());
+        pool.set_default("default");
 
         if cli.headless {
             let stdout = io::stdout();
             let mut sink = HeadlessSink::new(stdout.lock());
-            driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut backend);
+            driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut pool);
             return;
         }
 
@@ -153,7 +158,7 @@ fn main() {
                     process::exit(1);
                 }
             };
-        driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut backend);
+        driver::run(&config, &personas, cli.seed, cli.ticks, &mut sink, &mut pool);
         return;
     }
 

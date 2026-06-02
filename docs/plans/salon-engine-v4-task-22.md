@@ -1,7 +1,7 @@
 ---
 title: "Salon v0.4 Task 22: 페르소나별 라우팅 (BackendPool = PersonaRuntime)"
 type: plan-task
-status: todo
+status: done
 updated_at: 2026-06-02
 parent_plan: salon-engine-v4.md
 task_id: "22"
