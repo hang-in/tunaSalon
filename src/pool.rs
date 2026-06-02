@@ -1,14 +1,52 @@
-//! 백엔드 풀 (v0.4 task-21/22).
+//! 백엔드 풀 (v0.4 task-21/22/27).
 //!
 //! task-21: 데이터 구조 + 생성자.
 //! task-22: `persona -> backend_name` 라우팅 + `impl PersonaRuntime`. 세마포어/배치는 task-23.
+//! task-27: `Protocol` + `Backend` enum(Ollama|OpenAI) + `OpenAIBackend` 통합.
 
 use crate::model::{Event, PersonaId};
 use crate::ollama::OllamaBackend;
+use crate::openai::OpenAIBackend;
 use crate::runtime::PersonaRuntime;
 use rand_chacha::ChaCha8Rng;
 use std::collections::BTreeMap;
 use std::time::Duration;
+
+/// 백엔드 프로토콜 종류.
+///
+/// - `Ollama`: Ollama `/api/generate` 프로토콜.
+/// - `OpenAI`: OpenAI 호환 `/v1/chat/completions` 프로토콜(vLLM 등).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Protocol {
+    Ollama,
+    OpenAI,
+}
+
+/// 이종 백엔드 추상 enum.
+///
+/// - `Backend::generate(&self, ...)`: 프로토콜에 따라 OllamaBackend::generate_shared 또는
+///   OpenAIBackend::generate로 디스패치한다.
+/// - rng를 소비하지 않는다 → 엔진 결정성 보존.
+/// - Send + Sync: task-23 배치에서 스레드 간 공유 대비.
+pub enum Backend {
+    Ollama(OllamaBackend),
+    OpenAI(OpenAIBackend),
+}
+
+impl Backend {
+    /// 프로토콜에 맞게 발화 텍스트 생성을 위임한다. rng 불요.
+    pub fn generate(
+        &self,
+        speaker: &PersonaId,
+        history: &[Event],
+        tick: u64,
+    ) -> Option<String> {
+        match self {
+            Backend::Ollama(b) => b.generate_shared(speaker, history, tick),
+            Backend::OpenAI(b) => b.generate(speaker, history, tick),
+        }
+    }
+}
 
 /// 개별 백엔드의 구성 파라미터.
 ///
@@ -18,22 +56,26 @@ use std::time::Duration;
 pub struct BackendConfig {
     /// 풀 안에서 백엔드를 식별하는 이름 (예: "cloud", "qwen", "local")
     pub name: String,
-    /// Ollama 모델 이름 (예: "gemma4:e4b", "qwen3.6:32b")
+    /// 모델 이름 (예: "gemma4:e4b", "qwen3.6-35b")
     pub model: String,
-    /// Ollama 서버 엔드포인트 (예: "http://localhost:11434", "https://api.ollama.ai")
+    /// 서버 엔드포인트 (예: "http://localhost:11434", "http://yongseek.iptime.org:8008")
     pub endpoint: String,
-    /// Ollama Cloud 인증 키. None이면 Authorization 헤더 없음.
+    /// 인증 키. None이면 Authorization 헤더 없음.
     /// SECURITY: 로그/에러/Debug 출력에 절대 노출하지 않는다.
     pub api_key: Option<String>,
     /// 동시 in-flight 상한. task-23에서 세마포어로 집행한다.
-    /// cloud=3, qwen=2, 로컬=1(순차)
+    /// cloud=3, qwen=1(max-num-seqs 1), 로컬=1(순차)
     pub max_concurrent: usize,
-    /// 컨텍스트 윈도우 크기.
+    /// Ollama 컨텍스트 윈도우 크기. Ollama 프로토콜 전용.
     /// None이면 요청 body에서 생략(cloud/원격 auto-max).
     /// Some(n)이면 options.num_ctx = n (로컬 e4b의 경우 RAM 상한 8192).
     pub num_ctx: Option<u64>,
     /// HTTP 요청 타임아웃
     pub timeout: Duration,
+    /// 백엔드 프로토콜 종류. new()의 기본값은 Ollama.
+    pub protocol: Protocol,
+    /// OpenAI max_tokens 파라미터. OpenAI 프로토콜 전용. None이면 생략.
+    pub max_tokens: Option<u64>,
 }
 
 /// SECURITY: api_key를 절대 출력하지 않는다. Some/None 여부만 표시한다.
@@ -47,12 +89,17 @@ impl std::fmt::Debug for BackendConfig {
             .field("max_concurrent", &self.max_concurrent)
             .field("num_ctx", &self.num_ctx)
             .field("timeout", &self.timeout)
+            .field("protocol", &self.protocol)
+            .field("max_tokens", &self.max_tokens)
             .finish()
     }
 }
 
 impl BackendConfig {
-    /// 새 BackendConfig를 생성한다.
+    /// 새 BackendConfig를 생성한다(Ollama 프로토콜 기본).
+    ///
+    /// 기존 호출처(task-21/22 테스트·main.rs)가 그대로 컴파일된다.
+    /// protocol=Ollama, max_tokens=None으로 자동 채워진다.
     pub fn new(
         name: impl Into<String>,
         model: impl Into<String>,
@@ -70,18 +117,46 @@ impl BackendConfig {
             max_concurrent,
             num_ctx,
             timeout,
+            protocol: Protocol::Ollama,
+            max_tokens: None,
+        }
+    }
+
+    /// OpenAI 호환 백엔드용 BackendConfig를 생성한다.
+    ///
+    /// protocol=OpenAI, num_ctx=None(OpenAI 프로토콜에 해당 없음)으로 설정.
+    pub fn new_openai(
+        name: impl Into<String>,
+        model: impl Into<String>,
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+        max_concurrent: usize,
+        max_tokens: Option<u64>,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            model: model.into(),
+            endpoint: endpoint.into(),
+            api_key,
+            max_concurrent,
+            num_ctx: None, // OpenAI 프로토콜에 해당 없음
+            timeout,
+            protocol: Protocol::OpenAI,
+            max_tokens,
         }
     }
 }
 
-/// 이름붙은 백엔드 레지스트리 (v0.4 task-21/22).
+/// 이름붙은 백엔드 레지스트리 (v0.4 task-21/22/27).
 ///
 /// - task-21: 데이터 구조 + 생성자.
 /// - task-22: `persona -> backend_name` 라우팅 + `impl PersonaRuntime`.
-/// - task-23: 백엔드별 세마포어 + 배치 API.
+/// - task-27: `Backend` enum(Ollama|OpenAI)으로 이종 프로토콜 지원.
+/// - task-23: 백엔드별 세마포어 + 배치 API(예정).
 pub struct BackendPool {
-    /// name -> OllamaBackend 맵
-    backends: BTreeMap<String, OllamaBackend>,
+    /// name -> Backend 맵 (Ollama|OpenAI 이종 가능)
+    backends: BTreeMap<String, Backend>,
     /// 기본 백엔드 이름. 라우팅 미지정 페르소나에 사용한다.
     default_backend: Option<String>,
     /// persona_id -> backend_name 라우팅 맵. 비어 있으면 모든 페르소나가 default로 향한다.
@@ -98,21 +173,31 @@ impl BackendPool {
         }
     }
 
-    /// BackendConfig + system_prompts로 OllamaBackend를 빌드해 풀에 등록한다.
+    /// BackendConfig + system_prompts로 Backend를 빌드해 풀에 등록한다.
     ///
-    /// - `system_prompts`: 화자별 system prompt 맵. 백엔드는 라우팅된 페르소나에게만
-    ///   사용하지만 전체 맵을 넘겨도 무해하다(OllamaBackend가 speaker로 조회).
+    /// - `config.protocol`에 따라 `Backend::Ollama` 또는 `Backend::OpenAI`를 빌드한다.
+    /// - `system_prompts`: 화자별 system prompt 맵. 백엔드가 speaker로 조회.
     /// - 같은 이름으로 두 번 호출하면 덮어쓴다.
-    /// - OllamaBackend 빌드 실패는 폴백(panic 없음) — reqwest::Client::new()로 대체된다.
+    /// - 백엔드 빌드 실패는 폴백(panic 없음) — reqwest::Client::new()로 대체된다.
     pub fn add(&mut self, config: BackendConfig, system_prompts: BTreeMap<PersonaId, String>) {
-        let backend = OllamaBackend::new(
-            config.model,
-            config.endpoint,
-            config.api_key,
-            system_prompts,
-            config.timeout,
-            config.num_ctx,
-        );
+        let backend = match config.protocol {
+            Protocol::Ollama => Backend::Ollama(OllamaBackend::new(
+                config.model,
+                config.endpoint,
+                config.api_key,
+                system_prompts,
+                config.timeout,
+                config.num_ctx,
+            )),
+            Protocol::OpenAI => Backend::OpenAI(OpenAIBackend::new(
+                config.model,
+                config.endpoint,
+                config.api_key,
+                system_prompts,
+                config.timeout,
+                config.max_tokens,
+            )),
+        };
         self.backends.insert(config.name, backend);
     }
 
@@ -170,19 +255,19 @@ impl BackendPool {
 impl PersonaRuntime for BackendPool {
     /// speaker를 routing → default 순서로 백엔드에 라우팅해 generate를 위임한다.
     ///
-    /// - rng를 소비하지 않는다(내부 OllamaBackend도 미소비) → 엔진 결정성 보존.
+    /// - rng를 소비하지 않는다(Backend::generate는 &self) → 엔진 결정성 보존.
     /// - 라우팅 대상 백엔드가 backends 맵에 없거나 default도 없으면 None 반환(panic 없음).
     fn generate(
         &mut self,
         speaker: &PersonaId,
         history: &[Event],
         tick: u64,
-        rng: &mut ChaCha8Rng,
+        _rng: &mut ChaCha8Rng,
     ) -> Option<String> {
-        // resolve는 &self를 빌리므로 이름을 String으로 복사해 가변 borrow 충돌을 피한다.
+        // resolve는 &self를 빌리므로 이름을 String으로 복사해 borrow 충돌을 피한다.
         let backend_name = self.resolve(speaker)?.to_string();
-        let backend = self.backends.get_mut(&backend_name)?;
-        backend.generate(speaker, history, tick, rng)
+        let backend = self.backends.get(&backend_name)?;
+        backend.generate(speaker, history, tick)
     }
 }
 
@@ -423,6 +508,118 @@ mod tests {
         let history = Vec::new();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
+        let result = pool.generate(&speaker, &history, 0, &mut rng);
+        assert_eq!(result, None);
+    }
+
+    // -------------------------------------------------------------------------
+    // task-27: Backend enum + OpenAI 통합 테스트 (네트워크 불필요)
+    // -------------------------------------------------------------------------
+
+    /// OpenAI 설정으로 add하면 Backend::OpenAI가 등록된다(resolve로 조회 가능).
+    #[test]
+    fn add_openai_config_registers_openai_backend() {
+        let mut pool = BackendPool::new();
+        let cfg = BackendConfig::new_openai(
+            "friend",
+            "qwen3.6-35b",
+            "http://127.0.0.1:1", // 오프라인 - 라우팅만 검증
+            None,
+            1,
+            Some(256),
+            Duration::from_millis(1),
+        );
+        pool.add(cfg, BTreeMap::new());
+        pool.set_default("friend");
+
+        // resolve가 "friend"를 반환해야 한다
+        assert_eq!(pool.resolve("any-speaker"), Some("friend"));
+        assert_eq!(pool.len(), 1);
+    }
+
+    /// BackendConfig::new_openai의 protocol 필드가 OpenAI이다.
+    #[test]
+    fn new_openai_config_has_openai_protocol() {
+        let cfg = BackendConfig::new_openai(
+            "friend",
+            "qwen3.6-35b",
+            "http://yongseek.iptime.org:8008",
+            None,
+            1,
+            None,
+            Duration::from_secs(60),
+        );
+        assert_eq!(cfg.protocol, Protocol::OpenAI);
+        assert_eq!(cfg.num_ctx, None); // OpenAI 프로토콜에 해당 없음
+    }
+
+    /// BackendConfig::new의 protocol 필드가 Ollama이다(기존 호출 보존).
+    #[test]
+    fn new_config_has_ollama_protocol_by_default() {
+        let cfg = BackendConfig::new(
+            "cloud",
+            "gemma4:e4b",
+            "https://api.ollama.ai",
+            None,
+            3,
+            None,
+            Duration::from_secs(30),
+        );
+        assert_eq!(cfg.protocol, Protocol::Ollama);
+        assert_eq!(cfg.max_tokens, None);
+    }
+
+    /// mixed 풀(Ollama + OpenAI)에서 resolve가 올바르게 동작한다.
+    #[test]
+    fn mixed_pool_resolve_works_for_both_protocols() {
+        let mut pool = BackendPool::new();
+
+        // Ollama 백엔드 ("cloud")
+        pool.add(make_config("cloud"), BTreeMap::new());
+        // OpenAI 백엔드 ("friend")
+        let cfg_openai = BackendConfig::new_openai(
+            "friend",
+            "qwen3.6-35b",
+            "http://127.0.0.1:1",
+            None,
+            1,
+            None,
+            Duration::from_millis(1),
+        );
+        pool.add(cfg_openai, BTreeMap::new());
+        pool.set_default("cloud");
+        pool.add_route("anchor", "friend");
+
+        assert_eq!(pool.len(), 2);
+        // anchor는 friend(OpenAI)로 라우팅
+        assert_eq!(pool.resolve("anchor"), Some("friend"));
+        // 나머지는 cloud(Ollama)로 폴백
+        assert_eq!(pool.resolve("chaos"), Some("cloud"));
+    }
+
+    /// mixed 풀에서 PersonaRuntime::generate가 오프라인이면 None(panic 없음).
+    #[test]
+    fn mixed_pool_generate_offline_returns_none_for_openai_backend() {
+        use rand::SeedableRng;
+
+        let mut pool = BackendPool::new();
+        let cfg = BackendConfig::new_openai(
+            "friend",
+            "qwen3.6-35b",
+            "http://127.0.0.1:1", // 오프라인
+            None,
+            1,
+            None,
+            Duration::from_millis(1),
+        );
+        pool.add(cfg, BTreeMap::new());
+        pool.set_default("friend");
+
+        let speaker = "anchor".to_string();
+        let history = Vec::new();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+
+        // 오프라인 → None, panic 없음
         let result = pool.generate(&speaker, &history, 0, &mut rng);
         assert_eq!(result, None);
     }

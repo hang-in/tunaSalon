@@ -14,7 +14,7 @@ roadmap_ref: salon-engine-v1.md
 
 v0.3(`salon-engine-v3.md`)이 LLM 1명을 결정적 엔진에 붙였다. v0.4는 **여러 백엔드를 동시에** 쓴다. 단 원칙은 그대로: **화자 선택(누가/언제)은 엔진이 결정적으로, 생성만 LLM이.** 라이브 틱 루프는 발화 1명/틱 + 인과적 턴테이킹이라 **순차 유지**하고, 동시성은 persona collapse 비교/벤치에서만 쓴다.
 
-백엔드 2종(실제 가용): (1) **Ollama Cloud Pro**($20/월, 동시성 3, ctx auto-max), (2) **지인서버 `qwen3.6:32b`**(ctx 100k, 동시성 ~2). 과금·동시성·ctx 근거는 메모리 [[ollama-cloud-limits]] 참조.
+백엔드 2종(실제 가용, 둘 다 도달 확인 2026-06-02): (1) **Ollama Cloud** `gemma4:31b-cloud`(256k ctx, 동시성 3, Ollama `/api/generate`), (2) **지인서버 vLLM** `qwen3.6-35b`(256k ctx, 동시성 1, **OpenAI `/v1/chat/completions`**, reasoning 모델). **프로토콜이 2종**이라 백엔드 추상화가 필요하다. 근거: [[ollama-cloud-limits]], [[friend-server-vllm]]. **로컬 ollama는 금지**(맥북 느림).
 
 ## 0. Context
 
@@ -22,7 +22,11 @@ v0.3(`salon-engine-v3.md`)이 LLM 1명을 결정적 엔진에 붙였다. v0.4는
 
 ### 운영 제약 (2026-06-02 사용자 지시)
 
-지인서버(`qwen3.6:32b`)는 **아직 미가용**(계정 생성·셋업 진행 중, 시간 소요). 따라서 v0.4 구현·검증은 **Ollama Cloud 단일 라이브 백엔드만** 사용한다. 이종 풀의 동시성/cap/라우팅/폴백은 **deterministic fake 백엔드 2개**(서로 다른 cap)로 네트워크 없이 검증한다. 지인서버는 BackendConfig에 정의는 하되 **라이브는 보류** 처리(unhealthy 우회 폴백). mixed-model 실측 벤치(task-25의 qwen 경로)는 서버 가동 후 수동 확인하고, 코드 경로 자체는 fake로 테스트한다. → 설계(이종 풀)는 그대로, 라이브 의존만 cloud로 한정.
+지인서버는 **가동 중**(이 맥북에서 도달 확인). 단 **Ollama가 아니라 vLLM의 OpenAI API**(`/v1/chat/completions`)라, 단일 `OllamaBackend`로는 안 되고 **백엔드 추상화(프로토콜 2종)가 선행 필요** → task-27(Backend enum + OpenAIBackend)을 task-23(동시성) 이전에 먼저 한다.
+
+- **로컬 ollama 사용 금지**(맥북 극도로 느려짐): 라이브 LLM은 cloud(`gemma4:31b-cloud`) + 지인서버(`qwen3.6-35b`)만. cloud 모델 미pull이면 `ollama pull gemma4:31b-cloud`(원격 포인터, 로컬 RAM 안 씀).
+- 결정적/CI 검증은 여전히 **fake 백엔드로 네트워크 없이**. 라이브(cloud/friend) 검증은 `#[ignore]` 또는 수동 실행.
+- 지인서버 동시성은 `max-num-seqs 1` + vllm-swap → **1**(직렬). 기본 모델 `qwen3.6-35b-fast`(reasoning 꺼진 변형, ~0.7s). OpenAIBackend는 항상 `chat_template_kwargs.enable_thinking=false` 전송(일반 qwen3.6-35b도 안전) + `content`만 추출(검증 2026-06-02).
 
 ## 1. Invariants
 
@@ -31,7 +35,7 @@ v0.3(`salon-engine-v3.md`)이 LLM 1명을 결정적 엔진에 붙였다. v0.4는
 | INV-1 | 기본 실행(`cargo run`, LLM off, FakeBackend)은 v0.1~v0.3 골든과 바이트 동일. 병렬 경로는 결정 경로에 진입 금지 |
 | INV-2 | 엔진 결정(누가/언제/침묵)은 seed로 결정적. 백엔드 풀·라우팅과 무관. 생성 텍스트만 비결정 |
 | INV-3 | 라이브 틱 루프는 순차(발화 1명/틱, 인과적 턴테이킹). 동시성은 bench/batch 경로 전용 |
-| INV-4 | 백엔드별 max_concurrent 세마포어가 동시 in-flight를 상한(cloud=3, qwen=2). 초과는 큐, 큐 풀/거부면 폴백 |
+| INV-4 | 백엔드별 max_concurrent 세마포어가 동시 in-flight를 상한(cloud=3, friend vLLM=1: max-num-seqs 1). 초과는 큐, 큐 풀/거부면 폴백 |
 | INV-5 | async/tokio 미도입. blocking reqwest + std::thread::scope + 세마포어 |
 | INV-6 | 비밀: 백엔드별 `api_key`도 Debug redacted, 로그/에러/출력에 키 노출 금지(v0.3 INV 계승) |
 | INV-7 | num_ctx는 백엔드별 `Option<u64>`. None=요청에서 생략(cloud/원격 auto-max). 단일 백엔드 기본은 Some(8192) 유지로 기존 동작 보존 |
@@ -45,7 +49,8 @@ v0.3(`salon-engine-v3.md`)이 LLM 1명을 결정적 엔진에 붙였다. v0.4는
 - (G3) num_ctx 백엔드별 `Option<u64>`(하드코딩 제거). None이면 요청 body에서 생략.
 - (G4) 병렬 배치 API: `std::thread::scope` + 백엔드별 세마포어. persona_collapse 비교와 벤치를 동시화(현재 순차 3-페르소나 루프).
 - (G5) 거부/타임아웃 폴백: 비2xx(429/queue-full)·타임아웃 → 폴백 백엔드(또는 FakeBackend) + 백오프. panic 금지.
-- (G6) mixed-model 방: 한 살롱에서 일부 페르소나는 qwen3.6:32b(100k ctx), 일부는 cloud 경량 모델. 비교 벤치 모드.
+- (G6) mixed-model 방: 한 살롱에서 일부 페르소나는 지인서버 `qwen3.6-35b`(256k ctx, reasoning), 일부는 cloud `gemma4:31b-cloud`. 비교 벤치 모드.
+- (G7) 백엔드 추상화: `enum Backend { Ollama, OpenAI }` + 신규 `OpenAIBackend`(vLLM chat completions). 풀이 프로토콜 2종을 담는다.
 
 ### Non-goals
 - ❌ 라이브 burst(같은 맥락 다중 페르소나 동시 반응) - **보류**. 순차 라이브 지연을 먼저 측정한 뒤 v0.4.x/v0.5에서 결정(인과적 턴테이킹과 충돌).
@@ -56,10 +61,12 @@ v0.3(`salon-engine-v3.md`)이 LLM 1명을 결정적 엔진에 붙였다. v0.4는
 
 | 구조 | 변경 |
 |------|------|
-| `BackendConfig`(신규) | `{name, model, endpoint, api_key: Option, max_concurrent: usize, num_ctx: Option<u64>, timeout}` |
-| `BackendPool`(신규) | name -> (OllamaBackend, Semaphore) 레지스트리 + `persona -> backend_name` 라우팅 맵 + 기본 백엔드 |
-| `OllamaBackend` | `num_ctx: Option<u64>` 필드화. `build_request_body`가 num_ctx를 인자로 받아 None이면 options에서 생략. generate는 상태 불변(스레드 공유 위해 `&self` 경로 추가, reqwest blocking Client는 Send+Sync+Clone) |
-| `PersonaRuntime` | 라이브 경로는 풀이 `generate_one(persona, ...)`로 라우팅(트레이트 호환 유지). 배치는 별도 `generate_batch(...)` |
+| `BackendConfig` | `{name, model, endpoint, api_key, max_concurrent, timeout, protocol: Protocol, num_ctx: Option<u64>(Ollama용), max_tokens: Option<u64>(OpenAI용)}`. `Protocol { Ollama, OpenAI }`. `new`(Ollama 기본, 기존 호출 보존)/`new_openai` 생성자 |
+| `Backend`(신규 enum) | `Ollama(OllamaBackend)` \| `OpenAI(OpenAIBackend)`. `generate(&self, speaker, history, tick) -> Option<String>` 디스패치. rng 불요·Send+Sync(향후 배치 공유) |
+| `OpenAIBackend`(신규 `openai.rs`) | vLLM/OpenAI `/v1/chat/completions`. body `{model, messages:[system,user], max_tokens?, stream:false}`, 응답 `choices[0].message.content` 추출(reasoning 모델의 `reasoning`은 무시). api_key Debug redacted |
+| `BackendPool` | name -> `Backend` 레지스트리(+task-23부터 백엔드별 Semaphore) + `persona -> backend_name` 라우팅 + 기본 백엔드. `add`가 `config.protocol`로 Ollama/OpenAI 분기 |
+| `OllamaBackend` | `num_ctx: Option<u64>`(task-21 완료). 스레드 공유·enum 디스패치용 `generate_shared(&self, ...)` 추가(task-27). reqwest blocking Client는 Send+Sync+Clone |
+| `PersonaRuntime` | 라이브 경로는 풀이 라우팅(트레이트 호환 유지). 배치는 별도 `generate_batch(...)`(task-23) |
 | CLI/Config | room 정의에 backends + routing. `--llm` 단일 모델은 기존대로(단일 백엔드 풀로 매핑) |
 
 ## 4. Subtasks (위험 분리: 순수 → 라우팅 → 동시성 → 도구/게이트)
@@ -67,13 +74,14 @@ v0.3(`salon-engine-v3.md`)이 LLM 1명을 결정적 엔진에 붙였다. v0.4는
 | task | 제목 | 핵심 | 위험 | depends_on |
 |---|---|---|---|---|
 | 21 | num_ctx Option화 + BackendConfig + 풀 스켈레톤 | `num_ctx: Option<u64>`(None=생략), `build_request_body` 시그니처 갱신(테스트 갱신), BackendConfig/Pool 레지스트리(동시성 없이). 단일 백엔드 기본 8192 유지 | 낮음(순수). 골든 보존. 기존 build_request_body 테스트 갱신 | v0.3 |
-| 22 | 페르소나별 라우팅 | `persona -> backend` 맵, 미지정 폴백. driver가 `pool.generate_one(chosen)`으로 라우팅. 라이브 순차 유지 | 낮음~중(라우팅 누락 시 폴백 명시) | 21 |
-| 23 | 병렬 배치 API + 백엔드별 세마포어 | `std::thread::scope` + 백엔드별 Semaphore로 N 페르소나 동시 generate. cap 준수(cloud 3/qwen 2). deterministic fake로 cap 검증(네트워크 없이) | 중(스레드 공유: &self, Send+Sync. 결정성 오염 금지 = 결정 경로 불침투) | 22 |
+| 22 | 페르소나별 라우팅 | `persona -> backend` 맵, 미지정 폴백. 풀이 PersonaRuntime 구현. 라이브 순차 유지 | 낮음~중 | 21 |
+| 27 | **백엔드 추상화 + OpenAIBackend(vLLM friend)** | `enum Backend{Ollama,OpenAI}`, 신규 `OpenAIBackend`(`/v1/chat/completions`, `content` 추출, reasoning 무시), 풀이 `protocol`로 분기, `OllamaBackend::generate_shared(&self)`. 지인서버(`qwen3.6-35b`) 라이브 검증 | 중(신규 프로토콜·네트워크). 골든 보존 | 22 |
+| 23 | 병렬 배치 API + 백엔드별 세마포어 | `std::thread::scope` + 백엔드별 Semaphore로 N 동시 generate(`Backend::generate` &self). cap 준수(cloud 3/friend 1). deterministic fake로 cap 검증(네트워크 없이) | 중(스레드 공유·결정성 오염 금지) | 27 |
 | 24 | 거부/타임아웃 폴백 + 백오프 | 비2xx(429/queue-full)·타임아웃 분류 → 폴백 백엔드 또는 Fake + 백오프. 백엔드 unhealthy 우회 | 중(네트워크 분기). panic 금지 | 23 |
-| 25 | persona_collapse 병렬화 + mixed-model 벤치 | example를 배치 API로 동시화. mixed-model 방(anchor=qwen, 나머지=cloud) 벤치 모드 CLI. 라이브 순차 1발화 지연 측정(burst 보류 판단 근거) | 낮음 | 24 |
-| 26 | v0.4 스모크 게이트 | LLM off 풀=골든 바이트 동일(INV-1) 재확인. 배치 cap 준수·폴백·num_ctx None/Some을 deterministic fake로 검증(`#[ignore]` 라이브 분리) | 낮음 | 21,23,24 |
+| 25 | persona_collapse 병렬화 + mixed-model 벤치 | example를 배치 API로 동시화. mixed-model(anchor=friend `qwen3.6-35b`, 나머지=cloud `gemma4:31b-cloud`) 벤치 모드. 라이브 순차 1발화 지연 측정(burst 보류 판단 근거) | 낮음 | 24, 27 |
+| 26 | v0.4 스모크 게이트 | LLM off 풀=골든 바이트 동일(INV-1) 재확인. 배치 cap·폴백·num_ctx·라우팅·Backend 분기를 deterministic fake로 검증(`#[ignore]` 라이브 분리) | 낮음 | 21,23,24,27 |
 
-Phase A(21 순수 기반) → B(22 라우팅) → C(23 동시성, 24 폴백) → D(25 도구·측정, 26 게이트). v0.4 완료 게이트는 task-26 통과 + 골든 보존.
+> 실행 순서는 task 번호가 아니라 depends_on을 따른다(task-27은 22 다음, 23 이전에 신규 삽입). Phase A(21 ✅) → B(22 ✅) → **B2(27 백엔드 추상화 + OpenAIBackend)** → C(23 동시성, 24 폴백) → D(25 도구·측정, 26 게이트). v0.4 완료 게이트는 task-26 통과 + 골든 보존.
 
 ## 5. v0.4 완료 기준
 

@@ -150,18 +150,18 @@ impl OllamaBackend {
     }
 }
 
-impl PersonaRuntime for OllamaBackend {
-    /// 실제 Ollama LLM에 발화 텍스트 생성을 요청한다.
+impl OllamaBackend {
+    /// 발화 텍스트 생성 본문(rng 불요 · &self).
     ///
-    /// - rng를 절대 소비하지 않는다 → 엔진 결정성(화자/침묵) 보존.
-    /// - 네트워크 실패, 비2xx, JSON 파싱 실패, 타임아웃 → None 반환.
-    /// - SECURITY: api_key는 Authorization 헤더에만 사용, 에러 메시지에 포함하지 않는다.
-    fn generate(
-        &mut self,
+    /// `PersonaRuntime::generate`에서 위임 호출한다. Backend enum 디스패치에서도 직접 호출.
+    /// - rng를 소비하지 않으므로 엔진 결정성이 보존된다.
+    /// - 네트워크 실패, 비2xx, JSON 파싱 실패, 타임아웃 → None 반환(panic 없음).
+    /// - SECURITY: api_key는 Authorization 헤더에만, 에러 메시지에 절대 포함하지 않는다.
+    pub fn generate_shared(
+        &self,
         speaker: &PersonaId,
         history: &[Event],
         _tick: u64,
-        _rng: &mut ChaCha8Rng,
     ) -> Option<String> {
         let recent = Self::format_recent(history);
         let user_prompt = Self::assemble_user_prompt(&recent, None);
@@ -206,6 +206,21 @@ impl PersonaRuntime for OllamaBackend {
                 None
             }
         }
+    }
+}
+
+impl PersonaRuntime for OllamaBackend {
+    /// 실제 Ollama LLM에 발화 텍스트 생성을 요청한다. generate_shared에 위임.
+    ///
+    /// - rng를 절대 소비하지 않는다 → 엔진 결정성(화자/침묵) 보존.
+    fn generate(
+        &mut self,
+        speaker: &PersonaId,
+        history: &[Event],
+        tick: u64,
+        _rng: &mut ChaCha8Rng,
+    ) -> Option<String> {
+        self.generate_shared(speaker, history, tick)
     }
 }
 
