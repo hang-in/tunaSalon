@@ -3,12 +3,12 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.4-blue)
-![tests](https://img.shields.io/badge/tests-125%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.5-blue)
+![tests](https://img.shields.io/badge/tests-148%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
-A terminal app that drops LLM personas into a room and lets them small-talk. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet.
+A terminal chat room where you drop in and small-talk with LLM personas. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet. v0.5 makes you a first-class participant: type something and the personas turn to react; go quiet and they drift back to their own chatter.
 
 Designing speech is easy. Designing silence is hard. This project is a little backwards on purpose.
 
@@ -128,12 +128,38 @@ The summarizer, routed to the larger friend model, reads quieter and more reflec
 
 ---
 
+## Join the room (v0.5)
+
+v0.5 turns tunaSalon into the thing it was always building toward: a chat room you can actually join.
+
+`cargo run -- --chat` opens a three-panel TUI: a scrolling **chat pane** on the left (all utterances, labelled by persona), a **gauge sidebar** on the right (each persona's live λ vs. the θ line), and a **text input box** at the bottom. You type; the personas react.
+
+The mechanism is **HumanChannel**: when you send a message, it fires as a large external event in the Hawkes engine — strongly exciting every persona's urge and pulling the topic toward you (design §5). Personas that were mid-chatter turn toward you; when you go quiet, the room drifts back to its own rhythm.
+
+LLM generation (~1.6s/line) runs off the main thread, so the UI stays responsive while a persona is "thinking." Replies come one at a time — causal turn-taking, same as always. Personas can be routed to different backends (e.g. a cloud model + a friend's vLLM `qwen3.6-35b-fast`), with fallback if one is down.
+
+`--chat` requires a real terminal. In a non-interactive shell it prints a graceful error and exits.
+
+**Live demo** (`cargo run --example chat_demo` — no terminal needed, runs non-interactively):
+
+```
+친구: Hey! What's up?
+혼돈: I've decided to replace all your socks with slightly damp sponges. Ta-ta!
+나: 안녕, 다들 비 와서 뭐해?          ← the human joins
+친구: 난 그냥 집에서 뒹굴거리는 중! ㅋㅋㅋ   ← persona turns to react (switches to Korean)
+```
+
+When the human speaks, the room's attention shifts.
+
+---
+
 ## Try it
 
 All you need is [Rust](https://rustup.rs). The default run needs no LLM and no network.
 
 ```bash
 cargo run                                         # watch the meter live (TUI). q to quit, space to pause
+cargo run -- --chat                               # join the room: interactive chat (needs a real terminal)
 cargo run -- --headless --ticks 200               # deterministic NDJSON, one line per tick
 cargo run -- --sweep                              # θ × k grid + preset comparison
 cargo run -- --room argument                      # room mood preset (calm/pub/argument/chaos)
@@ -142,7 +168,8 @@ cargo run -- --theta 0.7 --k 5 --beta 0.4         # turn the knobs
 cargo run -- --llm                                # opt in to LLM (default cloud model, needs network)
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
-cargo test                                        # 125 tests, including the smoke gates
+cargo run --example chat_demo                     # non-interactive chat loop with a scripted human turn
+cargo test                                        # 148 tests, including the smoke gates
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -151,16 +178,19 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.4 (now):** backend pool with two protocols (Ollama + OpenAI-compatible), per-persona routing, mixed-model rooms, concurrency semaphores per backend, fallback chain. Live tick loop stays sequential. LLM is opt-in; default run is still deterministic and LLM-free. Rust, 125 tests, smoke gates green.
+**v0.5 (now):** human-in-the-loop chat room. `--chat` TUI (chat pane + gauge sidebar + input box), HumanChannel Hawkes event, non-blocking LLM generation, heterogeneous backend routing. LLM is opt-in; default run is still deterministic and LLM-free. Rust, 148 tests, smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
 - **v0.2 — chemistry (α):** who riles up whom; room presets (calm / pub / argument / chaos) and persona pairings.
 - **v0.3 — local LLMs:** Ollama personas generate actual lines. Engine decides who speaks; LLM fills in content. `persona_collapse` example: same model, different persona prompts.
 - **v0.4 — concurrent / mixed-model:** backend pool (Ollama + OpenAI-compatible), per-persona routing, concurrency caps, fallback. `mixed_bench` example.
+- **v0.5 — join the room:** human-in-the-loop chat (HumanChannel + `--chat` TUI). `chat_demo` example.
 
 **Next:**
-- **v0.5 — FlowMeter:** measure conversation convergence/divergence. Keyword/similarity approximation first, then BGE-M3 embeddings. Observe only — no feedback yet.
+- **v0.6 — FlowMeter:** measure conversation convergence/divergence. Keyword/similarity approximation first, then BGE-M3 embeddings. Observe only — no feedback yet.
+
+*(Deferred: long-term memory / friend engine — design notes in `docs/temp/`.)*
 
 ---
 
