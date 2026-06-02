@@ -341,16 +341,18 @@ impl LiveSession {
         // query/flow/recall은 이미 위에서 계산 완료됨 — 스냅샷 조작은 그 이후.
         if !self.topics.is_empty() {
             let topic_content = format!(
-                "이 방의 화제: {}. 막연한 메타토크 말고 이 주제로 구체적으로 얘기하세요.",
-                self.topics.join(" · ")
+                "[진행 지시] 지금부터 '{}' 주제로만 구체적으로 이야기하세요. 멍때리기·쉬기·계획 같은 일반론으로 새지 말고 이 주제 자체를 깊게 파고드세요.",
+                self.topics.join("', '")
             );
             let topic_event = crate::model::Event {
                 ts: tick as f64 * self.config.tick_interval,
-                speaker: "(방 화제)".to_string(),
+                speaker: "(진행)".to_string(),
                 mark: 0.0,
                 content: Some(topic_content),
             };
-            history_snapshot.insert(0, topic_event);
+            // 맨 앞(insert 0)이 아니라 맨 뒤(push)에 넣는다: 생성은 history 마지막 4줄만
+            // 보므로(ollama::format_recent), 대화가 길어져도 토픽 지시가 항상 컨텍스트에 들어간다.
+            history_snapshot.push(topic_event);
         }
 
         // 워커로 job 전송. 채널이 닫혔으면(워커 비정상 종료) 조용히 무시.
