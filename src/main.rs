@@ -109,12 +109,29 @@ fn main() {
     // --chat: 데모 룸 풀(cloud + friend) + LiveSession + ChatApp.
     // headless/--llm/기본 경로와 완전히 분리된 모드이므로 최우선 처리.
     if cli.chat {
-        let pool = build_demo_room_pool();
-        let pool = Arc::new(pool);
-        let theta = config.theta;
-        let session =
-            LiveSession::with_store(config, demo_personas(), cli.seed, pool, "나", salon::memory::live_store());
-        let names = persona_names(&personas);
+        // 채팅방 = "생동감 있는 3-way". 헤드리스/골든 경로(위 config/personas)와 분리된
+        // 자체 페르소나(chat_personas, μ 0.70/0.62/0.55)와 엔진 config를 쓴다.
+        // 기본 = Pub 교차자극 + theta 0.60 + 같은 화자 2연속 금지(자기 말 받아치기 방지).
+        // --theta/--beta는 존중. 반복 테스트 튜닝: friend~43%/realist~32%/summarizer~23%, self-repeat 0.
+        let chat_personas = chat_personas();
+        let mut chat_config = RoomPreset::Pub
+            .build_config_with_modifiers(&chat_personas, &demo_persona_modifiers());
+        chat_config.theta = cli.theta.unwrap_or(0.60);
+        if let Some(beta) = cli.beta {
+            chat_config.beta = beta;
+        }
+        chat_config.forbid_self_repeat = true;
+        let theta = chat_config.theta;
+        let names = persona_names(&chat_personas);
+        let pool = Arc::new(build_demo_room_pool());
+        let session = LiveSession::with_store(
+            chat_config,
+            chat_personas,
+            cli.seed,
+            pool,
+            "나",
+            salon::memory::live_store(),
+        );
         match ChatApp::new(session, names, theta) {
             Ok(mut app) => {
                 let _ = app.run();
@@ -311,6 +328,32 @@ fn demo_personas() -> Vec<Persona> {
     ]
 }
 
+/// 채팅방(`--chat`) 전용 페르소나. 헤드리스/골든은 `demo_personas`(canonical, dev 회귀용)를
+/// 그대로 쓰고, 채팅은 "생동감 있는 3-way"를 위해 μ 간격을 좁힌 이 세트를 쓴다(골든 불침투).
+///
+/// 반복 테스트 튜닝(Pub 교차자극 + theta 0.60 + forbid_self_repeat 기준):
+/// friend~43% / realist~32% / summarizer~23%, 침묵 리듬 유지(maxsil~3), 자기연속 0.
+/// id/이름은 demo와 동일(프롬프트·모디파이어 공유), base_rate만 다르다.
+fn chat_personas() -> Vec<Persona> {
+    vec![
+        Persona {
+            id: "friend".to_string(),
+            name: "Friendly Regular".to_string(),
+            base_rate: 0.70,
+        },
+        Persona {
+            id: "chaos".to_string(),
+            name: "Grounded Realist".to_string(),
+            base_rate: 0.62,
+        },
+        Persona {
+            id: "summarizer".to_string(),
+            name: "Quiet Summarizer".to_string(),
+            base_rate: 0.55,
+        },
+    ]
+}
+
 /// 데모 3인(friend / chaos / summarizer)의 역할 기반 system prompt를 반환한다.
 /// 2~3문장 — 한마디 툭 던지고 끝이 아니라 조금 더 대화하게(단, 독백은 금지).
 /// 응답 언어는 시스템 로케일(`$LANG`)에서 감지, 기본 한국어(salon::locale).
@@ -351,7 +394,7 @@ fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
     );
     m.insert(
         "summarizer".to_string(),
-        PersonaModifier { reactivity: 0.5, provocativeness: 0.5 },
+        PersonaModifier { reactivity: 1.0, provocativeness: 0.5 },
     );
     m
 }
