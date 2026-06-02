@@ -3,10 +3,17 @@
 //! 참여 기반 기억: 캐릭터는 자신이 있었던 방의 사건만 회상할 수 있다.
 //! 순수·결정적·인메모리. 네트워크/rng/벽시계 없음.
 //! 생성 배선은 task-41. 평가 하네스는 task-40.
-
-use std::collections::{BTreeMap, BTreeSet};
+//!
+//! task-44: `friend-engine` feature on이면 `:memory:` SQLite + FTS5 BM25 구현으로
+//! 교체한다. feature off는 v0.8 Vec 구현(골든·기본빌드 보존).
+//!
+//! 공개 API (양쪽 동일):
+//!   - `recall(&self, persona, query, k) -> Vec<MemoryEvent>` (owned)
+//!   - `format_recall(events: &[MemoryEvent]) -> Option<String>`
 
 use crate::model::PersonaId;
+
+// ─── 공유 데이터 타입 ────────────────────────────────────────────────────────
 
 /// 메모리 스토어에 저장되는 사건 단위.
 ///
@@ -19,145 +26,361 @@ pub struct MemoryEvent {
     pub content: String,
 }
 
-/// 메모리 스토어: 사건 로그 + 참여 레지스트리.
+/// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
 ///
-/// - `events`: 기록된 사건(삽입 순).
-/// - `participation`: room → 그 방에 참여한 페르소나 집합.
+/// 비어 있으면 `None`. 있으면 `"지난 대화에서:\n- {speaker}: {content}\n..."`.
+/// 논리 ts 기반 상대표현("지난 대화에서")만 쓰며 벽시계 없음.
 ///
-/// 결정성: `BTreeMap`/`BTreeSet` 사용. rng/네트워크/시간 없음.
-#[derive(Debug, Default)]
-pub struct MemoryStore {
-    events: Vec<MemoryEvent>,
-    participation: BTreeMap<String, BTreeSet<PersonaId>>,
+/// 공유 함수(feature on/off 동일 시그니처: `&[MemoryEvent]` → `Option<String>`).
+pub fn format_recall_impl(events: &[MemoryEvent]) -> Option<String> {
+    if events.is_empty() {
+        return None;
+    }
+    let mut buf = String::from("지난 대화에서:\n");
+    for ev in events {
+        buf.push_str(&format!("- {}: {}\n", ev.speaker, ev.content));
+    }
+    // 마지막 '\n' 제거
+    if buf.ends_with('\n') {
+        buf.pop();
+    }
+    Some(buf)
 }
 
-/// 회상 토큰화 헬퍼.
-///
-/// `friend-engine` feature on: Lindera 한국어 형태소 분해.
-/// feature off: `flow::tokenize`(v0.8 토큰중복, 동작 완전 동일).
-fn recall_tokens(s: &str) -> BTreeSet<String> {
-    #[cfg(feature = "friend-engine")]
-    {
-        crate::tokenize_ko::morphological_tokens(s)
-            .into_iter()
-            .collect()
-    }
-    #[cfg(not(feature = "friend-engine"))]
-    {
-        crate::flow::tokenize(s)
-    }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// feature OFF: v0.8 Vec 구현 (기본, lean, no rusqlite)
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(not(feature = "friend-engine"))]
+mod vec_impl {
+    use super::{MemoryEvent, PersonaId, format_recall_impl};
+    use std::collections::{BTreeMap, BTreeSet};
 
-impl MemoryStore {
-    /// 빈 스토어를 생성한다.
-    pub fn new() -> Self {
-        Self::default()
+    /// 메모리 스토어: 사건 로그 + 참여 레지스트리.
+    ///
+    /// - `events`: 기록된 사건(삽입 순).
+    /// - `participation`: room → 그 방에 참여한 페르소나 집합.
+    ///
+    /// 결정성: `BTreeMap`/`BTreeSet` 사용. rng/네트워크/시간 없음.
+    #[derive(Debug, Default)]
+    pub struct MemoryStore {
+        events: Vec<MemoryEvent>,
+        participation: BTreeMap<String, BTreeSet<PersonaId>>,
     }
 
-    /// `persona`를 `room`의 참여자로 등록한다.
-    ///
-    /// 이미 등록되어 있으면 무시한다(멱등).
-    pub fn join(&mut self, room: impl Into<String>, persona: impl Into<String>) {
-        self.participation
-            .entry(room.into())
-            .or_default()
-            .insert(persona.into());
-    }
-
-    /// 사건을 기록한다.
-    ///
-    /// 화자를 해당 방 참여자로 자동 join한다(발화했으면 그 방에 있었던 것).
-    pub fn record(&mut self, event: MemoryEvent) {
-        // 화자 자동 참여 등록
-        self.participation
-            .entry(event.room.clone())
-            .or_default()
-            .insert(event.speaker.clone());
-        self.events.push(event);
-    }
-
-    /// `persona`의 과거 사건 중 `query`와 토큰 중복이 있는 것을 최대 `k`개 반환한다.
-    ///
-    /// 알고리즘:
-    /// 1. `persona`가 참여한 방 집합을 구한다(participation 기반).
-    /// 2. 후보 = 그 방들의 사건만(참여 격리 — 없던 방 사건 접근 불가).
-    /// 3. 각 후보와 query 사이의 토큰 교집합 크기(intersection count)로 점수를 매긴다.
-    ///    (flow.rs와 동일한 tokenize 사용: 소문자+공백+구두점 trim, BTreeSet)
-    /// 4. 점수 0(겹침 없음)은 제외한다.
-    /// 5. 점수 내림차순 → 동점은 ts 내림차순(최신 우선)으로 안정 정렬 후 상위 k 반환.
-    ///
-    /// k=0 / 빈 스토어 / 미참여 / 겹침 없음 → 빈 Vec.
-    pub fn recall(&self, persona: &str, query: &str, k: usize) -> Vec<&MemoryEvent> {
-        if k == 0 {
-            return vec![];
+    impl MemoryStore {
+        /// 빈 스토어를 생성한다.
+        pub fn new() -> Self {
+            Self::default()
         }
 
-        // 1. persona가 참여한 방 집합
-        let rooms: BTreeSet<&str> = self
-            .participation
-            .iter()
-            .filter_map(|(room, personas)| {
-                if personas.contains(persona) {
-                    Some(room.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if rooms.is_empty() {
-            return vec![];
+        /// `persona`를 `room`의 참여자로 등록한다.
+        pub fn join(&mut self, room: impl Into<String>, persona: impl Into<String>) {
+            self.participation
+                .entry(room.into())
+                .or_default()
+                .insert(persona.into());
         }
 
-        // query 토큰화 (한 번만)
-        let query_tokens = recall_tokens(query);
-
-        // 2-3. 참여한 방의 사건만 후보로 삼고 점수 계산
-        let mut scored: Vec<(usize, &MemoryEvent)> = self
-            .events
-            .iter()
-            .filter(|ev| rooms.contains(ev.room.as_str()))
-            .filter_map(|ev| {
-                let content_tokens = recall_tokens(&ev.content);
-                let score = query_tokens.intersection(&content_tokens).count();
-                // 4. 점수 0 제외
-                if score == 0 {
-                    None
-                } else {
-                    Some((score, ev))
-                }
-            })
-            .collect();
-
-        // 5. 점수 내림차순 → ts 내림차순(안정 정렬: sort_by는 stable)
-        scored.sort_by(|a, b| {
-            b.0.cmp(&a.0) // 점수 내림차순
-                .then_with(|| b.1.ts.cmp(&a.1.ts)) // 동점: ts 내림차순
-        });
-
-        scored.into_iter().take(k).map(|(_, ev)| ev).collect()
-    }
-
-    /// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
-    ///
-    /// 비어 있으면 `None`. 있으면 `"지난 대화에서:\n- {speaker}: {content}\n..."`.
-    /// 논리 ts 기반 상대표현("지난 대화에서")만 쓰며 벽시계 없음.
-    pub fn format_recall(events: &[&MemoryEvent]) -> Option<String> {
-        if events.is_empty() {
-            return None;
+        /// 사건을 기록한다. 화자를 해당 방 참여자로 자동 join한다.
+        pub fn record(&mut self, event: MemoryEvent) {
+            self.participation
+                .entry(event.room.clone())
+                .or_default()
+                .insert(event.speaker.clone());
+            self.events.push(event);
         }
-        let mut buf = String::from("지난 대화에서:\n");
-        for ev in events {
-            buf.push_str(&format!("- {}: {}\n", ev.speaker, ev.content));
+
+        /// `persona`의 과거 사건 중 `query`와 토큰 중복이 있는 것을 최대 `k`개 반환한다(owned).
+        ///
+        /// 알고리즘: 참여 방 필터 → intersection count → 점수 0 제외 →
+        /// 점수 내림차순/ts 내림차순 → 상위 k개 클론 반환.
+        pub fn recall(&self, persona: &str, query: &str, k: usize) -> Vec<MemoryEvent> {
+            if k == 0 {
+                return vec![];
+            }
+
+            // 1. persona가 참여한 방 집합
+            let rooms: BTreeSet<&str> = self
+                .participation
+                .iter()
+                .filter_map(|(room, personas)| {
+                    if personas.contains(persona) {
+                        Some(room.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if rooms.is_empty() {
+                return vec![];
+            }
+
+            // query 토큰화 (flow::tokenize — 공백+ASCII 구두점 분리, 소문자)
+            let query_tokens = crate::flow::tokenize(query);
+
+            // 2-3. 참여한 방의 사건만 후보, intersection count로 점수 계산
+            let mut scored: Vec<(usize, &MemoryEvent)> = self
+                .events
+                .iter()
+                .filter(|ev| rooms.contains(ev.room.as_str()))
+                .filter_map(|ev| {
+                    let content_tokens = crate::flow::tokenize(&ev.content);
+                    let score = query_tokens.intersection(&content_tokens).count();
+                    if score == 0 {
+                        None
+                    } else {
+                        Some((score, ev))
+                    }
+                })
+                .collect();
+
+            // 4. 점수 내림차순 → ts 내림차순
+            scored.sort_by(|a, b| {
+                b.0.cmp(&a.0).then_with(|| b.1.ts.cmp(&a.1.ts))
+            });
+
+            // 5. 상위 k개를 owned clone으로 반환
+            scored.into_iter().take(k).map(|(_, ev)| ev.clone()).collect()
         }
-        // 마지막 '\n' 제거
-        if buf.ends_with('\n') {
-            buf.pop();
+
+        /// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
+        pub fn format_recall(events: &[MemoryEvent]) -> Option<String> {
+            format_recall_impl(events)
         }
-        Some(buf)
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// feature ON: SQLite(:memory:) + FTS5 BM25 구현
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(feature = "friend-engine")]
+mod sqlite_impl {
+    use super::{MemoryEvent, format_recall_impl};
+    use rusqlite::{Connection, params};
+
+    /// 메모리 스토어: `:memory:` SQLite + FTS5 BM25 구현.
+    ///
+    /// 스키마:
+    ///   - `memories(id, room, ts, speaker, content)`
+    ///   - `participation(room, persona)` UNIQUE
+    ///   - `memories_fts(tokens, room UNINDEXED, mem_id UNINDEXED, tokenize='unicode61')`
+    ///
+    /// 결정성: `:memory:` + 고정 insert 순서 + `ORDER BY score ASC, ts DESC, id DESC`.
+    /// rusqlite Connection은 Send, !Sync → LiveSession 단일 스레드에서만 소유.
+    pub struct MemoryStore {
+        conn: Connection,
+    }
+
+    impl MemoryStore {
+        /// 빈 스토어를 생성한다. `:memory:` SQLite + DDL 실행.
+        ///
+        /// 고정 DDL + 런타임 입력 없음이므로 실패 시 expect 허용.
+        pub fn new() -> Self {
+            let conn = Connection::open_in_memory()
+                .expect("in-memory sqlite must open");
+            conn.execute_batch(
+                "CREATE TABLE memories (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    room    TEXT NOT NULL,
+                    ts      INTEGER NOT NULL,
+                    speaker TEXT NOT NULL,
+                    content TEXT NOT NULL
+                );
+                CREATE TABLE participation (
+                    room    TEXT NOT NULL,
+                    persona TEXT NOT NULL,
+                    UNIQUE(room, persona)
+                );
+                CREATE VIRTUAL TABLE memories_fts USING fts5(
+                    tokens,
+                    room    UNINDEXED,
+                    mem_id  UNINDEXED,
+                    tokenize='unicode61'
+                );",
+            ).expect("in-memory sqlite schema must init");
+            Self { conn }
+        }
+
+        /// `persona`를 `room`의 참여자로 등록한다(멱등).
+        pub fn join(&mut self, room: impl Into<String>, persona: impl Into<String>) {
+            let room = room.into();
+            let persona = persona.into();
+            let _ = self.conn.execute(
+                "INSERT OR IGNORE INTO participation(room, persona) VALUES (?1, ?2)",
+                params![room, persona],
+            );
+        }
+
+        /// 사건을 기록한다.
+        ///
+        /// 1. `memories` 테이블에 row 삽입.
+        /// 2. `morphological_tokens`로 FTS 토큰 생성 → `memories_fts`에 삽입.
+        /// 3. 화자 자동 참여 등록.
+        pub fn record(&mut self, event: MemoryEvent) {
+            // memories 삽입
+            let result = self.conn.execute(
+                "INSERT INTO memories(room, ts, speaker, content) VALUES (?1, ?2, ?3, ?4)",
+                params![event.room, event.ts as i64, event.speaker, event.content],
+            );
+            if result.is_err() {
+                return;
+            }
+            let mem_id = self.conn.last_insert_rowid();
+
+            // FTS 토큰 생성 (friend-engine feature on이면 morph, 아니면 fallback)
+            let tokens = crate::tokenize_ko::morphological_tokens(&event.content).join(" ");
+
+            // memories_fts 삽입
+            let _ = self.conn.execute(
+                "INSERT INTO memories_fts(tokens, room, mem_id) VALUES (?1, ?2, ?3)",
+                params![tokens, event.room, mem_id],
+            );
+
+            // 화자 자동 참여 등록
+            let _ = self.conn.execute(
+                "INSERT OR IGNORE INTO participation(room, persona) VALUES (?1, ?2)",
+                params![event.room, event.speaker],
+            );
+        }
+
+        /// `persona`의 과거 사건 중 `query`와 FTS5 BM25 점수가 높은 것을 최대 `k`개 반환한다(owned).
+        ///
+        /// 알고리즘:
+        /// 1. participation 테이블에서 persona가 참여한 방 집합을 구한다.
+        /// 2. query를 morphological_tokens로 토큰화.
+        /// 3. 각 토큰을 큰따옴표로 감싸고(FTS5 키워드 오해 방지) `" OR "`로 연결(OR-MATCH).
+        /// 4. FTS5 MATCH + memories.room IN(방 집합) + bm25() 정렬.
+        /// 5. row → MemoryEvent owned.
+        ///
+        /// k=0 / 빈쿼리 / 미참여 → 빈 Vec. 런타임 오류는 빈 Vec으로 조용히 처리.
+        pub fn recall(&self, persona: &str, query: &str, k: usize) -> Vec<MemoryEvent> {
+            if k == 0 {
+                return vec![];
+            }
+
+            // 1. persona가 참여한 방 목록
+            let rooms: Vec<String> = {
+                let mut stmt = match self.conn.prepare(
+                    "SELECT room FROM participation WHERE persona = ?1",
+                ) {
+                    Ok(s) => s,
+                    Err(_) => return vec![],
+                };
+                let rows = match stmt.query_map(params![persona], |row| row.get(0)) {
+                    Ok(r) => r,
+                    Err(_) => return vec![],
+                };
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            if rooms.is_empty() {
+                return vec![];
+            }
+
+            // 2. query 토큰화
+            let tokens = crate::tokenize_ko::morphological_tokens(query);
+            if tokens.is_empty() {
+                return vec![];
+            }
+
+            // 3. OR-MATCH 구성: 각 토큰을 큰따옴표로 감싸고(내부 " → "") " OR "로 연결
+            //    예) ["비", "오"] → `"비" OR "오"`
+            let match_expr: String = tokens
+                .iter()
+                .map(|t| {
+                    // 내부 " 를 "" 로 escape
+                    let escaped = t.replace('"', "\"\"");
+                    format!("\"{}\"", escaped)
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+
+            // 4. rooms placeholders: ?2, ?3, ...
+            //    주의: params! 매크로가 런타임 가변 길이를 지원 안 하므로
+            //    동적 SQL + params_from_iter 사용.
+            let placeholders = rooms
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 3))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let sql = format!(
+                "SELECT m.id, m.room, m.ts, m.speaker, m.content, bm25(memories_fts) AS score
+                 FROM memories_fts
+                 JOIN memories m ON m.id = memories_fts.mem_id
+                 WHERE memories_fts.tokens MATCH ?1
+                   AND m.room IN ({placeholders})
+                 ORDER BY score ASC, m.ts DESC, m.id DESC
+                 LIMIT ?2"
+            );
+
+            let mut stmt = match self.conn.prepare(&sql) {
+                Ok(s) => s,
+                Err(_) => return vec![],
+            };
+
+            // 파라미터: [match_expr, k, room1, room2, ...]
+            use rusqlite::types::ToSql;
+            let mut param_vals: Vec<Box<dyn ToSql>> = Vec::new();
+            param_vals.push(Box::new(match_expr));
+            param_vals.push(Box::new(k as i64));
+            for r in &rooms {
+                param_vals.push(Box::new(r.clone()));
+            }
+            let param_refs: Vec<&dyn ToSql> = param_vals.iter().map(|b| b.as_ref()).collect();
+
+            let rows = match stmt.query_map(param_refs.as_slice(), |row| {
+                let _id: i64 = row.get(0)?;
+                let room: String = row.get(1)?;
+                let ts: i64 = row.get(2)?;
+                let speaker: String = row.get(3)?;
+                let content: String = row.get(4)?;
+                Ok(MemoryEvent {
+                    room,
+                    ts: ts as u64,
+                    speaker,
+                    content,
+                })
+            }) {
+                Ok(r) => r,
+                Err(_) => return vec![],
+            };
+
+            rows.filter_map(|r| r.ok()).collect()
+        }
+
+        /// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
+        pub fn format_recall(events: &[MemoryEvent]) -> Option<String> {
+            format_recall_impl(events)
+        }
+    }
+
+    impl Default for MemoryStore {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl std::fmt::Debug for MemoryStore {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MemoryStore(SQLite:memory:)").finish()
+        }
+    }
+}
+
+// ─── 공개 재수출 ─────────────────────────────────────────────────────────────
+
+#[cfg(not(feature = "friend-engine"))]
+pub use vec_impl::MemoryStore;
+
+#[cfg(feature = "friend-engine")]
+pub use sqlite_impl::MemoryStore;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 단위 테스트
+// ─────────────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,8 +492,6 @@ mod tests {
     ///
     /// feature on: query "비가 온다" → content "비 온다 심심해"를 회상.
     ///   형태소가 "비"/"오" 토큰을 추출해 조사(가) 분리 매칭.
-    /// feature off: 공백 분리에서 "비가"≠"비", "온다"≠"온다"로 miss 가능
-    ///   (이 케이스는 feature on의 형태소 우위 증명용).
     #[cfg(feature = "friend-engine")]
     #[test]
     fn morphology_recall_strips_josa() {
@@ -278,8 +499,6 @@ mod tests {
         store.record(ev("salon", 1, "alice", "비 온다 심심해"));
         store.record(ev("salon", 2, "alice", "고양이 강아지"));
 
-        // "비가 온다" — 형태소: 비(NNG)/가(JKS 제거) + 오(VV)/ㄴ다(어미 제거)
-        // → "비", "오" 추출 → "비 온다 심심해"의 "비"/"온다"(혹은 "오")와 매칭
         let result = store.recall("alice", "비가 온다", 5);
         assert!(
             !result.is_empty(),
@@ -293,9 +512,6 @@ mod tests {
     }
 
     /// (품질 게이트 — feature off 대비) feature off에서 "비가 온다" 쿼리.
-    ///
-    /// 공백 분리 시 "비가" ≠ "비" → miss. 이 결과와 feature on 비교.
-    /// feature off에서는 miss(빈 결과)가 정상 - 형태소 우위 증명.
     #[cfg(not(feature = "friend-engine"))]
     #[test]
     fn whitespace_recall_may_miss_josa_case() {
@@ -303,9 +519,6 @@ mod tests {
         store.record(ev("salon", 1, "alice", "비 온다 심심해"));
         store.record(ev("salon", 2, "alice", "고양이 강아지"));
 
-        // 공백 분리: "비가", "온다" → content 토큰 {"비", "온다", "심심해"}
-        // "비가" ≠ "비" → 교집합 = {"온다"} (score=1) — feature off에서도 히트할 수 있음
-        // 이 테스트는 miss/hit 둘 다 허용(단, 패닉 없음이 핵심 조건)
         let result = store.recall("alice", "비가 온다", 5);
         // 패닉 없이 반환만 되면 통과
         let _ = result;
@@ -316,13 +529,38 @@ mod tests {
     fn format_recall_produces_correct_string() {
         let e1 = ev("room", 1, "alice", "안녕하세요");
         let e2 = ev("room", 2, "bob", "반갑습니다");
-        let refs = vec![&e1, &e2];
+        let events = vec![e1, e2];
 
-        let output = MemoryStore::format_recall(&refs).expect("비어 있지 않으므로 Some이어야 한다");
+        let output = MemoryStore::format_recall(&events).expect("비어 있지 않으므로 Some이어야 한다");
         assert!(output.starts_with("지난 대화에서:"), "헤더로 시작해야 한다");
         assert!(output.contains("alice"), "alice가 포함되어야 한다");
         assert!(output.contains("안녕하세요"), "content가 포함되어야 한다");
         assert!(output.contains("bob"), "bob이 포함되어야 한다");
         assert!(output.contains("반갑습니다"), "content가 포함되어야 한다");
+    }
+
+    /// (7, feature-on 전용) OR-MATCH: 쿼리 토큰 일부만 겹쳐도 회상된다.
+    ///
+    /// "내일 등산 약속" (3토큰) vs content "다음주 북한산 등산 계획" (1토큰 공유: 등산).
+    /// AND-MATCH였다면 "내일", "약속"이 없어서 히트 안 되지만
+    /// OR-MATCH면 "등산" 1개로 히트해야 한다.
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn or_match_recalls_on_partial_token_overlap() {
+        let mut store = MemoryStore::new();
+        store.record(ev("salon", 1, "alice", "다음주 북한산 등산 계획"));
+        store.record(ev("salon", 2, "alice", "오늘 날씨 맑아서 좋다"));
+
+        // 쿼리 토큰 중 "등산" 하나만 content와 공유 → OR이면 히트, AND면 miss
+        let result = store.recall("alice", "내일 등산 약속", 5);
+        assert!(
+            !result.is_empty(),
+            "OR-MATCH 실패: '내일 등산 약속' 쿼리가 '다음주 북한산 등산 계획'을 히트해야 한다"
+        );
+        assert!(
+            result.iter().any(|ev| ev.content.contains("등산")),
+            "OR-MATCH 결과에 '등산' 포함 사건이 없다. 결과: {:?}",
+            result.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
     }
 }

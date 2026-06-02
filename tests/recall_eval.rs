@@ -19,7 +19,8 @@
 // 합격 임계(v0.8 시작 기준): SSOT가 top-3 안 → 재현 통과.
 //   (이후 회상 엔진 정밀도 향상에 따라 top-1 요건으로 올릴 수 있음.)
 //
-// 결정성 보장: 시나리오 고정 + MemoryStore 결정적(BTreeMap/BTreeSet) → rng/벽시계 없음.
+// 결정성 보장: 시나리오 고정 + MemoryStore 결정적 → rng/벽시계 없음.
+// task-44: recall 반환형이 Vec<MemoryEvent>(owned)로 변경됨.
 
 use salon::memory::{MemoryEvent, MemoryStore};
 
@@ -31,7 +32,7 @@ use salon::memory::{MemoryEvent, MemoryStore};
 ///
 /// 합격 임계: top-3(k=3) → v0.8 재현 통과 기준.
 /// 이후 임베딩 기반 검색 도입 시 임계를 낮출(top-1) 수 있다.
-fn recall_at_k(results: &[&MemoryEvent], ssot_substring: &str, k: usize) -> bool {
+fn recall_at_k(results: &[MemoryEvent], ssot_substring: &str, k: usize) -> bool {
     results
         .iter()
         .take(k)
@@ -43,7 +44,7 @@ fn recall_at_k(results: &[&MemoryEvent], ssot_substring: &str, k: usize) -> bool
 /// SSOT 위치가 distractor 위치보다 앞이면 true.
 /// 둘 중 하나가 결과에 없으면 None(판단 불가).
 fn ssot_ranks_above_distractor(
-    results: &[&MemoryEvent],
+    results: &[MemoryEvent],
     ssot_substring: &str,
     distractor_substring: &str,
 ) -> Option<bool> {
@@ -251,7 +252,8 @@ fn participation_isolation_ada_cannot_recall_evening() {
 
 /// (5) 결정성: 같은 시나리오 + 같은 쿼리로 두 번 recall → 동일 결과.
 ///
-/// build_scenario()가 결정적(고정 ts, BTreeMap/BTreeSet) + recall이 결정적 → 보장.
+/// build_scenario()가 결정적 + recall이 결정적 → 보장.
+/// task-44: Vec<MemoryEvent>(owned) 직접 비교.
 #[test]
 fn recall_is_deterministic_across_two_runs() {
     // 첫 번째 실행
@@ -264,7 +266,7 @@ fn recall_is_deterministic_across_two_runs() {
     let r2_morning = store2.recall("ada", MORNING_QUERY, 5);
     let r2_evening_b = store2.recall("bora", EVENING_QUERY, 5);
 
-    // 내용 비교: MemoryEvent가 PartialEq를 구현하므로 직접 비교 가능
+    // Vec<MemoryEvent>: MemoryEvent가 PartialEq를 구현하므로 직접 비교 가능
     assert_eq!(
         r1_morning.len(),
         r2_morning.len(),

@@ -373,7 +373,7 @@ fn content_gate_offline_session_store_empty_recall_none() {
 
     // (b) 빈 회상 결과 → format_recall None
     // MemoryStore::format_recall(&[]) 은 None이어야 한다 (task-39 계약)
-    let empty: Vec<&MemoryEvent> = vec![];
+    let empty: Vec<MemoryEvent> = vec![];
     let formatted = MemoryStore::format_recall(&empty);
     assert!(
         formatted.is_none(),

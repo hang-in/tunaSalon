@@ -44,7 +44,7 @@ seCall 검색코어 ↔ v0.8 deferred 매핑:
 | INV-3 | **회상 결정성**: 같은 사건열+쿼리 → 같은 회상. FTS5 `bm25()` 랭킹은 결정적. 테스트는 `:memory:` SQLite(디스크·벽시계 없음). 논리 ts 유지 |
 | INV-4 | **참여 기반 격리 유지**(v0.8 INV-2): 캐릭터는 참여한 방의 사건만 회상. FTS 쿼리가 참여 방으로 먼저 좁힘. recall_eval 격리 케이스로 자동 검증 |
 | INV-5 | **회상은 검색만**: 엔진 결정(gate/rrf/hawkes/cooling 입력)에 불사용. 생성 프롬프트(회상 슬롯)에만 |
-| INV-6 | v0.8의 210 tests + 스모크 8종 유지(+ v0.9 게이트). `recall(persona, query, k)` **공개 시그니처 보존**(내부만 교체) |
+| INV-6 | v0.8 스모크 8종 + recall_eval 유지(+ v0.9 게이트). **API 변경 허용(Stage 1)**: DB 백엔드는 owned row를 반환하므로 `recall -> Vec<MemoryEvent>`(owned), `format_recall(&[MemoryEvent])`로 통일(feature on/off 동일 시그니처). 호출처(live.rs/recall_eval) 갱신 |
 
 ## 2. Goals / Non-goals
 
@@ -82,8 +82,8 @@ seCall 검색코어 ↔ v0.8 deferred 매핑:
 | task | 제목 | 핵심 | 위험 | depends_on |
 |---|---|---|---|---|
 | 43 | feature scaffold + Lindera 형태소(Stage 0) | `friend-engine` feature + optional `lindera`. 형태소 토크나이저(keep-tags) lift. feature on이면 회상 토큰화에 사용. `flow.rs` 불변. 단위 테스트(한국어 형태소 분해), feature off 빌드/테스트 그대로 | 중(lindera embed-ko-dic 빌드시간·바이너리 크기, cfg 분기) | v0.8 |
-| 44 | SQLite 영속 MemoryStore(Stage 1a) | optional `rusqlite`(bundled). 스키마(memories+participation, FTS5). record/join 영속. `:memory:`(테스트)/파일(라이브). v0.8 인메모리는 feature off로 보존 | 중~높음(새 의존성, cfg 두 impl, 영속 경로) | 43 |
-| 45 | FTS5 BM25 회상 + eval(Stage 1b) | recall이 참여 필터 + FTS5 `bm25()` 상위 K(Lindera 토큰 인덱싱). recall_eval 새 검색층 결정적 채점 + 형태소 효과 | 중(FTS 쿼리·참여 격리·결정성) | 44 |
+| 44 | `:memory:` SQLite + FTS5 BM25 회상(Stage 1a) | optional `rusqlite`(bundled). feature on: `MemoryStore`를 `:memory:` SQLite+FTS5로(스키마 memories+participation+FTS5, Lindera 토큰 인덱싱, recall=참여필터+`bm25()` OR-MATCH 상위K). **디스크 없음→결정적·위치결정 불요.** feature off: v0.8 Vec 그대로. recall→owned, recall_eval 갱신 | 중~높음(rusqlite dep, FTS OR-MATCH, cfg 두 impl, API 변경) | 43 |
+| 45 | 파일 영속(cross-session)(Stage 1b) | task-44 store에 `open(path)` 추가→세션 넘어 기억. **DB 위치 결정**(`$SALON_MEMORY_DB`/기본 경로) + live.rs 배선. 동시성(WAL) | 중(영속 경로·위치·동시성) | 44 |
 | 46 | v0.9 게이트 + 마감 | smoke_v9: 골든 보존(feature off=v0.8, 기본 빌드 lean) + feature on 결정성/영속 roundtrip/참여 격리/content 게이팅. README/CLAUDE/index bump | 낮음~중 | 45 |
 
 Phase A(43 형태소) → B(44 영속, 45 BM25 회상) → C(46 게이트). 완료: task-46 + 골든 5종 보존 + feature on/off 양쪽 green.
