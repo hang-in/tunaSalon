@@ -1,7 +1,7 @@
 ---
 title: Salon 엔진 플랜 v0.5 - 사람 참여 채팅방 (HumanChannel + 채팅 TUI)
 type: plan
-status: in_progress
+status: done
 priority: P0
 updated_at: 2026-06-02
 owner: shared
