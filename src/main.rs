@@ -25,6 +25,7 @@ const TICK_INTERVAL: f64 = 1.0;
 struct Cli {
     headless: bool,
     sweep: bool,
+    fsm: bool,
     seed: u64,
     ticks: u64,
     beta: Option<f64>,
@@ -68,6 +69,7 @@ fn main() {
             k: cli.k.unwrap_or(DEFAULT_K),
             tick_interval: TICK_INTERVAL,
             alpha: CouplingMatrix::default(),
+            forbid_self_repeat: false,
         }
     };
 
@@ -80,6 +82,9 @@ fn main() {
     }
     if let Some(k) = cli.k {
         config.k = k;
+    }
+    if cli.fsm {
+        config.forbid_self_repeat = true;
     }
 
     if cli.sweep {
@@ -113,6 +118,7 @@ where
     let mut cli = Cli {
         headless: false,
         sweep: false,
+        fsm: false,
         seed: DEFAULT_SEED,
         ticks: DEFAULT_TICKS,
         beta: None,
@@ -127,6 +133,7 @@ where
         match arg.as_str() {
             "--headless" => cli.headless = true,
             "--sweep" => cli.sweep = true,
+            "--fsm" => cli.fsm = true,
             "--seed" => cli.seed = parse_u64_arg("--seed", args.next())?,
             "--ticks" => cli.ticks = parse_u64_arg("--ticks", args.next())?,
             "--beta" => cli.beta = Some(parse_f64_arg("--beta", args.next())?),
@@ -207,7 +214,7 @@ fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: salon [--headless] [--sweep] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>]"
+    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>]"
 }
 
 #[cfg(test)]
@@ -223,6 +230,7 @@ mod tests {
             Ok(Cli {
                 headless: true,
                 sweep: false,
+                fsm: false,
                 seed: DEFAULT_SEED,
                 ticks: DEFAULT_TICKS,
                 beta: None,
@@ -249,6 +257,7 @@ mod tests {
             Ok(Cli {
                 headless: true,
                 sweep: false,
+                fsm: false,
                 seed: 7,
                 ticks: 12,
                 beta: None,

@@ -35,38 +35,60 @@ pub fn run(
         let (gate_passed, candidates, chosen, rrf_reason) =
             match gate::evaluate(&combined_intensities, config.theta) {
                 GateResult::Candidates(candidates) => {
-                    let selection = rrf::select(
-                        &candidates,
-                        &combined_intensities,
-                        &state.history,
-                        config.k,
-                        &mut rng,
-                    );
-                    let utterance = utterance::make_utterance(
-                        &selection.chosen,
-                        tick,
-                        config.tick_interval,
-                        false,
-                        &mut rng,
-                    );
+                    // FSM 전이 제약: forbid_self_repeat ON이면 직전 화자를 후보에서 제거한다.
+                    let filtered: Vec<PersonaId> =
+                        if config.forbid_self_repeat {
+                            match &state.last_speaker {
+                                Some(last) => candidates
+                                    .iter()
+                                    .filter(|id| *id != last)
+                                    .cloned()
+                                    .collect(),
+                                None => candidates.clone(),
+                            }
+                        } else {
+                            candidates.clone()
+                        };
 
-                    state.history.push(utterance.event);
-                    suppress_chosen(&mut state, personas, &selection.chosen);
-                    HawkesEngine::apply_excitation_on_speak(
-                        &mut state.excitations,
-                        &config.alpha,
-                        &selection.chosen,
-                        personas,
-                    );
-                    state.last_speaker = Some(selection.chosen.clone());
-                    speak_count += 1;
+                    if filtered.is_empty() {
+                        // 강제 화자가 연속 불가이고 다른 후보 없음 → 침묵으로 처리한다.
+                        // silent fallback이 아닌 정상 동작으로, silence_count를 증가시킨다.
+                        silence_count += 1;
+                        (false, candidates, None, None)
+                    } else {
+                        let selection = rrf::select(
+                            &filtered,
+                            &combined_intensities,
+                            &state.history,
+                            config.k,
+                            &mut rng,
+                        );
+                        let utterance = utterance::make_utterance(
+                            &selection.chosen,
+                            tick,
+                            config.tick_interval,
+                            false,
+                            &mut rng,
+                        );
 
-                    (
-                        true,
-                        candidates,
-                        Some(selection.chosen),
-                        Some(selection.reason),
-                    )
+                        state.history.push(utterance.event);
+                        suppress_chosen(&mut state, personas, &selection.chosen);
+                        HawkesEngine::apply_excitation_on_speak(
+                            &mut state.excitations,
+                            &config.alpha,
+                            &selection.chosen,
+                            personas,
+                        );
+                        state.last_speaker = Some(selection.chosen.clone());
+                        speak_count += 1;
+
+                        (
+                            true,
+                            candidates,
+                            Some(selection.chosen),
+                            Some(selection.reason),
+                        )
+                    }
                 }
                 GateResult::Silent => {
                     silence_count += 1;
@@ -130,6 +152,7 @@ mod tests {
             k: 60.0,
             tick_interval: 1.0,
             alpha: crate::model::CouplingMatrix::default(),
+            forbid_self_repeat: false,
         }
     }
 
@@ -165,5 +188,72 @@ mod tests {
 
         assert_eq!(left.records, right.records);
         assert_eq!(left.records.len(), 100);
+    }
+
+    /// forbid_self_repeat=true면 연속 두 발화 레코드의 chosen이 같으면 안 된다.
+    /// alpha가 균일하게 강하면(θ가 낮고 α가 강함) 발화 후 강도가 θ 위에 유지되어
+    /// 자기반복 금지 효과가 실제로 발동된다.
+    #[test]
+    fn forbid_self_repeat_prevents_consecutive_same_speaker() {
+        use crate::model::CouplingMatrix;
+
+        // forbid_self_repeat=true 설정: theta를 낮게 잡아 후보가 자주 생기게 한다.
+        let mut alpha = CouplingMatrix::default();
+        let ids = ["friend", "chaos", "summarizer"];
+        // 균일 α=0.3 (off-diagonal만 설정)
+        for &p in &ids {
+            for &j in &ids {
+                if p != j {
+                    alpha.values.insert((p.to_string(), j.to_string()), 0.3);
+                }
+            }
+        }
+        let config = EngineConfig {
+            beta: 0.5,
+            theta: 0.2,   // 낮은 theta: 후보가 거의 항상 존재
+            k: 60.0,
+            tick_interval: 1.0,
+            alpha,
+            forbid_self_repeat: true,
+        };
+        let personas = personas();
+        let mut sink = VecSink::default();
+
+        run(&config, &personas, 42, 200, &mut sink);
+
+        // 발화가 한 번 이상 있어야 테스트가 의미 있다.
+        let spoken: Vec<&str> = sink
+            .records
+            .iter()
+            .filter_map(|r| r.chosen.as_deref())
+            .collect();
+        assert!(spoken.len() >= 10, "너무 많은 침묵: spoken={}", spoken.len());
+
+        // 연속 두 발화가 같은 화자면 실패
+        for window in spoken.windows(2) {
+            assert_ne!(
+                window[0], window[1],
+                "forbid_self_repeat=true인데 {w} 가 2연속 발화됨",
+                w = window[0]
+            );
+        }
+    }
+
+    /// forbid_self_repeat=false(기본)면 동작이 변하지 않는다 — 동일 시드로 동일 결과.
+    #[test]
+    fn forbid_self_repeat_false_is_identical_to_default() {
+        let config_default = config();
+        let config_explicit = EngineConfig {
+            forbid_self_repeat: false,
+            ..config_default.clone()
+        };
+        let personas = personas();
+        let mut sink_default = VecSink::default();
+        let mut sink_explicit = VecSink::default();
+
+        run(&config_default, &personas, 42, 100, &mut sink_default);
+        run(&config_explicit, &personas, 42, 100, &mut sink_explicit);
+
+        assert_eq!(sink_default.records, sink_explicit.records);
     }
 }

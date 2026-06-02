@@ -29,6 +29,8 @@ pub struct EngineConfig {
     pub k: f64,
     pub tick_interval: f64,
     pub alpha: CouplingMatrix,
+    /// FSM 전이 제약: true면 같은 페르소나의 2연속 발화를 금지한다. 기본 false.
+    pub forbid_self_repeat: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +95,7 @@ mod tests {
             k: 60.0,
             tick_interval: 1.0,
             alpha: CouplingMatrix::default(),
+            forbid_self_repeat: false,
         };
         let persona = Persona {
             id: "p1".to_string(),

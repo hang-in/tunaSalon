@@ -17,6 +17,7 @@ pub fn run(seed: u64, ticks: u64) {
                 k,
                 tick_interval: TICK_INTERVAL,
                 alpha: CouplingMatrix::default(),
+                forbid_self_repeat: false,
             };
             let mut sink = VecSink::default();
 

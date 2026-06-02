@@ -156,6 +156,7 @@ mod tests {
             k: 60.0,
             tick_interval: 1.0,
             alpha: CouplingMatrix::default(),
+            forbid_self_repeat: false,
         }
     }
 

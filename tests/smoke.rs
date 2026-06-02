@@ -16,6 +16,7 @@ fn base_config(theta: f64, k: f64) -> EngineConfig {
         k,
         tick_interval: 1.0,
         alpha: CouplingMatrix::default(),
+        forbid_self_repeat: false,
     }
 }
 
