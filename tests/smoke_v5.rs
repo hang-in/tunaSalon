@@ -424,6 +424,7 @@ fn render_chat_no_panic_and_shows_input_and_names() {
                 true,                // pending=true (placeholder가 있으므로)
                 None,                // flow: None (smoke_v5는 flow 없음)
                 1.0,                 // mu_scale: 1.0 (식힘 없음)
+                &[],                 // topics: 없음
             )
         })
         .expect("render_chat가 panic 없이 완료돼야 한다");

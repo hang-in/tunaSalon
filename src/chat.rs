@@ -48,6 +48,7 @@ const BAR_WIDTH: usize = 12;
 /// - `pending`  : true면 생성 진행 중 → 사이드바 하단에 "· 생각 중…" 표시(입력창은 건드리지 않음).
 /// - `flow`     : 수렴/발산 지표. None이면 "흐름 -", Some이면 게이지 막대 + 값 표시.
 /// - `mu_scale` : MetaController 식히기 비율. 1.00=식힘 없음, 낮을수록 강하게 식힘.
+/// - `topics`   : 활성 화제 태그(최대 5개). 비어있으면 제목 "chat", 있으면 "chat · 화제: a · b".
 pub fn render_chat(
     frame: &mut Frame,
     history: &[Event],
@@ -58,6 +59,7 @@ pub fn render_chat(
     pending: bool,
     flow: Option<crate::flow::FlowMetric>,
     mu_scale: f64,
+    topics: &[String],
 ) {
     // 세로 분할: 상단(채팅+사이드바) | 하단(입력창)
     let root = Layout::default()
@@ -92,8 +94,14 @@ pub fn render_chat(
         .rev()
         .collect();
     let chat_text = chat_lines.join("\n");
+    // 채팅 pane 제목: 토픽 있으면 "chat · 화제: a · b", 없으면 "chat".
+    let chat_title = if topics.is_empty() {
+        "chat".to_string()
+    } else {
+        format!("chat · 화제: {}", topics.join(" · "))
+    };
     frame.render_widget(
-        Paragraph::new(chat_text).block(Block::default().title("chat").borders(Borders::ALL)),
+        Paragraph::new(chat_text).block(Block::default().title(chat_title).borders(Borders::ALL)),
         columns[0],
     );
 
@@ -161,6 +169,23 @@ pub fn render_chat(
         Paragraph::new(input_text).block(Block::default().borders(Borders::ALL)),
         root[1],
     );
+}
+
+// ─────────────────────────────────────────────
+// 명령 파싱 유틸리티
+// ─────────────────────────────────────────────
+
+/// `/topic` 명령의 인자 부분을 파싱한다.
+///
+/// `rest`: `/topic` 이후의 문자열(앞뒤 공백 포함 가능).
+/// - 쉼표로 분리 → 각 토큰 trim → 빈 문자열 제거 → 최대 5개.
+/// - `rest`가 공백뿐이거나 비어있으면 빈 Vec 반환(clear 의미).
+pub fn parse_topic_args(rest: &str) -> Vec<String> {
+    rest.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .take(5)
+        .collect()
 }
 
 // ─────────────────────────────────────────────
@@ -264,6 +289,8 @@ impl ChatApp {
             let flow = self.session.flow();
             // 식힘 비율: MetaController가 현재 수렴도에서 계산. 사이드바 표시용.
             let mu_scale = self.session.mu_scale();
+            // 활성 화제 태그: 채팅 pane 제목 + 생성 컨텍스트(live.rs 스냅샷 주입).
+            let topics_snapshot = self.session.topics().to_vec();
 
             if let Some(ref mut terminal) = self.terminal {
                 if terminal
@@ -278,6 +305,7 @@ impl ChatApp {
                             pending,
                             flow,
                             mu_scale,
+                            &topics_snapshot,
                         )
                     })
                     .is_err()
@@ -298,10 +326,20 @@ impl ChatApp {
                                 // q: 입력 버퍼가 비어있을 때만 종료 (버퍼에 'q'를 타이핑할 수 있도록)
                                 KeyCode::Char('q') if input_buf.is_empty() => break,
 
-                                // Enter: 입력 버퍼가 비어있지 않으면 human submit
+                                // Enter: `/`로 시작하면 명령, 아니면 human submit
                                 KeyCode::Enter => {
-                                    if !input_buf.is_empty() {
-                                        self.session.submit_human(input_buf.clone());
+                                    let line = input_buf.trim().to_string();
+                                    if line.starts_with('/') {
+                                        // 명령 라우팅: `/topic [args]` 처리.
+                                        // 미인식 명령은 무시(입력 버퍼만 비움).
+                                        if let Some(rest) = line.strip_prefix("/topic") {
+                                            let topics = parse_topic_args(rest);
+                                            self.session.set_topics(topics);
+                                        }
+                                        // 그 외 `/...` → 무시(버퍼는 아래에서 비움)
+                                        input_buf.clear();
+                                    } else if !line.is_empty() {
+                                        self.session.submit_human(line);
                                         input_buf.clear();
                                     }
                                 }
@@ -445,7 +483,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0))
+            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0, &[]))
             .expect("render ok");
 
         let text = buffer_text(&terminal);
@@ -477,7 +515,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0))
+            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0, &[]))
             .expect("render ok");
 
         let text = buffer_text(&terminal);
@@ -519,6 +557,7 @@ mod tests {
                     false,
                     None,
                     1.0,
+                    &[],
                 )
             })
             .expect("render ok");
@@ -556,7 +595,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("test terminal");
         // panic이 없어야 한다
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", true, None, 1.0))
+            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", true, None, 1.0, &[]))
             .expect("render ok (panic 없음)");
 
         let text = buffer_text(&terminal);
@@ -569,6 +608,86 @@ mod tests {
         assert!(
             text.contains('생'),
             "placeholder event에 '생각 중' 마커의 '생' 자가 나타나야 한다. 실제: {text:?}"
+        );
+    }
+
+    // ── 테스트 5: parse_topic_args 단위 테스트 ──────────────────────────
+    #[test]
+    fn parse_topic_args_basic_split() {
+        let result = parse_topic_args("rust, ai, 주말");
+        assert_eq!(result, vec!["rust", "ai", "주말"]);
+    }
+
+    #[test]
+    fn parse_topic_args_trims_and_drops_empty() {
+        let result = parse_topic_args("  rust  ,, ,ai,");
+        assert_eq!(result, vec!["rust", "ai"], "빈 항목·공백 제거");
+    }
+
+    #[test]
+    fn parse_topic_args_caps_at_5() {
+        let result = parse_topic_args("a,b,c,d,e,f");
+        assert_eq!(result.len(), 5, "6개 → 5개 cap");
+        assert_eq!(result[4], "e");
+    }
+
+    #[test]
+    fn parse_topic_args_empty_returns_empty() {
+        assert!(parse_topic_args("").is_empty());
+        assert!(parse_topic_args("   ").is_empty());
+    }
+
+    // ── 테스트 6: render_chat 토픽 있을 때 채팅 pane 제목에 화제 표시 ──
+    #[test]
+    fn render_chat_title_shows_topics_when_set() {
+        let history: Vec<Event> = Vec::new();
+        let topics = vec!["rust".to_string(), "ai".to_string()];
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|f| {
+                render_chat(
+                    f,
+                    &history,
+                    &intensities(),
+                    &names(),
+                    0.65,
+                    "",
+                    false,
+                    None,
+                    1.0,
+                    &topics,
+                )
+            })
+            .expect("render ok");
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("rust"),
+            "채팅 pane 제목에 화제 'rust'가 나타나야 한다. 실제: {text:?}"
+        );
+        assert!(
+            text.contains("ai"),
+            "채팅 pane 제목에 화제 'ai'가 나타나야 한다"
+        );
+    }
+
+    // ── 테스트 7: render_chat 토픽 없을 때 제목은 "chat" ───────────────
+    #[test]
+    fn render_chat_title_is_chat_when_no_topics() {
+        let history: Vec<Event> = Vec::new();
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0, &[]))
+            .expect("render ok");
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("chat"),
+            "토픽 없을 때 채팅 pane 제목에 'chat'이 있어야 한다"
         );
     }
 }

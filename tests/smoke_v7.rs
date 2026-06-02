@@ -265,6 +265,7 @@ fn render_chat_with_mu_scale_no_panic_and_shows_value() {
                 false,
                 Some(FlowMetric { convergence: 0.3 }),
                 1.0, // mu_scale=1.0: 식힘 없음
+                &[], // topics: 없음
             )
         })
         .expect("render_chat(mu_scale=1.0) panic 없이 완료돼야 한다");
@@ -304,6 +305,7 @@ fn render_chat_with_mu_scale_no_panic_and_shows_value() {
                 false,
                 Some(FlowMetric { convergence: 0.8 }),
                 0.7, // mu_scale=0.7: 식힘 중
+                &[], // topics: 없음
             )
         })
         .expect("render_chat(mu_scale=0.7) panic 없이 완료돼야 한다");

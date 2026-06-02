@@ -76,6 +76,8 @@ pub struct LiveSession {
     room: String,
     /// 사람 화자 ID. submit_human 시 MemoryEvent 생성에 사용(HumanChannel 필드 직접 노출 회피).
     human_id: PersonaId,
+    /// 방 화제 태그(최대 5개). 생성 워커로 보내는 history 스냅샷에만 주입(INV-2).
+    topics: Vec<String>,
 }
 
 impl LiveSession {
@@ -173,6 +175,7 @@ impl LiveSession {
             store,
             room,
             human_id,
+            topics: Vec::new(),
         }
     }
 
@@ -332,7 +335,23 @@ impl LiveSession {
         self.state.last_speaker = Some(chosen.clone());
 
         // history 스냅샷(워커로 전달; placeholder는 content=None으로 포함됨).
-        let history_snapshot = self.state.history.clone();
+        let mut history_snapshot = self.state.history.clone();
+
+        // 토픽 컨텍스트 주입 (INV-2): 생성 워커로 보내는 스냅샷에만. state.history/flow/recall 불변.
+        // query/flow/recall은 이미 위에서 계산 완료됨 — 스냅샷 조작은 그 이후.
+        if !self.topics.is_empty() {
+            let topic_content = format!(
+                "이 방의 화제: {}. 막연한 메타토크 말고 이 주제로 구체적으로 얘기하세요.",
+                self.topics.join(" · ")
+            );
+            let topic_event = crate::model::Event {
+                ts: tick as f64 * self.config.tick_interval,
+                speaker: "(방 화제)".to_string(),
+                mark: 0.0,
+                content: Some(topic_content),
+            };
+            history_snapshot.insert(0, topic_event);
+        }
 
         // 워커로 job 전송. 채널이 닫혔으면(워커 비정상 종료) 조용히 무시.
         if let Some(ref tx) = self.job_tx {
@@ -445,6 +464,29 @@ impl LiveSession {
     /// 현재 틱 카운터.
     pub fn tick_count(&self) -> u64 {
         self.tick_count
+    }
+
+    // -------------------------------------------------------------------------
+    // 토픽 관리 (topic-tags)
+    // -------------------------------------------------------------------------
+
+    /// 방 화제 태그를 설정한다.
+    ///
+    /// - 각 태그는 trim 후 빈 문자열이면 제거.
+    /// - 최대 5개까지 허용(초과분은 잘림).
+    /// - 빈 Vec을 전달하면 화제를 해제한다.
+    pub fn set_topics(&mut self, topics: Vec<String>) {
+        self.topics = topics
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .take(5)
+            .collect();
+    }
+
+    /// 현재 활성 화제 태그 참조.
+    pub fn topics(&self) -> &[String] {
+        &self.topics
     }
 }
 
@@ -826,6 +868,55 @@ mod tests {
     }
 
     /// (task-41-4a) mu_scale_returns_one_for_empty_content_history — 기존 테스트 유지.
+
+    // -------------------------------------------------------------------------
+    // topic-tags 테스트
+    // -------------------------------------------------------------------------
+
+    /// (topics-1) set_topics: 빈 Vec → topics() 빈 슬라이스.
+    #[test]
+    fn set_topics_clear() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        session.set_topics(vec!["rust".to_string(), "ai".to_string()]);
+        assert_eq!(session.topics().len(), 2);
+        session.set_topics(vec![]);
+        assert!(session.topics().is_empty(), "빈 Vec → topics 해제");
+    }
+
+    /// (topics-2) set_topics: 6개 주면 5개로 cap.
+    #[test]
+    fn set_topics_cap_at_5() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        let six = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+            "f".to_string(),
+        ];
+        session.set_topics(six);
+        assert_eq!(session.topics().len(), 5, "6개 → 5개로 cap");
+        assert_eq!(session.topics()[4], "e", "5번째까지만 유지");
+    }
+
+    /// (topics-3) set_topics: trim + 빈 문자열 제거.
+    #[test]
+    fn set_topics_trim_and_drop_empty() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        session.set_topics(vec![
+            "  rust  ".to_string(),
+            "".to_string(),
+            "  ".to_string(),
+            "ai".to_string(),
+        ]);
+        assert_eq!(session.topics().len(), 2, "빈 항목 2개 제거 후 2개");
+        assert_eq!(session.topics()[0], "rust", "trim 적용");
+        assert_eq!(session.topics()[1], "ai");
+    }
 
     /// (task-41-4b) content + high-convergence history → mu_scale() < 1.0.
     ///

@@ -217,6 +217,7 @@ fn render_chat_with_flow_some_no_panic() {
                 false,
                 Some(FlowMetric { convergence: 0.5 }),
                 1.0, // mu_scale: 1.0 (식힘 없음)
+                &[], // topics: 없음
             )
         })
         .expect("render_chat(flow=Some) panic 없이 완료돼야 한다");
@@ -268,6 +269,7 @@ fn render_chat_with_flow_none_no_panic() {
                 false,
                 None,
                 1.0, // mu_scale: 1.0 (식힘 없음)
+                &[], // topics: 없음
             )
         })
         .expect("render_chat(flow=None) panic 없이 완료돼야 한다");
