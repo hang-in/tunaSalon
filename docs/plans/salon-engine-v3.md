@@ -1,7 +1,7 @@
 ---
 title: Salon 엔진 플랜 v0.3 - 로컬 LLM
 type: plan
-status: draft
+status: done
 priority: P1
 updated_at: 2026-06-02
 owner: shared
@@ -72,8 +72,8 @@ Phase A(15 순수 기반) → B(16 HTTP, 집중) → C(17 prompt, 18 신호) →
 
 - 기본 `cargo run`(LLM off)이 v0.2와 동일하게 결정적이고 골든 보존.
 - `--llm`(또는 모델 지정)으로 OllamaBackend 사용 시 실제 대사가 record.utterance/TUI에 나타남.
-- 엔진 결정(화자/침묵 시퀀스)은 백엔드와 무관하게 seed로 동일(Fake든 Ollama든).
-- 내용 기반 RRF 신호(관심도·잔향)가 content 있을 때 화자 선택에 반영됨(stub로 결정적 검증).
+- 각 백엔드에서 seed로 결정적이다(같은 백엔드·같은 seed → 동일 결정). content 없는 백엔드(Fake)면 v0.2와 동일 결정·골든 보존. (교정: content가 결정에 영향을 주므로 "백엔드와 무관하게 동일"은 아니다 — 아래 내용 신호 항목이 그 의도.)
+- 내용 기반 RRF 신호(관심도·잔향)가 content 있을 때 화자 선택에 반영됨(stub로 결정적 검증). content가 후보 이름을 호명하면 그 후보가 유리해지는 식.
 - persona collapse를 관전 도구로 비교 가능(작은 모델에서 페르소나 구분 정도).
 
 ## 6. 위험과 대응
