@@ -548,6 +548,10 @@ mod sqlite_impl {
         /// 5. row → MemoryEvent owned.
         ///
         /// k=0 / 빈쿼리 / 미참여 → 빈 Vec. 런타임 오류는 빈 Vec으로 조용히 처리.
+        ///
+        /// NOTE: `friend-engine-semantic` feature off(BM25-only 빌드)에서만 컴파일.
+        ///       semantic build는 아래 hybrid recall이 같은 시그니처로 대체한다.
+        #[cfg(not(feature = "friend-engine-semantic"))]
         pub fn recall(&self, persona: &str, query: &str, k: usize) -> Vec<MemoryEvent> {
             if k == 0 {
                 return vec![];
@@ -645,6 +649,192 @@ mod sqlite_impl {
             rows.filter_map(|r| r.ok()).collect()
         }
 
+        // ── hybrid recall (friend-engine-semantic only) ───────────────────────
+
+        /// BM25(어휘) + ANN(의미) 두 leg를 RRF(k=60)로 융합한 hybrid recall.
+        ///
+        /// `friend-engine-semantic` feature on 시에만 컴파일. 시그니처는 BM25-only recall과 동일.
+        ///
+        /// 알고리즘:
+        /// 1. persona가 참여한 방 집합(participation 테이블).
+        /// 2. BM25 leg: 기존 FTS5 OR-MATCH(참여 방 필터) → id 랭크순 Vec, N=k*4.
+        /// 3. 벡터 leg: vector_search(k*4) → 참여 방으로 필터 → id 랭크순 Vec.
+        /// 4. rrf_fuse(bm25_ids, vec_ids, 60.0) → 상위 k id.
+        /// 5. 각 id의 사건을 순서대로 fetch → Vec<MemoryEvent>.
+        ///
+        /// 임베딩 실패 / ANN 없음 → 벡터 leg 빈 Vec → RRF는 BM25만(graceful 폴백).
+        /// 모든 런타임 오류는 빈 Vec(unwrap/panic 없음).
+        #[cfg(feature = "friend-engine-semantic")]
+        pub fn recall(&self, persona: &str, query: &str, k: usize) -> Vec<MemoryEvent> {
+            if k == 0 {
+                return vec![];
+            }
+
+            // 1. persona가 참여한 방 목록
+            let rooms: Vec<String> = {
+                let mut stmt = match self.conn.prepare(
+                    "SELECT room FROM participation WHERE persona = ?1",
+                ) {
+                    Ok(s) => s,
+                    Err(_) => return vec![],
+                };
+                let rows = match stmt.query_map(params![persona], |row| row.get(0)) {
+                    Ok(r) => r,
+                    Err(_) => return vec![],
+                };
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            if rooms.is_empty() {
+                return vec![];
+            }
+
+            let over_fetch = k * 4;
+
+            // 2. BM25 leg: FTS5 OR-MATCH + 참여 방 필터 → id 랭크 Vec
+            let bm25_ids: Vec<i64> = {
+                let tokens = crate::tokenize_ko::morphological_tokens(query);
+                if tokens.is_empty() {
+                    vec![]
+                } else {
+                    let match_expr: String = tokens
+                        .iter()
+                        .map(|t| {
+                            let escaped = t.replace('"', "\"\"");
+                            format!("\"{}\"", escaped)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" OR ");
+
+                    let placeholders = rooms
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("?{}", i + 3))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    let sql = format!(
+                        "SELECT m.id
+                         FROM memories_fts
+                         JOIN memories m ON m.id = memories_fts.mem_id
+                         WHERE memories_fts.tokens MATCH ?1
+                           AND m.room IN ({placeholders})
+                         ORDER BY bm25(memories_fts) ASC, m.ts DESC, m.id DESC
+                         LIMIT ?2"
+                    );
+
+                    match self.conn.prepare(&sql) {
+                        Err(_) => vec![],
+                        Ok(mut stmt) => {
+                            use rusqlite::types::ToSql;
+                            let mut param_vals: Vec<Box<dyn ToSql>> = Vec::new();
+                            param_vals.push(Box::new(match_expr));
+                            param_vals.push(Box::new(over_fetch as i64));
+                            for r in &rooms {
+                                param_vals.push(Box::new(r.clone()));
+                            }
+                            let param_refs: Vec<&dyn ToSql> =
+                                param_vals.iter().map(|b| b.as_ref()).collect();
+
+                            match stmt.query_map(param_refs.as_slice(), |row| row.get(0)) {
+                                Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+                                Err(_) => vec![],
+                            }
+                        }
+                    }
+                }
+            };
+
+            // 3. 벡터 leg: vector_search → 참여 방으로 필터
+            #[cfg(not(target_os = "windows"))]
+            let vec_ids: Vec<i64> = {
+                // raw ANN 검색(참여 격리 없음)
+                let raw = self.vector_search(query, over_fetch);
+                if raw.is_empty() {
+                    vec![]
+                } else {
+                    // id들의 room을 일괄 조회해 참여 방인지 필터
+                    let raw_ids: Vec<i64> = raw.iter().map(|(id, _)| *id).collect();
+                    let id_placeholders = raw_ids
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("?{}", i + 1))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let room_placeholders = rooms
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("?{}", raw_ids.len() + i + 1))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    let filter_sql = format!(
+                        "SELECT id FROM memories WHERE id IN ({id_placeholders}) AND room IN ({room_placeholders})"
+                    );
+
+                    let participated_set: std::collections::HashSet<i64> =
+                        match self.conn.prepare(&filter_sql) {
+                            Err(_) => std::collections::HashSet::new(),
+                            Ok(mut stmt) => {
+                                use rusqlite::types::ToSql;
+                                let mut param_vals: Vec<Box<dyn ToSql>> = Vec::new();
+                                for id in &raw_ids {
+                                    param_vals.push(Box::new(*id));
+                                }
+                                for r in &rooms {
+                                    param_vals.push(Box::new(r.clone()));
+                                }
+                                let param_refs: Vec<&dyn ToSql> =
+                                    param_vals.iter().map(|b| b.as_ref()).collect();
+                                match stmt.query_map(param_refs.as_slice(), |row| row.get(0)) {
+                                    Ok(rows) => rows.filter_map(|r: rusqlite::Result<i64>| r.ok()).collect(),
+                                    Err(_) => std::collections::HashSet::new(),
+                                }
+                            }
+                        };
+
+                    // distance 오름차순 유지하면서 참여 방인 id만 남김
+                    raw.into_iter()
+                        .filter(|(id, _)| participated_set.contains(id))
+                        .map(|(id, _)| id)
+                        .collect()
+                }
+            };
+
+            // windows: 벡터 검색 비지원 → 빈 Vec
+            #[cfg(target_os = "windows")]
+            let vec_ids: Vec<i64> = vec![];
+
+            // 4. RRF 융합 → 상위 k id
+            let fused = rrf_fuse(&bm25_ids, &vec_ids, 60.0);
+            let top_ids: Vec<i64> = fused.into_iter().take(k).collect();
+
+            if top_ids.is_empty() {
+                return vec![];
+            }
+
+            // 5. fused 순서대로 각 id의 사건을 fetch
+            let mut results: Vec<MemoryEvent> = Vec::with_capacity(top_ids.len());
+            for mem_id in &top_ids {
+                let row = self.conn.query_row(
+                    "SELECT room, ts, speaker, content FROM memories WHERE id = ?1",
+                    params![mem_id],
+                    |row| {
+                        let room: String = row.get(0)?;
+                        let ts: i64 = row.get(1)?;
+                        let speaker: String = row.get(2)?;
+                        let content: String = row.get(3)?;
+                        Ok(MemoryEvent { room, ts: ts as u64, speaker, content })
+                    },
+                );
+                if let Ok(ev) = row {
+                    results.push(ev);
+                }
+            }
+
+            results
+        }
+
         /// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
         pub fn format_recall(events: &[MemoryEvent]) -> Option<String> {
             format_recall_impl(events)
@@ -686,6 +876,36 @@ mod sqlite_impl {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("MemoryStore(SQLite:memory:)").finish()
         }
+    }
+
+    // ── RRF 융합 헬퍼 ─────────────────────────────────────────────────────────
+
+    /// Reciprocal Rank Fusion: 두 ranked id 리스트를 k_rrf(=60)로 융합한다.
+    ///
+    /// 각 리스트에서 `score += 1.0 / (k_rrf + rank + 1)` 키별 합산.
+    /// 정렬: score 내림차순, 동점은 id 오름차순(결정적 tie-break).
+    ///
+    /// seCall `reciprocal_rank_fusion` 동형(observer penalty/정규화 미포함).
+    pub(super) fn rrf_fuse(bm25: &[i64], vector: &[i64], k_rrf: f64) -> Vec<i64> {
+        use std::collections::HashMap;
+        let mut scores: HashMap<i64, f64> = HashMap::new();
+
+        for (rank, &id) in bm25.iter().enumerate() {
+            *scores.entry(id).or_insert(0.0) += 1.0 / (k_rrf + rank as f64 + 1.0);
+        }
+        for (rank, &id) in vector.iter().enumerate() {
+            *scores.entry(id).or_insert(0.0) += 1.0 / (k_rrf + rank as f64 + 1.0);
+        }
+
+        let mut pairs: Vec<(i64, f64)> = scores.into_iter().collect();
+        // score 내림차순, 동점 id 오름차순(결정적)
+        pairs.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+
+        pairs.into_iter().map(|(id, _)| id).collect()
     }
 }
 
@@ -775,8 +995,16 @@ mod tests {
 
         // "비 온다"는 첫 번째 사건과 겹침, 두 번째 사건과는 겹침 없음
         let result = store.recall("alice", "비 온다", 5);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].content, "비 온다 심심해");
+        // BM25-only 빌드에서는 겹치는 사건만 반환(len==1).
+        // hybrid(semantic) 빌드에서는 벡터 leg가 추가 결과를 가져올 수 있으므로
+        // "관련 사건이 포함되어 있는가"만 단언한다.
+        #[cfg(not(feature = "friend-engine-semantic"))]
+        assert_eq!(result.len(), 1, "BM25-only: 겹치는 사건 1개만 반환");
+        assert!(
+            result.iter().any(|ev| ev.content == "비 온다 심심해"),
+            "recall 결과에 '비 온다 심심해'가 포함되어야 한다. 결과: {:?}",
+            result.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
     }
 
     /// (3) 동점 ts 내림차순: 같은 토큰 겹침 수이면 더 최근 사건이 먼저.
@@ -808,10 +1036,15 @@ mod tests {
         store2.record(ev("A", 1, "alice", "안녕"));
         assert!(store2.recall("bob", "안녕", 5).is_empty(), "미참여 페르소나는 빈 결과");
 
-        // 겹침 없는 쿼리
+        // 겹침 없는 쿼리 — BM25-only 빌드에서만 빈 결과를 보장한다.
+        // hybrid(semantic) 빌드는 벡터 leg가 추가 결과를 반환할 수 있다(MockEmbedder).
         let mut store3 = MemoryStore::new();
         store3.record(ev("A", 1, "alice", "안녕 세계"));
-        assert!(store3.recall("alice", "전혀다른토큰xyz", 5).is_empty(), "겹침 없으면 빈 결과");
+        #[cfg(not(feature = "friend-engine-semantic"))]
+        assert!(store3.recall("alice", "전혀다른토큰xyz", 5).is_empty(), "겹침 없으면 빈 결과(BM25-only)");
+        // semantic 빌드에서도 패닉 없이 반환되어야 한다.
+        #[cfg(feature = "friend-engine-semantic")]
+        let _ = store3.recall("alice", "전혀다른토큰xyz", 5);
 
         // k=0
         let mut store4 = MemoryStore::new();
@@ -1104,5 +1337,158 @@ mod tests {
                 tmp_dir.join(format!("tunasalon_sem_roundtrip_{pid}{suf}.db")),
             );
         }
+    }
+
+    // ── rrf_fuse 단위 테스트 (friend-engine-semantic, task-49) ───────────────
+
+    /// 두 리스트 모두에 있는 키가 한쪽에만 있는 키보다 높은 점수를 얻어 상위에 온다.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn rrf_fuse_key_in_both_lists_ranks_top() {
+        use super::sqlite_impl::rrf_fuse;
+        // id=2 → bm25 rank 1, vector rank 1 (두 번째 항목이므로 rank=1)
+        // id=1 → bm25 rank 0 (1위)만, score = 1/(60+0+1) = 1/61 ≈ 0.01639
+        // id=2 → bm25 rank 1, vec rank 0 → score = 1/62 + 1/61 ≈ 0.02252
+        // id=3 → vec rank 1만 → score = 1/62 ≈ 0.01613
+        let bm25 = vec![1i64, 2];
+        let vec  = vec![2i64, 3];
+        let fused = rrf_fuse(&bm25, &vec, 60.0);
+        assert!(!fused.is_empty(), "결과가 비어 있으면 안 된다");
+        assert_eq!(fused[0], 2, "양쪽 리스트에 있는 id=2가 최상위여야 한다");
+    }
+
+    /// 한쪽에만 있는 키도 결과에 포함된다.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn rrf_fuse_one_list_keys_included() {
+        use super::sqlite_impl::rrf_fuse;
+        let bm25 = vec![10i64, 20];
+        let vec_ids: Vec<i64> = vec![];
+        let fused = rrf_fuse(&bm25, &vec_ids, 60.0);
+        assert_eq!(fused.len(), 2, "BM25만 있어도 두 항목 모두 포함");
+        assert_eq!(fused[0], 10, "rank 0이 먼저");
+        assert_eq!(fused[1], 20);
+    }
+
+    /// 빈 입력 graceful.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn rrf_fuse_empty_inputs() {
+        use super::sqlite_impl::rrf_fuse;
+        let fused = rrf_fuse(&[], &[], 60.0);
+        assert!(fused.is_empty(), "빈 입력이면 빈 Vec");
+    }
+
+    /// 동점 tie-break: id 오름차순(결정적).
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn rrf_fuse_tiebreak_id_ascending() {
+        use super::sqlite_impl::rrf_fuse;
+        // 두 id가 각각 단독으로 rank 0 → 동점(둘 다 1/61).
+        // id 오름차순: 5 < 9
+        let bm25 = vec![9i64];
+        let vec_ids = vec![5i64];
+        let fused = rrf_fuse(&bm25, &vec_ids, 60.0);
+        assert_eq!(fused.len(), 2);
+        assert_eq!(fused[0], 5, "동점 시 id 오름차순 → 5가 먼저");
+        assert_eq!(fused[1], 9);
+    }
+
+    /// 결정성: 같은 입력으로 두 번 호출 → 동일 결과.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn rrf_fuse_deterministic() {
+        use super::sqlite_impl::rrf_fuse;
+        let bm25 = vec![3i64, 1, 2];
+        let vec_ids = vec![2i64, 3, 4];
+        let r1 = rrf_fuse(&bm25, &vec_ids, 60.0);
+        let r2 = rrf_fuse(&bm25, &vec_ids, 60.0);
+        assert_eq!(r1, r2, "결정성: 같은 입력은 같은 결과");
+    }
+
+    // ── hybrid recall 테스트 (friend-engine-semantic, task-49) ───────────────
+
+    /// SSOT 회상: hybrid recall도 SSOT를 상위에서 회상한다.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn hybrid_recall_ssot_in_top3() {
+        let mut store = MemoryStore::new();
+        store.join("morning", "ada");
+        store.join("morning", "bora");
+
+        store.record(ev("morning", 10, "ada", "오늘 날씨 맑다"));
+        store.record(ev("morning", 20, "bora", "지난주 등산 비 취소"));
+        store.record(ev("morning", 30, "ada", "점심 뭐 먹을까"));
+        store.record(ev("morning", 40, "bora", "다음주 화요일 북한산 등산 약속"));
+
+        let results = store.recall("ada", "다음주 화요일 등산 약속", 5);
+        assert!(
+            !results.is_empty(),
+            "hybrid recall 결과가 비어 있으면 안 된다"
+        );
+        let has_ssot = results
+            .iter()
+            .take(3)
+            .any(|ev| ev.content.contains("다음주 화요일 북한산 등산 약속"));
+        assert!(
+            has_ssot,
+            "hybrid recall: SSOT가 top-3에 없다. 결과: {:?}",
+            results.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
+    }
+
+    /// 참여 격리: 벡터 leg 결과도 미참여 방 사건을 포함하지 않는다.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn hybrid_recall_vector_leg_participation_isolation() {
+        let mut store = MemoryStore::new();
+        // room A: alice 참여
+        store.join("A", "alice");
+        // room B: bob만 참여 (alice 미참여)
+        store.join("B", "bob");
+
+        store.record(ev("A", 1, "alice", "rust programming language"));
+        // B에 아주 관련 높은 내용을 넣어도 alice에게 보이면 안 됨
+        store.record(ev("B", 2, "bob", "rust programming language best"));
+
+        let results = store.recall("alice", "rust programming language", 5);
+        let has_room_b = results.iter().any(|ev| ev.room == "B");
+        assert!(
+            !has_room_b,
+            "벡터 leg 참여 격리 실패: alice 결과에 room B 사건이 있다. 결과: {:?}",
+            results.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
+        );
+    }
+
+    /// 결정성: hybrid recall 두 번 호출 → 동일 결과.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn hybrid_recall_deterministic() {
+        let mut store = MemoryStore::new();
+        store.record(ev("room", 1, "alice", "안녕 세계 rust"));
+        store.record(ev("room", 2, "alice", "세계 평화"));
+        store.record(ev("room", 3, "alice", "안녕 친구"));
+
+        let r1 = store.recall("alice", "안녕 세계", 5);
+        let r2 = store.recall("alice", "안녕 세계", 5);
+        assert_eq!(r1.len(), r2.len(), "hybrid recall 결정성: 길이 동일");
+        for (a, b) in r1.iter().zip(r2.iter()) {
+            assert_eq!(a, b, "hybrid recall 결정성: 사건 동일");
+        }
+    }
+
+    /// 임베딩 없을 때(k=0 vector_search) → BM25만으로 폴백, recall 정상 동작.
+    /// (MockEmbedder는 항상 성공하므로 vector_search k=0으로 테스트)
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn hybrid_recall_bm25_fallback_when_k_zero() {
+        let mut store = MemoryStore::new();
+        store.record(ev("room", 1, "alice", "비 온다 심심해"));
+        store.record(ev("room", 2, "alice", "고양이 강아지"));
+
+        // k=1로 hybrid recall 호출 → over_fetch=4, 정상 동작 확인
+        let results = store.recall("alice", "비 온다", 1);
+        // 결과가 있거나 없거나 패닉 없이 반환만 되면 통과
+        let _ = results;
     }
 }

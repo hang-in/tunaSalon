@@ -190,18 +190,27 @@ fn recall_determinism_and_participation_isolation() {
         "aria는 room-a의 '안녕 세계' 사건을 회상할 수 있어야 함"
     );
 
-    // (b) 참여 격리: clio는 room-b 참여 → room-a 사건 접근 불가
+    // (b) 참여 격리: clio는 room-b 참여 → room-a 사건 접근 불가.
+    // BM25-only 빌드: room-b에 "안녕 세계" 토큰이 없으므로 빈 결과.
+    // hybrid(semantic) 빌드: 벡터 leg가 room-b 사건을 반환할 수 있으나 room-a 사건은 없어야 함.
     let clio_recall = store.recall("clio", "안녕 세계", 5);
+    let clio_has_room_a = clio_recall.iter().any(|ev| ev.room == "room-a");
     assert!(
-        clio_recall.is_empty(),
-        "clio는 room-a에 참여하지 않았으므로 room-a 사건을 회상할 수 없어야 함(참여 격리)"
+        !clio_has_room_a,
+        "clio는 room-a에 참여하지 않았으므로 room-a 사건을 회상할 수 없어야 함(참여 격리). \
+         결과: {:?}",
+        clio_recall.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
     );
 
-    // (c) 역방향 격리: aria는 room-b에 참여하지 않았으므로 room-b 사건 접근 불가
+    // (c) 역방향 격리: aria는 room-b에 참여하지 않았으므로 room-b 사건 접근 불가.
+    // 마찬가지로 hybrid 빌드에서는 room-a 사건을 반환할 수 있으나 room-b 사건은 없어야 함.
     let aria_b_recall = store.recall("aria", "전혀 다른 방", 5);
+    let aria_has_room_b = aria_b_recall.iter().any(|ev| ev.room == "room-b");
     assert!(
-        aria_b_recall.is_empty(),
-        "aria는 room-b에 참여하지 않았으므로 room-b 사건을 회상할 수 없어야 함"
+        !aria_has_room_b,
+        "aria는 room-b에 참여하지 않았으므로 room-b 사건을 회상할 수 없어야 함(참여 격리). \
+         결과: {:?}",
+        aria_b_recall.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
     );
 
     // (c) 자동 join: record()로만 화자가 방에 등록됨 — 명시적 join 없이도 회상 가능
