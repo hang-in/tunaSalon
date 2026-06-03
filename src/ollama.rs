@@ -166,6 +166,7 @@ impl OllamaBackend {
     ///
     /// `PersonaRuntime::generate`에서 위임 호출한다. Backend enum 디스패치에서도 직접 호출.
     /// - `recall`: 라이브 경로에서만 Some으로 전달. driver/headless 경로는 항상 None.
+    /// - `system_prompt_override`: Some(p)이면 p를 system prompt로 사용, None이면 내부 맵 조회(기존 동작).
     /// - rng를 소비하지 않으므로 엔진 결정성이 보존된다.
     /// - 네트워크 실패, 비2xx, JSON 파싱 실패, 타임아웃 → None 반환(panic 없음).
     /// - SECURITY: api_key는 Authorization 헤더에만, 에러 메시지에 절대 포함하지 않는다.
@@ -175,11 +176,13 @@ impl OllamaBackend {
         history: &[Event],
         _tick: u64,
         recall: Option<&str>,
+        system_prompt_override: Option<&str>,
     ) -> Option<String> {
         let recent = Self::format_recent(history);
         let user_prompt = Self::assemble_user_prompt(&recent, recall);
 
-        let system = self.system_prompts.get(speaker).map(String::as_str);
+        let system = system_prompt_override
+            .or_else(|| self.system_prompts.get(speaker).map(String::as_str));
 
         let url = format!("{}/api/generate", self.endpoint);
         let body = Self::build_request_body(&self.model, &user_prompt, system, self.num_ctx, self.think);
@@ -234,7 +237,7 @@ impl PersonaRuntime for OllamaBackend {
         tick: u64,
         _rng: &mut ChaCha8Rng,
     ) -> Option<String> {
-        self.generate_shared(speaker, history, tick, None)
+        self.generate_shared(speaker, history, tick, None, None)
     }
 }
 

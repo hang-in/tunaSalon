@@ -41,16 +41,18 @@ impl Backend {
     /// 프로토콜에 맞게 발화 텍스트 생성을 위임한다. rng 불요.
     ///
     /// - `recall`: 라이브 경로(generate_one 경유)에서만 Some. generate_batch/PersonaRuntime은 None.
+    /// - `system_prompt_override`: Some(p)이면 p를 system prompt로 사용, None이면 백엔드 내부 맵 조회(기존 동작).
     pub fn generate(
         &self,
         speaker: &PersonaId,
         history: &[Event],
         tick: u64,
         recall: Option<&str>,
+        system_prompt_override: Option<&str>,
     ) -> Option<String> {
         match self {
-            Backend::Ollama(b) => b.generate_shared(speaker, history, tick, recall),
-            Backend::OpenAI(b) => b.generate(speaker, history, tick, recall),
+            Backend::Ollama(b) => b.generate_shared(speaker, history, tick, recall, system_prompt_override),
+            Backend::OpenAI(b) => b.generate(speaker, history, tick, recall, system_prompt_override),
         }
     }
 }
@@ -479,9 +481,10 @@ impl BackendPool {
                         // 폴백 체인: 첫 Some에서 멈춘다.
                         // 각 후보의 세마포어를 acquire → generate → permit drop(RAII).
                         // recall=None: generate_batch는 bench/비교 전용 경로 — 회상 불사용.
+                        // system_prompt_override=None: 기존 동작(백엔드 내부 맵 조회) 유지.
                         for (backend, sem) in &candidates {
                             let _permit = sem.acquire();
-                            let text = backend.generate(&speaker, history, tick, None);
+                            let text = backend.generate(&speaker, history, tick, None, None);
                             // permit은 여기서 drop된다(다음 후보 시도 전 슬롯 반환).
                             drop(_permit);
                             if text.is_some() {
@@ -529,7 +532,7 @@ impl BackendPool {
 
         for backend_name in &chain {
             if let Some(backend) = self.backends.get(backend_name) {
-                if let Some(text) = backend.generate(speaker, history, tick, recall) {
+                if let Some(text) = backend.generate(speaker, history, tick, recall, None) {
                     return Some(text);
                 }
                 // None이면 체인의 다음 백엔드로. 폴백이 실제로 사용됐음을 로그.
@@ -541,6 +544,31 @@ impl BackendPool {
         }
 
         None
+    }
+
+    /// 지정된 backend_name의 백엔드에 직접 발화 텍스트 생성을 요청한다.
+    ///
+    /// `generate_one`(폴백 체인)과 달리 명시적으로 지정한 백엔드 하나만 시도한다.
+    /// 폴백 체인은 적용하지 않는다 - backend를 명시 지정하는 게 목적이기 때문.
+    ///
+    /// - `backend_name`이 풀에 없으면 None 반환(panic 없음).
+    /// - 세마포어: generate_one이 세마포어를 사용하지 않으므로 이 메서드도 사용하지 않는다.
+    ///   (세마포어는 generate_batch의 병렬 경로에서만 사용한다.)
+    /// - `system_prompt`: Some(p)이면 해당 백엔드의 내부 system_prompts 맵을 무시하고 p를 사용한다.
+    ///   None이면 백엔드 내부 맵 조회(기존 동작).
+    /// - rng를 소비하지 않는다 → 엔진 결정성 보존.
+    /// - SECURITY: api_key는 백엔드 내부에서만 헤더에 첨부된다. 이 함수에서 노출하지 않는다.
+    pub fn generate_on(
+        &self,
+        backend_name: &str,
+        speaker: &PersonaId,
+        history: &[Event],
+        tick: u64,
+        recall: Option<&str>,
+        system_prompt: Option<&str>,
+    ) -> Option<String> {
+        let backend = self.backends.get(backend_name)?;
+        backend.generate(speaker, history, tick, recall, system_prompt)
     }
 }
 
@@ -1140,5 +1168,43 @@ mod tests {
             assert_eq!(speaker, &jobs[i].0, "순서 불일치 idx={i}");
             assert_eq!(*text, None, "오프라인 primary+fallback → None이어야 함(idx={i})");
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // generate_on 단위 테스트 (네트워크 없음)
+    // -------------------------------------------------------------------------
+
+    /// generate_on: 존재하지 않는 backend_name이면 None을 반환한다(panic 없음).
+    #[test]
+    fn generate_on_returns_none_for_unknown_backend() {
+        let pool = BackendPool::new(); // 빈 풀
+        let speaker = "friend".to_string();
+        let result = pool.generate_on("nonexistent", &speaker, &[], 0, None, None);
+        assert_eq!(result, None, "알 수 없는 backend_name → None이어야 함");
+    }
+
+    /// generate_on: 오프라인 백엔드이면 None을 반환한다(panic 없음).
+    #[test]
+    fn generate_on_offline_backend_returns_none() {
+        let mut pool = BackendPool::new();
+        pool.add(make_config("cloud"), BTreeMap::new()); // 포트 1 = 오프라인
+
+        let speaker = "friend".to_string();
+        let result = pool.generate_on("cloud", &speaker, &[], 0, None, None);
+        // 오프라인이므로 None, panic 없음
+        assert_eq!(result, None, "오프라인 백엔드 → None이어야 함");
+    }
+
+    /// generate_on: 풀백 체인을 따르지 않는다.
+    /// "cloud"만 등록하고 "friend"로 요청하면 None(폴백 없음).
+    #[test]
+    fn generate_on_does_not_follow_fallback_chain() {
+        let mut pool = BackendPool::new();
+        pool.add(make_config("cloud"), BTreeMap::new());
+        pool.set_default("cloud");
+        // "friend"는 풀에 없음 — generate_on은 폴백 체인을 무시하고 "friend"만 시도
+        let speaker = "any".to_string();
+        let result = pool.generate_on("friend", &speaker, &[], 0, None, None);
+        assert_eq!(result, None, "명시 backend가 없으면 None(폴백 체인 미적용)");
     }
 }

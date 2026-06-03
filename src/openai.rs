@@ -182,6 +182,7 @@ impl OpenAIBackend {
     /// OpenAI 호환 서버에 발화 텍스트 생성을 요청한다.
     ///
     /// - `recall`: 라이브 경로에서만 Some으로 전달. driver/headless 경로는 항상 None.
+    /// - `system_prompt_override`: Some(p)이면 p를 system prompt로 사용, None이면 내부 맵 조회(기존 동작).
     /// - rng를 소비하지 않는다 → 엔진 결정성 보존.
     /// - 에러/비2xx/타임아웃/파싱 실패 → None(panic 없음).
     /// - SECURITY: api_key는 Authorization 헤더에만, 에러 메시지에 절대 포함하지 않는다.
@@ -191,11 +192,13 @@ impl OpenAIBackend {
         history: &[Event],
         _tick: u64,
         recall: Option<&str>,
+        system_prompt_override: Option<&str>,
     ) -> Option<String> {
         let recent = Self::format_recent(history);
         let user_prompt = Self::assemble_user_prompt(&recent, recall);
 
-        let system = self.system_prompts.get(speaker).map(String::as_str);
+        let system = system_prompt_override
+            .or_else(|| self.system_prompts.get(speaker).map(String::as_str));
         let url = format!("{}/v1/chat/completions", self.endpoint);
         let body = Self::build_request_body(&self.model, &user_prompt, system, self.max_tokens, self.thinking);
 
@@ -524,7 +527,7 @@ mod tests {
             },
         ];
 
-        let result = backend.generate(&speaker, &history, 0, None);
+        let result = backend.generate(&speaker, &history, 0, None, None);
         println!("live friend-server result (model={model}, endpoint={endpoint}): {result:?}");
         // 서버가 응답하면 Some(텍스트), 오프라인이면 None — 어느 쪽이든 panic 없어야 한다.
         // Architect가 수동으로 Some 여부를 확인한다.
