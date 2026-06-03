@@ -1,7 +1,7 @@
 pub mod chat;
 pub mod driver;
 #[cfg(feature = "friend-engine-semantic")]
-mod embed;
+pub mod embed;
 #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
 pub mod ann;
 pub mod flow;

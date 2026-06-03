@@ -305,6 +305,82 @@ fn precision_ssot_ranks_above_distractor_evening() {
     );
 }
 
+/// 실모델 의미 회상: 어휘가 거의 겹치지 않아도 의미로 회상한다.
+/// 저장 "강아지랑 산책 다녀왔어" / 쿼리 "반려동물 데리고 나갔어".
+/// BM25(어휘)로는 약하고 BGE-M3 벡터(의미)가 잡아야 한다.
+///
+/// 수동 실행: cargo test --features "friend-engine-semantic coreml" -- --ignored semantic_recall_real_model --nocapture
+#[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+#[test]
+#[ignore]
+fn semantic_recall_real_model_lexical_differs_meaning_same() {
+    use salon::embed::{model_manager, OrtEmbedder};
+
+    let model_dir = model_manager::default_model_path();
+    assert!(
+        model_manager::is_downloaded(&model_dir),
+        "모델이 없다: {} (먼저 다운로드). 이 테스트는 #[ignore]라 일상 CI에서는 제외된다.",
+        model_dir.display()
+    );
+
+    let embedder = OrtEmbedder::new(&model_dir).expect("OrtEmbedder::new 실패");
+
+    let tmp_dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let db_path = tmp_dir.join(format!("tunasalon_sem_real_{pid}.db"));
+    let usearch_path = tmp_dir.join(format!("tunasalon_sem_real_{pid}.db.usearch"));
+    // 잔여 정리
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(&usearch_path);
+    for suf in &["-wal", "-shm"] {
+        let _ = std::fs::remove_file(tmp_dir.join(format!("tunasalon_sem_real_{pid}{suf}.db")));
+    }
+
+    {
+        let mut store = MemoryStore::open_with_embedder(&db_path, Box::new(embedder))
+            .expect("open_with_embedder 실패");
+        store.join("salon", "ada");
+        // SSOT: 어휘가 쿼리와 거의 안 겹침
+        store.record(MemoryEvent {
+            room: "salon".to_string(),
+            ts: 1,
+            speaker: "ada".to_string(),
+            content: "강아지랑 산책 다녀왔어".to_string(),
+        });
+        // distractor/filler: 의미 무관
+        store.record(MemoryEvent {
+            room: "salon".to_string(),
+            ts: 2,
+            speaker: "ada".to_string(),
+            content: "오늘 주식 시장이 폭락했대".to_string(),
+        });
+        store.record(MemoryEvent {
+            room: "salon".to_string(),
+            ts: 3,
+            speaker: "ada".to_string(),
+            content: "새 노트북 사양 알아보는 중".to_string(),
+        });
+
+        let results = store.recall("ada", "반려동물 데리고 나갔어", 3);
+        eprintln!(
+            "[semantic_recall_real_model] results: {:?}",
+            results.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
+        assert!(
+            results.iter().any(|e| e.content.contains("강아지랑 산책")),
+            "실모델 의미 회상 실패: top-3에 '강아지랑 산책'이 없다. 어휘≠의미 회상이 동작해야 한다. 결과: {:?}",
+            results.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
+    }
+
+    // 정리
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(&usearch_path);
+    for suf in &["-wal", "-shm"] {
+        let _ = std::fs::remove_file(tmp_dir.join(format!("tunasalon_sem_real_{pid}{suf}.db")));
+    }
+}
+
 /// (6) format_recall 연기: morning SSOT 회상 결과를 회상 슬롯 문자열로 포맷한다.
 ///
 /// 직접 채점은 아니지만 회상 결과가 프롬프트 슬롯에 올바르게 포맷되는지 확인.

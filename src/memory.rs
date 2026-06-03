@@ -186,16 +186,41 @@ mod sqlite_impl {
             );",
         )?;
 
-        // semantic feature: 임베딩 BLOB 저장 테이블
+        // semantic feature: 임베딩 BLOB 저장 테이블 + meta 테이블
         #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS memory_vectors (
                 mem_id    INTEGER PRIMARY KEY,
                 embedding BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );",
         )?;
 
         Ok(())
+    }
+
+    // ─── meta 읽기/쓰기 헬퍼 (semantic only) ─────────────────────────────────
+
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    fn get_meta(conn: &Connection, key: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .ok()
+    }
+
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    fn set_meta(conn: &Connection, key: &str, value: &str) {
+        let _ = conn.execute(
+            "INSERT INTO meta(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        );
     }
 
     // ─── ANN 재구축 헬퍼 (semantic only) ──────────────────────────────────────
@@ -246,6 +271,55 @@ mod sqlite_impl {
             }
         }
 
+        Some(ann)
+    }
+
+    // ─── reembed_all 헬퍼 (semantic only) ────────────────────────────────────
+
+    /// 모든 `memories.content`를 현재 임베더로 재임베딩해 `memory_vectors`와 ANN을 새로 채운다.
+    /// 임베더 변경/신규 시 호출된다(rebuild_ann_from_db와 달리 embed를 다시 호출함).
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    fn reembed_all(
+        conn: &Connection,
+        embedder: &dyn crate::embed::Embedder,
+        usearch_path: &std::path::Path,
+    ) -> Option<crate::ann::AnnIndex> {
+        let ann = match crate::ann::AnnIndex::open_or_create(usearch_path, 1024) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("[tunaSalon] warn: reembed ANN 생성 실패: {e}");
+                return None;
+            }
+        };
+        // 기존 stale 벡터 제거(이전 임베더 기준)
+        let _ = conn.execute("DELETE FROM memory_vectors", []);
+        let mut stmt = match conn.prepare("SELECT id, content FROM memories ORDER BY id") {
+            Ok(s) => s,
+            Err(_) => return Some(ann),
+        };
+        let rows = match stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        }) {
+            Ok(r) => r,
+            Err(_) => return Some(ann),
+        };
+        for item in rows {
+            if let Ok((id, content)) = item {
+                match embedder.embed(&content) {
+                    Ok(v) => {
+                        let blob = f32_to_blob(&v);
+                        let _ = conn.execute(
+                            "INSERT OR REPLACE INTO memory_vectors(mem_id, embedding) VALUES (?1, ?2)",
+                            params![id, blob],
+                        );
+                        if let Err(e) = ann.add(id as u64, &v) {
+                            eprintln!("[tunaSalon] warn: reembed ANN add id={id} 실패: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("[tunaSalon] warn: reembed embed id={id} 실패: {e}"),
+                }
+            }
+        }
         Some(ann)
     }
 
@@ -320,8 +394,50 @@ mod sqlite_impl {
         /// - 스키마는 `init_schema`(IF NOT EXISTS → 기존 DB 재오픈 안전).
         ///
         /// 런타임 경로이므로 `Result`를 반환한다(호출처 `live_store`가 fallback).
+        ///
+        /// **테스트 결정성**: open()은 항상 MockEmbedder를 사용한다.
+        /// 실 OrtEmbedder 배선은 live_store()를 통해서만 이루어진다.
         pub fn open(path: &Path) -> rusqlite::Result<Self> {
-            // 부모 디렉터리가 없으면 생성.
+            #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+            {
+                use crate::embed::MockEmbedder;
+                return Self::open_with_embedder(path, Box::new(MockEmbedder::default()));
+            }
+
+            #[cfg(not(all(feature = "friend-engine-semantic", not(target_os = "windows"))))]
+            {
+                // 부모 디렉터리가 없으면 생성.
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            rusqlite::Error::InvalidPath(
+                                std::path::PathBuf::from(format!(
+                                    "create_dir_all failed for {:?}: {e}",
+                                    parent
+                                ))
+                            )
+                        })?;
+                    }
+                }
+                let conn = Connection::open(path)?;
+                conn.pragma_update(None, "journal_mode", "WAL")?;
+                init_schema(&conn)?;
+                Ok(Self { conn })
+            }
+        }
+
+        /// 외부 주입 임베더로 파일 SQLite를 연다(영속 스토어).
+        ///
+        /// **임베더 일관성**: DB의 `meta.embedder_kind`와 주입 임베더의 `kind()`를 비교한다.
+        ///   - 일치: 기존 `.usearch` 로드 또는 `memory_vectors` BLOB로 ANN 재구축(빠름).
+        ///   - 불일치(또는 신규 None): 전체 재임베딩(`reembed_all`) + ANN 재구축 + meta 갱신.
+        ///     Mock<->Ort 혼용 방지, 첫 의미 도입 시 과거 사건도 백필된다.
+        #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+        pub fn open_with_embedder(
+            path: &Path,
+            embedder: Box<dyn crate::embed::Embedder>,
+        ) -> rusqlite::Result<Self> {
+            // 1. 부모 디렉터리 생성
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
                     std::fs::create_dir_all(parent).map_err(|e| {
@@ -334,50 +450,49 @@ mod sqlite_impl {
                     })?;
                 }
             }
+            // 2. Connection + WAL
             let conn = Connection::open(path)?;
-            // WAL 모드: 크래시 복구·동시 읽기 성능 향상. 단일 writer(라이브 틱 순차) 환경에 적합.
             conn.pragma_update(None, "journal_mode", "WAL")?;
+            // 3. 스키마 초기화
             init_schema(&conn)?;
-
-            #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
-            {
-                use crate::embed::MockEmbedder;
-                let embedder: Box<dyn crate::embed::Embedder> =
-                    Box::new(MockEmbedder::default());
-
-                // `.usearch` 인덱스: <db path>.usearch
-                let usearch_path = {
-                    let mut p = path.to_path_buf();
-                    let mut fname = p
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("memory.db")
-                        .to_string();
-                    fname.push_str(".usearch");
-                    p.set_file_name(fname);
-                    p
-                };
-
-                let ann = if usearch_path.exists() {
-                    // 파일 인덱스 로드
+            // 4. .usearch 경로 계산
+            let usearch_path = {
+                let mut p = path.to_path_buf();
+                let mut fname = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("memory.db")
+                    .to_string();
+                fname.push_str(".usearch");
+                p.set_file_name(fname);
+                p
+            };
+            // 5. 임베더 일관성 검사
+            let current = embedder.kind();
+            let stored = get_meta(&conn, "embedder_kind");
+            let ann = if stored.as_deref() == Some(current) {
+                // 일치: 기존 인덱스 로드 or BLOB rebuild
+                if usearch_path.exists() {
                     crate::ann::AnnIndex::open_or_create(&usearch_path, 1024)
                         .map_err(|e| {
-                            eprintln!("[tunaSalon] warn: ANN load failed ({e}), rebuilding...");
+                            eprintln!("[tunaSalon] warn: ANN load 실패({e}), 재구축...");
                         })
                         .ok()
-                        .or_else(|| {
-                            rebuild_ann_from_db(&conn, &usearch_path, &*embedder)
-                        })
+                        .or_else(|| rebuild_ann_from_db(&conn, &usearch_path, &*embedder))
                 } else {
-                    // `.usearch` 없음 → memory_vectors 행에서 재구축
                     rebuild_ann_from_db(&conn, &usearch_path, &*embedder)
-                };
-
-                return Ok(Self { conn, embedder, ann });
-            }
-
-            #[cfg(not(all(feature = "friend-engine-semantic", not(target_os = "windows"))))]
-            Ok(Self { conn })
+                }
+            } else {
+                // 불일치/신규: 전체 재임베딩
+                eprintln!(
+                    "[tunaSalon] 임베더 변경 감지({stored:?} -> {current}), 의미 인덱스 재구축 중..."
+                );
+                let _ = std::fs::remove_file(&usearch_path);
+                let a = reembed_all(&conn, &*embedder, &usearch_path);
+                set_meta(&conn, "embedder_kind", current);
+                a
+            };
+            Ok(Self { conn, embedder, ann })
         }
 
         /// 기본 DB 경로를 반환한다(순수, 디스크 I/O 없음).
@@ -406,13 +521,30 @@ mod sqlite_impl {
 
         /// 라이브(`--chat`) 전용 스토어를 반환한다.
         ///
-        /// - `default_db_path()`가 Some → `open(path)`. 실패 시 eprintln 경고 + `new()`.
+        /// - `default_db_path()`가 Some → `open_with_embedder(path, choose_live_embedder())`.
+        ///   실패 시 eprintln 경고 + `new()`.
         /// - `default_db_path()`가 None → `new()`(`:memory:`).
         ///
         /// **테스트에서 호출 금지**: 실제 `~/.local/share/tunaSalon/` 경로를 사용한다.
         pub fn live_store() -> Self {
             match Self::default_db_path() {
                 Some(path) => {
+                    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+                    {
+                        match Self::open_with_embedder(&path, choose_live_embedder()) {
+                            Ok(store) => return store,
+                            Err(e) => {
+                                eprintln!(
+                                    "[tunaSalon] warning: 영속 메모리 DB를 열 수 없습니다 ({:?}: {e}). \
+                                     이 세션은 :memory: 로 동작합니다(재시작 시 기억 없음).",
+                                    path
+                                );
+                                return Self::new();
+                            }
+                        }
+                    }
+
+                    #[cfg(not(all(feature = "friend-engine-semantic", not(target_os = "windows"))))]
                     match Self::open(&path) {
                         Ok(store) => store,
                         Err(e) => {
@@ -870,6 +1002,25 @@ mod sqlite_impl {
         fn default() -> Self {
             Self::new()
         }
+    }
+
+    /// 라이브 스토어용 임베더를 선택한다 (semantic only).
+    ///
+    /// BGE-M3 모델이 다운로드되어 있으면 OrtEmbedder, 없으면 MockEmbedder 폴백.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    fn choose_live_embedder() -> Box<dyn crate::embed::Embedder> {
+        use crate::embed::{model_manager, MockEmbedder, OrtEmbedder};
+        let model_dir = model_manager::default_model_path();
+        if model_manager::is_downloaded(&model_dir) {
+            match OrtEmbedder::new(&model_dir) {
+                Ok(e) => {
+                    eprintln!("[tunaSalon] BGE-M3 OrtEmbedder 로드 완료(의미 회상 활성).");
+                    return Box::new(e);
+                }
+                Err(e) => eprintln!("[tunaSalon] warn: OrtEmbedder 로드 실패({e}), Mock 폴백."),
+            }
+        }
+        Box::new(MockEmbedder::default())
     }
 
     impl std::fmt::Debug for MemoryStore {

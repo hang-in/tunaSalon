@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 pub trait Embedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>, String>;
     fn dim(&self) -> usize;
+    /// 임베더 종류 태그. DB당 임베더 일관성 검사에 쓴다(Mock/Ort 혼용 방지).
+    fn kind(&self) -> &'static str;
 }
 
 // ─── MockEmbedder ─────────────────────────────────────────────────────────────
@@ -54,6 +56,10 @@ fn token_bucket(token: &str, dim: usize) -> usize {
 }
 
 impl Embedder for MockEmbedder {
+    fn kind(&self) -> &'static str {
+        "mock"
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
         let mut vec = vec![0.0f32; self.dim];
 
@@ -297,6 +303,10 @@ fn run_inference(
 }
 
 impl Embedder for OrtEmbedder {
+    fn kind(&self) -> &'static str {
+        "ort"
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
         // `session.run` needs `&mut Session`; use RefCell for interior mutability.
         // tunaSalon recall is single-threaded so RefCell (not Mutex) is sufficient.
