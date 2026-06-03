@@ -1,7 +1,7 @@
 ---
 title: Salon web 제품 UX 큰그림 - 멀티룸·동적 persona·영속 (1단계 = 동적 persona 초대, 방향 B)
 type: plan
-status: planned
+status: in_progress
 priority: P1
 updated_at: 2026-06-03
 owner: shared
@@ -69,6 +69,8 @@ pool을 가변화하지 않는다. 대신:
 | INV-6 | v0.10 테스트 카운트(default 226 / friend-engine 235 / semantic 263) + 스모크 유지(+ 신규 add/remove 단위 테스트) |
 
 ## 3. Subtasks
+
+> **진행(2026-06-03): 1단계 task A~E 전부 구현·단위검증 완료, 커밋됨**(A `d80075b` / C `92b51bd` / B `0bfbe8d` / D `9a43913` / E `5146b6a`). 검증: 골든 5/5 바이트 동일, default/web/friend-engine/friend-engine-semantic 빌드 green, default·friend-engine 테스트 0 failed, 프런트 `tsc -b`/`vite build` green. **라이브 검증(`--web`으로 브라우저에서 초대/퇴장 실제 동작 + qwen thinking 페이싱)은 사용자 권장**. 이후 단계(영속->멀티룸->프로필)는 §7.
 
 | task | 제목 | 핵심 | 위험 | depends_on |
 |---|---|---|---|---|
