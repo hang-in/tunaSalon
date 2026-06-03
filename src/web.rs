@@ -34,6 +34,7 @@ enum ServerFrame {
         participants: Vec<Participant>,
         topics: Vec<String>,
         paused: bool,
+        tick_ms: u64,
     },
     #[serde(rename = "utterance")]
     Utterance {
@@ -55,6 +56,8 @@ enum ClientFrame {
     Topic { topics: Vec<String> },
     #[serde(rename = "pause")]
     Pause { paused: bool },
+    #[serde(rename = "pace")]
+    Pace { interval_ms: u64 },
     #[serde(rename = "invite")]
     Invite {
         blood: String,
@@ -72,6 +75,7 @@ enum EngineCmd {
     Human(String),
     Topic(Vec<String>),
     SetPaused(bool),
+    SetPace(u64),
     Invite {
         blood: String,
         mbti: String,
@@ -83,7 +87,7 @@ enum EngineCmd {
 }
 
 const STATE_PERIOD: Duration = Duration::from_millis(700);
-const TICK_PERIOD: Duration = Duration::from_millis(2000);
+const DEFAULT_TICK_MS: u64 = 4000;
 const POLL_PERIOD: Duration = Duration::from_millis(80);
 const SAVE_PERIOD: Duration = Duration::from_secs(5);
 
@@ -127,7 +131,7 @@ fn run_engine(
         }
     };
 
-    let build_state = |session: &LiveSession, human_id: &str, paused: bool| -> ServerFrame {
+    let build_state = |session: &LiveSession, human_id: &str, paused: bool, tick_ms: u64| -> ServerFrame {
         let intensities: BTreeMap<String, f64> =
             session.combined_intensities().into_iter().collect();
         let mut participants: Vec<Participant> = session
@@ -159,6 +163,7 @@ fn run_engine(
             participants,
             topics: session.topics().to_vec(),
             paused,
+            tick_ms,
         }
     };
 
@@ -167,8 +172,9 @@ fn run_engine(
     let mut last_save = Instant::now();
     let mut dirty = false;
     let mut paused = false;
+    let mut tick_period = Duration::from_millis(DEFAULT_TICK_MS);
     // 초기 state 1회
-    emit(&frame_tx, &build_state(&session, &human_id, paused));
+    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
 
     loop {
         // 1. 명령 처리(즉시 반응)
@@ -191,7 +197,7 @@ fn run_engine(
                             ts,
                         },
                     );
-                    emit(&frame_tx, &build_state(&session, &human_id, paused)); // λ 스파이크 즉시 반영
+                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64)); // λ 스파이크 즉시 반영
                     dirty = true;
                 }
                 EngineCmd::Topic(topics) => {
@@ -204,12 +210,16 @@ fn run_engine(
                             },
                         );
                     }
-                    emit(&frame_tx, &build_state(&session, &human_id, paused));
+                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
                     dirty = true;
                 }
                 EngineCmd::SetPaused(p) => {
                     paused = p;
-                    emit(&frame_tx, &build_state(&session, &human_id, paused)); // 즉시 paused 상태 반영
+                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64)); // 즉시 paused 상태 반영
+                }
+                EngineCmd::SetPace(ms) => {
+                    tick_period = Duration::from_millis(ms.clamp(1500, 12000));
+                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64)); // 즉시 반영
                 }
                 EngineCmd::Remove(id) => {
                     let name = session
@@ -225,7 +235,7 @@ fn run_engine(
                             text: format!("{name}님이 나갔습니다"),
                         },
                     );
-                    emit(&frame_tx, &build_state(&session, &human_id, paused));
+                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
                     dirty = true;
                 }
                 EngineCmd::Invite { blood, mbti, zodiac, role } => {
@@ -316,7 +326,7 @@ fn run_engine(
                             text: format!("{name}님이 입장했습니다"),
                         },
                     );
-                    emit(&frame_tx, &build_state(&session, &human_id, paused));
+                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
                     dirty = true;
                 }
                 EngineCmd::Shutdown => {
@@ -328,7 +338,7 @@ fn run_engine(
         }
 
         // 2. tick (주기) - paused면 skip
-        if !paused && last_tick.elapsed() >= TICK_PERIOD {
+        if !paused && last_tick.elapsed() >= tick_period {
             session.tick();
             last_tick = Instant::now();
         }
@@ -357,7 +367,7 @@ fn run_engine(
 
         // 4. state frame (주기)
         if last_state.elapsed() >= STATE_PERIOD {
-            emit(&frame_tx, &build_state(&session, &human_id, paused));
+            emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
             last_state = Instant::now();
         }
 
@@ -443,6 +453,7 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, stor
                             ClientFrame::Message { text } => EngineCmd::Human(text),
                             ClientFrame::Topic { topics } => EngineCmd::Topic(topics),
                             ClientFrame::Pause { paused } => EngineCmd::SetPaused(paused),
+                            ClientFrame::Pace { interval_ms } => EngineCmd::SetPace(interval_ms),
                             ClientFrame::Invite { blood, mbti, zodiac, role } => {
                                 EngineCmd::Invite { blood, mbti, zodiac, role }
                             }
@@ -532,6 +543,7 @@ mod tests {
             participants,
             topics: vec!["부처님 오신날".to_string()],
             paused: false,
+            tick_ms: 4000,
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
@@ -546,6 +558,7 @@ mod tests {
         assert!(v["participants"].is_array(), "participants 키 필요");
         assert!(v["topics"].is_array(), "topics 키 필요");
         assert_eq!(v["paused"], false, "paused 키 필요");
+        assert_eq!(v["tick_ms"], 4000u64, "tick_ms 키 필요");
 
         // intensities 값 검증
         assert!((v["intensities"]["friend"].as_f64().unwrap() - 0.72).abs() < 1e-9);
@@ -562,6 +575,7 @@ mod tests {
             participants: vec![],
             topics: vec![],
             paused: false,
+            tick_ms: 4000,
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
@@ -580,6 +594,7 @@ mod tests {
             participants: vec![],
             topics: vec![],
             paused: true,
+            tick_ms: 4000,
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
@@ -688,6 +703,34 @@ mod tests {
             }
             _ => panic!("ClientFrame::Remove 이어야 함"),
         }
+    }
+
+    #[test]
+    fn client_pace_frame_deserializes() {
+        let json = r#"{"type":"pace","interval_ms":6000}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Pace { interval_ms } => assert_eq!(interval_ms, 6000),
+            _ => panic!("ClientFrame::Pace 이어야 함"),
+        }
+    }
+
+    #[test]
+    fn state_frame_tick_ms_serializes() {
+        let frame = ServerFrame::State {
+            intensities: BTreeMap::new(),
+            theta: 0.6,
+            flow: 0.0,
+            mu_scale: 1.0,
+            pending: None,
+            participants: vec![],
+            topics: vec![],
+            paused: false,
+            tick_ms: 6000,
+        };
+        let json = serde_json::to_string(&frame).expect("직렬화 실패");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
+        assert_eq!(v["tick_ms"], 6000u64, "tick_ms 직렬화 확인");
     }
 
     #[test]

@@ -16,6 +16,7 @@ export interface StateFrame {
   participants: Participant[];
   topics: string[];
   paused: boolean;
+  tick_ms: number;
 }
 
 export interface UtteranceFrame {
@@ -69,7 +70,12 @@ export interface ClientRemoveFrame {
   id: string;
 }
 
-export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame | ClientInviteFrame | ClientRemoveFrame;
+export interface ClientPaceFrame {
+  type: "pace";
+  interval_ms: number;
+}
+
+export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame | ClientPaceFrame | ClientInviteFrame | ClientRemoveFrame;
 
 // ── UI-local types ──────────────────────────────────────────────
 
@@ -101,4 +107,5 @@ export interface EngineState {
   participants: Participant[];
   topics: string[];
   paused: boolean;
+  tick_ms: number;
 }

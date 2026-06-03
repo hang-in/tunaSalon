@@ -102,6 +102,7 @@ class ConversationEngine {
       participants: PARTICIPANTS,
       topics: [...currentTopics],
       paused: this.paused,
+      tick_ms: 4000,
     };
   }
 

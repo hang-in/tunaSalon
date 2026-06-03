@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Activity, Thermometer, Wind, X, UserMinus, Users } from "lucide-react";
+import { Activity, Thermometer, Wind, X, UserMinus, Users, Zap } from "lucide-react";
 import { PersonaPresence } from "./PersonaPresence";
 import { InvitePanel } from "./InvitePanel";
 import type { EngineState, PersonaConfig } from "@/types";
@@ -12,9 +12,10 @@ interface SidePanelProps {
   humanPulse?: boolean;
   onInvite?: (blood: string, mbti: string, zodiac: string, role?: string) => void;
   onRemove?: (id: string) => void;
+  onPace?: (intervalMs: number) => void;
 }
 
-export function SidePanel({ engineState, personaConfigs, open, onClose, humanPulse = false, onInvite, onRemove }: SidePanelProps) {
+export function SidePanel({ engineState, personaConfigs, open, onClose, humanPulse = false, onInvite, onRemove, onPace }: SidePanelProps) {
   // Compute silence status
   const isSilent = useMemo(() => {
     const ids = Object.keys(engineState.intensities).filter((id) => id !== "나");
@@ -231,6 +232,47 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
               </div>
             </div>
           </div>
+
+          {/* Section: 발화 속도 */}
+          {onPace && (
+            <>
+              <div className="h-px my-6" style={{ background: "var(--border-color)" }} />
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <Zap size={14} style={{ color: "var(--accent-warm)" }} />
+                  <h2 className="text-[13px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+                    발화 속도
+                  </h2>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {([
+                    { label: "빠름", ms: 1500 },
+                    { label: "보통", ms: 3000 },
+                    { label: "느림", ms: 6000 },
+                    { label: "매우 느림", ms: 12000 },
+                  ] as { label: string; ms: number }[]).map(({ label, ms }) => {
+                    const isActive = engineState.tick_ms === ms;
+                    return (
+                      <button
+                        key={ms}
+                        onClick={() => onPace(ms)}
+                        className="px-3 py-2 rounded-lg text-[12px] font-medium transition-all duration-200"
+                        style={{
+                          background: isActive ? "rgba(229, 164, 74, 0.18)" : "var(--bg-base)",
+                          color: isActive ? "var(--accent-warm)" : "var(--text-secondary)",
+                          border: isActive
+                            ? "1px solid rgba(229, 164, 74, 0.45)"
+                            : "1px solid var(--border-color)",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* 조용한 순간 (사이드바 하단) */}
           {isSilent && (

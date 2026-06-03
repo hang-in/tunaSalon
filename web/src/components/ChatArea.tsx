@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo } from "react";
-import { MessageCircle, Sparkles } from "lucide-react";
+import { MessageCircle, Sparkles, UserPlus, UserMinus } from "lucide-react";
 import type { ChatMessage, EngineState, PersonaConfig } from "@/types";
 
 interface ChatAreaProps {
@@ -177,13 +177,54 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
 
 function SpecialMessage({ message }: { message: ChatMessage }) {
   if (message.type === "system") {
+    const text = message.content;
+    const isJoin = text.includes("입장");
+    const isLeave = text.includes("나갔");
+
+    if (isJoin) {
+      return (
+        <div className="flex justify-center my-3">
+          <span
+            className="flex items-center gap-1.5 text-[13px] font-medium px-4 py-1.5 rounded-full"
+            style={{
+              color: "#4ade80",
+              background: "rgba(74, 222, 128, 0.08)",
+              border: "1px solid rgba(74, 222, 128, 0.2)",
+            }}
+          >
+            <UserPlus size={13} />
+            {text}
+          </span>
+        </div>
+      );
+    }
+
+    if (isLeave) {
+      return (
+        <div className="flex justify-center my-3">
+          <span
+            className="flex items-center gap-1.5 text-[13px] font-medium px-4 py-1.5 rounded-full"
+            style={{
+              color: "var(--text-secondary)",
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-color)",
+            }}
+          >
+            <UserMinus size={13} />
+            {text}
+          </span>
+        </div>
+      );
+    }
+
+    // 그 외 system (화제 변경 등): 기존 스타일
     return (
       <div className="flex justify-center my-3">
         <span
           className="text-xs italic px-4 py-1.5 rounded-full"
           style={{ color: "var(--text-secondary)", background: "var(--bg-surface)" }}
         >
-          {message.content}
+          {text}
         </span>
       </div>
     );

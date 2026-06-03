@@ -17,6 +17,7 @@ function App() {
     sendMessage,
     sendTopics,
     sendPause,
+    sendPace,
     sendInvite,
     sendRemove,
     getPersonaConfig,
@@ -96,6 +97,7 @@ function App() {
           humanPulse={humanPulse}
           onInvite={sendInvite}
           onRemove={sendRemove}
+          onPace={sendPace}
         />
       </div>
 
