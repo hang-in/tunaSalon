@@ -81,6 +81,18 @@ mod vec_impl {
                 .insert(persona.into());
         }
 
+        /// `persona`를 `room`의 참여자에서 제거한다(회상 격리 해제).
+        ///
+        /// room이 없거나 persona가 없으면 무동작(panic 없음).
+        /// events(사건 기록)는 보존된다.
+        pub fn leave(&mut self, room: impl Into<String>, persona: impl Into<String>) {
+            let room = room.into();
+            let persona = persona.into();
+            if let Some(set) = self.participation.get_mut(&room) {
+                set.remove(&persona);
+            }
+        }
+
         /// 사건을 기록한다. 화자를 해당 방 참여자로 자동 join한다.
         pub fn record(&mut self, event: MemoryEvent) {
             self.participation
@@ -573,6 +585,19 @@ mod sqlite_impl {
             let persona = persona.into();
             let _ = self.conn.execute(
                 "INSERT OR IGNORE INTO participation(room, persona) VALUES (?1, ?2)",
+                params![room, persona],
+            );
+        }
+
+        /// `persona`를 `room`의 참여자에서 제거한다(회상 격리 해제).
+        ///
+        /// room이 없거나 persona가 없으면 무동작(panic 없음).
+        /// events(사건 기록)는 보존된다.
+        pub fn leave(&mut self, room: impl Into<String>, persona: impl Into<String>) {
+            let room = room.into();
+            let persona = persona.into();
+            let _ = self.conn.execute(
+                "DELETE FROM participation WHERE room = ?1 AND persona = ?2",
                 params![room, persona],
             );
         }
@@ -1134,6 +1159,49 @@ mod tests {
         // y는 B에만 참여 → A 사건 접근 불가
         let result_y = store.recall("y", "안녕 세계", 5);
         assert!(result_y.is_empty(), "y는 A 사건을 볼 수 없어야 한다(참여 격리)");
+    }
+
+    /// (leave-1) leave 후 participation 격리: join → recall 성공 → leave → recall 빈 결과.
+    ///
+    /// events는 보존됨: leave 하지 않은 다른 참여자는 여전히 회상 가능.
+    #[test]
+    fn leave_removes_participation_isolation() {
+        let mut store = MemoryStore::new();
+        store.join("salon", "alice");
+        store.join("salon", "bob");
+        store.record(ev("salon", 1, "carol", "오늘 날씨 참 맑다"));
+
+        // leave 전: alice는 salon에 참여 중 → carol 사건 회상 가능
+        let before = store.recall("alice", "오늘 날씨", 5);
+        assert!(!before.is_empty(), "leave 전 alice는 salon 사건을 회상해야 한다");
+
+        // alice leave
+        store.leave("salon", "alice");
+
+        // leave 후: alice는 salon 미참여 → 회상 불가
+        let after = store.recall("alice", "오늘 날씨", 5);
+        assert!(after.is_empty(), "leave 후 alice는 salon 사건을 회상하면 안 된다(participation 격리)");
+
+        // events 보존: bob은 여전히 참여 중 → carol 사건 회상 가능
+        let bob_result = store.recall("bob", "오늘 날씨", 5);
+        assert!(!bob_result.is_empty(), "leave 후에도 bob은 salon 사건을 회상할 수 있어야 한다(events 보존)");
+    }
+
+    /// (leave-2) leave 멱등성: 이미 없는 room/persona에 leave해도 panic 없음.
+    #[test]
+    fn leave_nonexistent_is_noop() {
+        let mut store = MemoryStore::new();
+        // room도 없고 persona도 없음 → panic 없이 무동작
+        store.leave("nonexistent_room", "nonexistent_persona");
+
+        // room은 있지만 persona가 없음 → 무동작
+        store.join("salon", "alice");
+        store.leave("salon", "nonexistent_persona");
+
+        // alice는 여전히 참여 중이어야 함
+        store.record(ev("salon", 1, "alice", "테스트 사건"));
+        let result = store.recall("alice", "테스트 사건", 5);
+        assert!(!result.is_empty(), "관련 없는 leave 후에도 alice 참여 상태 유지");
     }
 
     /// (2) 토큰 회상: query와 겹치는 사건이 결과에 포함된다.
