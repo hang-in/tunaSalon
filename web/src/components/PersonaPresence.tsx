@@ -28,9 +28,6 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
   const isActive = isPending || pct >= theta;
   const isAntsy = !isActive && pct >= theta * 0.7; // 들썩임 구간
 
-  // Ring color: above theta or pending = vivid, below = dim
-  const ringColor = isActive ? config.color : `${config.color}55`;
-
   // glow intensity
   const glowShadow = humanPulse
     ? `0 0 18px ${config.glowColor}`
@@ -39,12 +36,6 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
     : isActive
     ? `0 0 6px ${config.glowColor}`
     : "none";
-
-  // conic-gradient: 6시(from 180deg) 시계방향, pct * 360deg
-  const ringDeg = pct * 360;
-  const ringBg = isHuman
-    ? "transparent"
-    : `conic-gradient(from 180deg, ${ringColor} ${ringDeg}deg, var(--gauge-bg) ${ringDeg}deg)`;
 
   return (
     <div
@@ -70,36 +61,27 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
       }}
     >
       <div className="flex items-center gap-2.5">
-        {/* Avatar with conic ring wrapper */}
+        {/* Avatar (단순 원; λ 게이지는 카드 하단 바로 표시) */}
         <div
-          className={`rounded-full shrink-0 ${humanPulse && !isHuman ? "human-pulse-ring" : ""}`}
+          className={`rounded-full shrink-0 flex items-center justify-center ${humanPulse && !isHuman ? "human-pulse-ring" : ""}`}
           style={{
-            padding: isHuman ? 2 : 3,
-            background: ringBg,
+            width: 36,
+            height: 36,
+            background: config.bgColor,
+            color: config.color,
+            fontSize: 13,
+            fontWeight: 700,
+            border: `1.5px solid ${isActive ? config.color : `${config.color}33`}`,
             boxShadow: glowShadow,
-            transition: "background 0.4s cubic-bezier(0.25,1,0.5,1), box-shadow 0.35s ease",
+            transition: "transform 0.3s ease, box-shadow 0.35s ease, border-color 0.35s ease",
+            transform: isPending ? "scale(1.08)" : pct >= theta ? "scale(1.04)" : "scale(1)",
           }}
         >
-          <div
-            className="rounded-full flex items-center justify-center"
-            style={{
-              width: 34,
-              height: 34,
-              // 불투명 배경: conic 진행률이 외곽 링(padding)에만 보이게(안쪽 비침 방지 -> 부채꼴 X).
-              background: "var(--bg-surface)",
-              color: config.color,
-              fontSize: 13,
-              fontWeight: 700,
-              transition: "transform 0.3s ease",
-              transform: isPending ? "scale(1.08)" : pct >= theta ? "scale(1.04)" : "scale(1)",
-            }}
-          >
-            {isHuman ? (
-              <span style={{ fontSize: 14 }}>🧑</span>
-            ) : (
-              <span className="select-none" style={{ lineHeight: 1 }}>{getAvatarContent()}</span>
-            )}
-          </div>
+          {isHuman ? (
+            <span style={{ fontSize: 14 }}>🧑</span>
+          ) : (
+            <span className="select-none" style={{ lineHeight: 1 }}>{getAvatarContent()}</span>
+          )}
         </div>
 
         {/* Name + model + pending dots */}
@@ -136,6 +118,28 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
           )}
         </div>
       </div>
+
+      {/* λ 게이지: 카드 하단 얇은 바(사람 제외). θ 마커, 수치 없음. */}
+      {!isHuman && (
+        <div className="mt-2 relative h-1 rounded-full overflow-hidden" style={{ background: "var(--gauge-bg)" }}>
+          <div
+            className="absolute top-0 bottom-0 z-10"
+            style={{
+              left: `${Math.min(1, Math.max(0, theta)) * 100}%`,
+              width: 1,
+              background: "rgba(255,255,255,0.45)",
+            }}
+          />
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${pct * 100}%`,
+              background: isActive ? config.color : `${config.color}aa`,
+              transition: "width 0.5s cubic-bezier(0.25,1,0.5,1), background 0.35s ease",
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
