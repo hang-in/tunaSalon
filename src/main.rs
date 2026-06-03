@@ -456,14 +456,15 @@ fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
 ///
 /// 구성:
 ///   - cloud  : Ollama(gemma4:31b-cloud, localhost:11434, cap=1, num_ctx=None, thinking=true)
-///   - friend : OpenAI(qwen3.6-35b, yongseek.iptime.org:8008, cap=2, max_tokens=1024, thinking=true)
+///   - friend : OpenAI(qwen3.6-35b, yongseek.iptime.org:8008, cap=2, max_tokens=4096, thinking=true)
 ///   - 양쪽에 demo_persona_system_prompts() 적용.
 ///   - default = "friend"(qwen, 2명: friend/chaos), summarizer → "cloud"(gemma, 1명) 라우팅, 상호 폴백.
 ///   - `SALON_CLOUD_ONLY` 설정 시: friend 백엔드/라우팅/폴백을 건너뛰고 cloud(cap=1)만.
 ///     지인 vLLM 서버가 죽었을 때 라이브 테스트용(비파괴적 — 토글만 끄면 원복).
 ///
 /// thinking 활성화 목적: 생성에 reasoning 시간을 둬 발화 텀을 의도적으로 늘린다.
-///   - friend(qwen3.6-35b): enable_thinking=true. max_tokens=1024(reasoning CoT + 답변 여유).
+///   - friend(qwen3.6-35b): enable_thinking=true. max_tokens=4096(reasoning CoT ~2900토큰 + 답변).
+///     실측: 발화당 ~70초(reasoning이 매우 김). timeout 120s. 사용자가 느린 페이싱을 의도적으로 선택.
 ///   - cloud(gemma4:31b-cloud): think=true 전송 시도.
 ///     gemma4 thinking 지원 여부는 실측 필요 - 미지원 시 파라미터가 무시될 수 있음.
 ///
@@ -506,8 +507,8 @@ fn build_demo_room_pool() -> BackendPool {
         "http://yongseek.iptime.org:8008",
         None,
         2,
-        Some(1024),
-        Duration::from_secs(60),
+        Some(4096),
+        Duration::from_secs(120),
     );
     friend_cfg.thinking = true;
     pool.add(friend_cfg, demo_persona_system_prompts());

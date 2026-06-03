@@ -69,33 +69,35 @@ fn main() {
     let mut pool = BackendPool::new();
 
     // cloud 백엔드: Ollama 프로토콜, cap=3(동시 3 in-flight).
-    pool.add(
-        BackendConfig::new(
-            "cloud",
-            cloud_model.clone(),
-            "http://localhost:11434",
-            None,              // api_key 없음
-            3,                 // cloud cap
-            cloud_num_ctx,
-            Duration::from_secs(60),
-        ),
-        demo_prompts(),
+    // SALON_THINK=1 이면 reasoning(thinking) 켜고 max_tokens 상향(CoT 여유 확보).
+    let think = std::env::var("SALON_THINK")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+
+    let mut cloud_cfg = BackendConfig::new(
+        "cloud",
+        cloud_model.clone(),
+        "http://localhost:11434",
+        None,              // api_key 없음
+        3,                 // cloud cap
+        cloud_num_ctx,
+        Duration::from_secs(60),
     );
+    cloud_cfg.thinking = think;
+    pool.add(cloud_cfg, demo_prompts());
 
     // friend 백엔드: OpenAI 호환 프로토콜, cap=1(max-num-seqs 1).
-    // max_tokens=Some(256): 짧은 벤치용 상한.
-    pool.add(
-        BackendConfig::new_openai(
-            "friend",
-            friend_model.clone(),
-            friend_endpoint.clone(),
-            None,              // api_key 없음(내부망 서버)
-            1,                 // cap=1(직렬)
-            Some(256),
-            Duration::from_secs(60),
-        ),
-        demo_prompts(),
+    let mut friend_cfg = BackendConfig::new_openai(
+        "friend",
+        friend_model.clone(),
+        friend_endpoint.clone(),
+        None,              // api_key 없음(내부망 서버)
+        1,                 // cap=1(직렬)
+        Some(if think { 4096 } else { 256 }),
+        Duration::from_secs(if think { 120 } else { 60 }),
     );
+    friend_cfg.thinking = think;
+    pool.add(friend_cfg, demo_prompts());
 
     // 기본 백엔드: cloud. summarizer만 friend로 라우팅.
     pool.set_default("cloud");
@@ -129,6 +131,7 @@ fn main() {
     println!("cloud  : {cloud_model} @ localhost:11434 (cap=3)");
     println!("friend : {friend_model} @ {friend_endpoint} (cap=1)");
     println!("라우팅 : summarizer → friend, 나머지 → cloud");
+    println!("thinking: {}", if think { "ON (reasoning, max_tokens 1024)" } else { "off" });
     println!("opening> {opening}\n");
 
     // -------------------------------------------------------------------------
