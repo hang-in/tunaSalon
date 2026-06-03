@@ -41,6 +41,7 @@ enum ServerFrame {
         theta: f64,
         flow: f64,
         mu_scale: f64,
+        liveliness: f64,
         pending: Option<String>,
         participants: Vec<Participant>,
         topics: Vec<String>,
@@ -178,6 +179,7 @@ fn run_engine(
             theta: session.theta(),
             flow: session.flow().map(|f| f.convergence).unwrap_or(0.0),
             mu_scale: session.mu_scale(),
+            liveliness: session.liveliness(),
             pending: session.pending_speaker(),
             participants,
             topics: session.topics().to_vec(),
@@ -566,6 +568,7 @@ mod tests {
             theta: 0.60,
             flow: 0.08,
             mu_scale: 1.0,
+            liveliness: 0.4,
             pending: None,
             participants,
             topics: vec!["부처님 오신날".to_string()],
@@ -581,6 +584,7 @@ mod tests {
         assert!(v["theta"].is_number(), "theta 키 필요");
         assert!(v["flow"].is_number(), "flow 키 필요");
         assert!(v["mu_scale"].is_number(), "mu_scale 키 필요");
+        assert!(v["liveliness"].is_number(), "liveliness 키 필요");
         assert!(v["pending"].is_null(), "pending None → null 이어야 함");
         assert!(v["participants"].is_array(), "participants 키 필요");
         assert!(v["topics"].is_array(), "topics 키 필요");
@@ -589,6 +593,8 @@ mod tests {
 
         // intensities 값 검증
         assert!((v["intensities"]["friend"].as_f64().unwrap() - 0.72).abs() < 1e-9);
+        // liveliness 값 검증
+        assert!((v["liveliness"].as_f64().unwrap() - 0.4).abs() < 1e-9);
     }
 
     #[test]
@@ -598,6 +604,7 @@ mod tests {
             theta: 0.6,
             flow: 0.0,
             mu_scale: 1.0,
+            liveliness: 0.0,
             pending: Some("friend".to_string()),
             participants: vec![],
             topics: vec![],
@@ -617,6 +624,7 @@ mod tests {
             theta: 0.6,
             flow: 0.0,
             mu_scale: 1.0,
+            liveliness: 0.0,
             pending: None,
             participants: vec![],
             topics: vec![],
@@ -749,6 +757,7 @@ mod tests {
             theta: 0.6,
             flow: 0.0,
             mu_scale: 1.0,
+            liveliness: 0.0,
             pending: None,
             participants: vec![],
             topics: vec![],
@@ -758,6 +767,27 @@ mod tests {
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
         assert_eq!(v["tick_ms"], 6000u64, "tick_ms 직렬화 확인");
+    }
+
+    /// State 프레임에 liveliness 키가 number로 직렬화된다.
+    #[test]
+    fn state_frame_liveliness_serializes_as_number() {
+        let frame = ServerFrame::State {
+            intensities: BTreeMap::new(),
+            theta: 0.6,
+            flow: 0.0,
+            mu_scale: 1.0,
+            liveliness: 0.75,
+            pending: None,
+            participants: vec![],
+            topics: vec![],
+            paused: false,
+            tick_ms: 6000,
+        };
+        let json = serde_json::to_string(&frame).expect("직렬화 실패");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
+        assert!(v["liveliness"].is_number(), "liveliness 키가 number이어야 함");
+        assert!((v["liveliness"].as_f64().unwrap() - 0.75).abs() < 1e-9);
     }
 
     #[test]

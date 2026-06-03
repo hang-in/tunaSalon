@@ -18,6 +18,7 @@ export interface StateFrame {
   theta: number;
   flow: number;
   mu_scale: number;
+  liveliness: number;
   pending: string | null;
   participants: Participant[];
   topics: string[];
@@ -109,6 +110,7 @@ export interface EngineState {
   theta: number;
   flow: number;
   mu_scale: number;
+  liveliness: number;
   pending: string | null;
   participants: Participant[];
   topics: string[];

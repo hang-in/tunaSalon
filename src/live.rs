@@ -646,6 +646,40 @@ impl LiveSession {
         self.tick_count
     }
 
+    /// 최근 발화 빈도 기반 활기 지표. 0.0 ~ 1.0.
+    ///
+    /// 최근 LIVELINESS_WINDOW 틱 안에 완성된 발화(content=Some)의 수를 정규화한다.
+    /// 기대치: W틱당 ~W/4개 발화가 1.0. in-flight 1개 제약으로 발화가 드문 라이브에서
+    /// 너무 빨리 포화하지 않도록 보수적으로 잡음(라이브에서 체감 보고 조정).
+    ///
+    /// ts 단위: event.ts = tick * tick_interval(f64). 현재 tick_count와 비교할 때
+    /// tick_interval로 나눠 tick 단위로 환산. tick_interval=0이면 0 반환(방어).
+    ///
+    /// web 표시 전용(읽기 메서드). 엔진 결정에 미사용 -- 골든 무관.
+    pub fn liveliness(&self) -> f64 {
+        /// 최근 몇 틱을 창으로 볼지. 라이브 관찰 후 조정 가능.
+        const LIVELINESS_WINDOW: u64 = 20;
+        /// W 틱 안에 발화가 몇 개면 1.0으로 볼지(기대 포화점).
+        /// W/4 = 5개. 라이브에서 체감 보고 조정.
+        const LIVELINESS_SCALE: f64 = LIVELINESS_WINDOW as f64 / 4.0;
+
+        if self.config.tick_interval == 0.0 {
+            return 0.0;
+        }
+        let window_start_tick = self.tick_count.saturating_sub(LIVELINESS_WINDOW);
+        // ts = tick * tick_interval 이므로 tick = ts / tick_interval
+        let recent_count = self
+            .state
+            .history
+            .iter()
+            .filter(|e| {
+                e.content.is_some()
+                    && (e.ts / self.config.tick_interval) as u64 >= window_start_tick
+            })
+            .count();
+        (recent_count as f64 / LIVELINESS_SCALE).clamp(0.0, 1.0)
+    }
+
     /// 현재 speak 임계값 theta (web/디버그 표시용).
     pub fn theta(&self) -> f64 {
         self.config.theta

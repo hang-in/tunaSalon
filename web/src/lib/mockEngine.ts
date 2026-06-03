@@ -98,6 +98,7 @@ class ConversationEngine {
       theta: THETA,
       flow: this.flow,
       mu_scale: this.mu_scale,
+      liveliness: 0,
       pending: this.pending,
       participants: PARTICIPANTS,
       topics: [...currentTopics],

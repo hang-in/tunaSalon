@@ -22,6 +22,15 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
     return ids.every((id) => engineState.intensities[id] < engineState.theta);
   }, [engineState.intensities, engineState.theta]);
 
+  // Liveliness description
+  const livelinessDesc = useMemo(() => {
+    const l = engineState.liveliness;
+    if (l > 0.7) return { text: "들썩들썩", color: "#E5A44A" };
+    if (l > 0.4) return { text: "도란도란", color: "#D9A05B" };
+    if (l > 0.15) return { text: "차분", color: "#A89FCC" };
+    return { text: "잠잠", color: "var(--text-secondary)" };
+  }, [engineState.liveliness]);
+
   // Flow description
   const flowDesc = useMemo(() => {
     const f = engineState.flow;
@@ -175,8 +184,38 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
               </h2>
             </div>
 
-            {/* 흐름 + 냉각도 통합 카드 */}
+            {/* 활기 + 흐름 + 냉각도 통합 카드 */}
             <div className="p-3 rounded-xl" style={{ background: "var(--bg-base)" }}>
+              {/* 활기 바 (맨 위) */}
+              <div className="mb-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-medium text-[var(--text-secondary)]">활기</span>
+                  <span
+                    className="text-[11px] font-semibold tabular-nums"
+                    style={{ color: livelinessDesc.color, transition: "color 0.6s ease" }}
+                  >
+                    {livelinessDesc.text}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--gauge-bg)" }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${engineState.liveliness * 100}%`,
+                      background:
+                        engineState.liveliness > 0.7
+                          ? "linear-gradient(90deg, #C47A1A, #E5A44A)"
+                          : engineState.liveliness > 0.4
+                          ? "linear-gradient(90deg, #A06830, #D9A05B)"
+                          : engineState.liveliness > 0.15
+                          ? "linear-gradient(90deg, #8070AA, #A89FCC)"
+                          : "linear-gradient(90deg, #505060, #7070A0)",
+                      transition: "width 0.9s cubic-bezier(0.25, 1, 0.5, 1), background 0.6s ease",
+                    }}
+                  />
+                </div>
+              </div>
+
               {/* 흐름 바 */}
               <div className="mb-3">
                 <div className="flex items-center justify-between mb-1.5">

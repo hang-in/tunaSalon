@@ -59,6 +59,7 @@ export function useChat() {
     theta: 0.6,
     flow: 0.2,
     mu_scale: 1.0,
+    liveliness: 0,
     pending: null,
     participants: [
       { id: "friend", name: "Friendly Regular" },
@@ -85,6 +86,7 @@ export function useChat() {
           theta: frame.theta,
           flow: frame.flow,
           mu_scale: frame.mu_scale,
+          liveliness: frame.liveliness ?? 0,
           pending: frame.pending,
           participants: frame.participants,
           topics: frame.topics,
