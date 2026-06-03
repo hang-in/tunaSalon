@@ -17,6 +17,8 @@ function App() {
     sendMessage,
     sendTopics,
     sendPause,
+    sendInvite,
+    sendRemove,
     getPersonaConfig,
     personaConfigs,
     humanPulse,
@@ -92,6 +94,8 @@ function App() {
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           humanPulse={humanPulse}
+          onInvite={sendInvite}
+          onRemove={sendRemove}
         />
       </div>
 

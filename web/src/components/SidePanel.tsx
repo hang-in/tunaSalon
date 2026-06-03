@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { Activity, Thermometer, Wind, X } from "lucide-react";
+import { Activity, Thermometer, Wind, X, UserMinus, Users } from "lucide-react";
 import { PersonaPresence } from "./PersonaPresence";
+import { InvitePanel } from "./InvitePanel";
 import type { EngineState, PersonaConfig } from "@/types";
 
 interface SidePanelProps {
@@ -9,9 +10,11 @@ interface SidePanelProps {
   open: boolean;
   onClose: () => void;
   humanPulse?: boolean;
+  onInvite?: (blood: string, mbti: string, zodiac: string, role?: string) => void;
+  onRemove?: (id: string) => void;
 }
 
-export function SidePanel({ engineState, personaConfigs, open, onClose, humanPulse = false }: SidePanelProps) {
+export function SidePanel({ engineState, personaConfigs, open, onClose, humanPulse = false, onInvite, onRemove }: SidePanelProps) {
   // Compute silence status
   const isSilent = useMemo(() => {
     const ids = Object.keys(engineState.intensities).filter((id) => id !== "나");
@@ -80,26 +83,58 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
             </div>
 
             <div className="flex flex-col gap-2">
-              {personaConfigs
+              {/* 서버 participants 기준 렌더(human 제외) */}
+              {engineState.participants
                 .filter((p) => p.id !== "나")
-                .map((config) => {
-                  const participant = engineState.participants.find((p) => p.id === config.id);
+                .map((participant) => {
+                  // PersonaConfig 매칭: 서버가 동적으로 추가한 persona는 fallback config 생성
+                  const config = personaConfigs.find((c) => c.id === participant.id) ?? {
+                    id: participant.id,
+                    name: participant.name,
+                    color: "#A89FCC",
+                    glowColor: "rgba(168, 159, 204, 0.5)",
+                    bgColor: "rgba(168, 159, 204, 0.12)",
+                    description: participant.model ?? "",
+                  };
                   return (
-                    <PersonaPresence
-                      key={config.id}
-                      config={config}
-                      lambda={engineState.intensities[config.id] ?? 0}
-                      theta={engineState.theta}
-                      isPending={engineState.pending === config.id}
-                      model={participant?.model}
-                      humanPulse={humanPulse}
-                    />
+                    <div key={participant.id} className="relative group">
+                      <PersonaPresence
+                        config={config}
+                        lambda={engineState.intensities[participant.id] ?? 0}
+                        theta={engineState.theta}
+                        isPending={engineState.pending === participant.id}
+                        model={participant.model}
+                        humanPulse={humanPulse}
+                      />
+                      {/* Remove 버튼: persona 카드 우상단, 호버 시 표시 */}
+                      {onRemove && (
+                        <button
+                          onClick={() => onRemove(participant.id)}
+                          className="absolute top-1.5 right-1.5 p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
+                          style={{
+                            background: "rgba(217, 100, 90, 0.15)",
+                            color: "#D9645A",
+                          }}
+                          aria-label={`${participant.name} 내보내기`}
+                          title={`${participant.name} 내보내기`}
+                        >
+                          <UserMinus size={11} />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
 
               {/* Human card */}
               <PersonaPresence
-                config={personaConfigs.find((p) => p.id === "나")!}
+                config={personaConfigs.find((p) => p.id === "나") ?? {
+                  id: "나",
+                  name: "나",
+                  color: "#E5A44A",
+                  glowColor: "rgba(229, 164, 74, 0.5)",
+                  bgColor: "rgba(229, 164, 74, 0.12)",
+                  description: "당신",
+                }}
                 lambda={0}
                 theta={engineState.theta}
                 isPending={false}
@@ -107,6 +142,25 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
               />
             </div>
           </div>
+
+          {/* Divider */}
+          <div className="h-px mb-6" style={{ background: "var(--border-color)" }} />
+
+          {/* Section: 참가자 초대 */}
+          {onInvite && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Users size={14} style={{ color: "var(--accent-warm)" }} />
+                <h2 className="text-[13px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+                  참가자 초대
+                </h2>
+              </div>
+              <InvitePanel
+                personaCount={engineState.participants.filter((p) => p.id !== "나").length}
+                onInvite={onInvite}
+              />
+            </div>
+          )}
 
           {/* Divider */}
           <div className="h-px mb-6" style={{ background: "var(--border-color)" }} />

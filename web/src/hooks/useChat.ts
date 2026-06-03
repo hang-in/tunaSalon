@@ -151,6 +151,19 @@ export function useChat() {
     connRef.current.send({ type: "pause", paused });
   }, []);
 
+  const sendInvite = useCallback((blood: string, mbti: string, zodiac: string, role?: string) => {
+    if (!connRef.current) return;
+    const frame = role
+      ? { type: "invite" as const, blood, mbti, zodiac, role }
+      : { type: "invite" as const, blood, mbti, zodiac };
+    connRef.current.send(frame);
+  }, []);
+
+  const sendRemove = useCallback((id: string) => {
+    if (!connRef.current) return;
+    connRef.current.send({ type: "remove", id });
+  }, []);
+
   const getPersonaConfig = useCallback((id: string): PersonaConfig => {
     return PERSONA_CONFIGS.find((p) => p.id === id) || PERSONA_CONFIGS[0];
   }, []);
@@ -164,6 +177,8 @@ export function useChat() {
     sendMessage,
     sendTopics,
     sendPause,
+    sendInvite,
+    sendRemove,
     getPersonaConfig,
     personaConfigs: PERSONA_CONFIGS,
     humanPulse,
