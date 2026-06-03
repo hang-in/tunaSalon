@@ -523,14 +523,13 @@ impl LiveSession {
     /// 유효 발화 2개 미만이면 None. 관찰 전용 — 엔진 결정에 영향 없음(INV-2).
     /// task-35 채팅 TUI 수렴 게이지가 이 메서드를 사용한다.
     pub fn flow(&self) -> Option<crate::flow::FlowMetric> {
-        const FLOW_WINDOW: usize = 6;
         let content_utterances: Vec<&str> = self
             .state
             .history
             .iter()
             .filter_map(|e| e.content.as_deref())
             .collect();
-        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
+        let window_start = content_utterances.len().saturating_sub(crate::flow::FLOW_WINDOW);
         flow::measure(&content_utterances[window_start..])
     }
 

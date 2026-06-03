@@ -1,5 +1,11 @@
 use std::collections::BTreeSet;
 
+/// content 있는 최근 발화 최대 N개를 flow 계산에 사용한다.
+///
+/// driver(headless 골든 경로)와 live(채팅 사이드바)가 같은 윈도우를 쓰도록
+/// 단일 정의한다. 값이 두 곳으로 갈리면 엔진 결정성/측정 윈도우가 분기한다.
+pub const FLOW_WINDOW: usize = 6;
+
 /// 대화 수렴/발산 측정 결과.
 ///
 /// `convergence ∈ [0, 1]`:

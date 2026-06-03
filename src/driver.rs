@@ -11,8 +11,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::BTreeMap;
 
-/// content 있는 최근 발화 최대 N개를 flow 계산에 사용한다.
-const FLOW_WINDOW: usize = 6;
+use crate::flow::FLOW_WINDOW;
 
 pub fn run(
     config: &EngineConfig,
