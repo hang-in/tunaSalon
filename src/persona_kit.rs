@@ -455,6 +455,62 @@ pub struct AssembledPersona {
 // 3. 조립 함수
 // ──────────────────────────────────────────────
 
+// ──────────────────────────────────────────────
+// 인디언식 이름 자동 생성 (사람·페르소나 공용)
+// ──────────────────────────────────────────────
+//
+// 룰(사용자 2026-06-03): 혈액형 -> 형용사, MBTI -> 자연/동물 명사, 별자리 -> 어미.
+//   [혈액형 형용사][MBTI 명사][별자리 어미]를 붙여 한 이름으로.
+//   예: O(평화로운) + ENTJ(태양) + Cancer(아래에서) = "평화로운태양아래에서".
+// 결정적: 같은 3축 -> 같은 이름. 어미의 조사는 명사 받침에 따라 와/과·을/를 선택.
+
+/// 마지막 글자에 받침(종성)이 있는가(한글 음절 기준).
+fn has_batchim(s: &str) -> bool {
+    s.chars()
+        .last()
+        .map(|c| {
+            let u = c as u32;
+            (0xAC00..=0xD7A3).contains(&u) && (u - 0xAC00) % 28 != 0
+        })
+        .unwrap_or(false)
+}
+
+/// 인디언식 이름(결정적): [혈액형 형용사][MBTI 명사][별자리 어미].
+/// 사람·페르소나 공용(혈액형/MBTI/별자리 3축).
+pub fn indian_name(mbti: Mbti, blood: Blood, zodiac: Zodiac) -> String {
+    let adj = match blood.code() {
+        "A" => "조용한",
+        "B" => "지혜로운",
+        "O" => "평화로운",
+        _ => "날카로운", // AB
+    };
+    let noun = match mbti.code() {
+        "ENTP" => "늑대", "ENTJ" => "태양", "ENFP" => "바람", "ENFJ" => "강",
+        "ESTP" => "불꽃", "ESTJ" => "황소", "ESFP" => "나비", "ESFJ" => "하늘",
+        "INTP" => "여우", "INTJ" => "매", "INFP" => "안개", "INFJ" => "달",
+        "ISTP" => "곰", "ISTJ" => "산", "ISFP" => "사슴",
+        _ => "별", // ISFJ
+    };
+    let bat = has_batchim(noun);
+    let wa = if bat { "과" } else { "와" };
+    let eul = if bat { "을" } else { "를" };
+    let suffix = match zodiac.abbreviation() {
+        "ari" => "의 기상".to_string(),
+        "tau" => "처럼 우직한".to_string(),
+        "gem" => format!("{wa} 함께 춤을"),
+        "can" => "아래에서".to_string(),
+        "leo" => "처럼".to_string(),
+        "vir" => "의 그림자".to_string(),
+        "lib" => format!("{wa} 같은"),
+        "sco" => format!("{eul} 좇는 자"),
+        "sag" => format!("{wa} 달리는"),
+        "cap" => "의 숨결".to_string(),
+        "aqu" => format!("{eul} 부르는"),
+        _ => "의 노래".to_string(), // pis
+    };
+    format!("{adj}{noun}{suffix}")
+}
+
 /// 이름에서 결정적 id slug 생성.
 /// 소문자 변환 + 공백/특수문자를 '_'로 치환 + 4글자 이하 축약어 뒤에 역할 코드 추가.
 fn make_id(name: &str, role: Role) -> String {
@@ -476,6 +532,14 @@ fn make_id(name: &str, role: Role) -> String {
 /// modifier  = 역할 기본 + MBTI T/F delta + 별자리 provocativeness_delta + 혈액형 reactivity_delta.
 /// system_prompt 합성 순서: 역할 -> MBTI 말투 -> 별자리 분위기 -> 혈액형 캐릭터성 -> 발화 제약.
 pub fn assemble(role: Role, mbti: Mbti, blood: Blood, zodiac: Zodiac, name: &str) -> AssembledPersona {
+    // 이름이 비어 있으면 인디언식으로 자동 생성(임의 입력 없을 때; 이름은 축에서 결정).
+    let name_owned = if name.trim().is_empty() {
+        indian_name(mbti, blood, zodiac)
+    } else {
+        name.to_string()
+    };
+    let name = name_owned.as_str();
+
     // --- 행동층 ---
     let (blood_mu_delta, blood_reactivity_delta) = blood.behavior_delta();
     let (zodiac_mu_delta, zodiac_prov_delta) = zodiac.behavior_delta();
@@ -826,5 +890,50 @@ mod tests {
         assert!(!a.visual.palette.is_empty());
         assert!(!a.visual.prop.is_empty());
         assert!(a.visual.palette.starts_with('#'));
+    }
+
+    // ── 인디언식 이름 ────────────────────────────────
+
+    /// 사용자 명시 예: O(평화로운) + ENTJ(태양) + Cancer(아래에서) = "평화로운태양아래에서".
+    #[test]
+    fn indian_name_matches_user_example() {
+        let m: Mbti = "entj".parse().unwrap();
+        let b: Blood = "o".parse().unwrap();
+        let z: Zodiac = "can".parse().unwrap();
+        assert_eq!(indian_name(m, b, z), "평화로운태양아래에서");
+    }
+
+    /// 결정적: 같은 3축 -> 같은 이름.
+    #[test]
+    fn indian_name_deterministic() {
+        let m: Mbti = "entp".parse().unwrap();
+        let b: Blood = "a".parse().unwrap();
+        let z: Zodiac = "gem".parse().unwrap();
+        assert_eq!(indian_name(m, b, z), indian_name(m, b, z));
+    }
+
+    /// 받침 조사: 받침 있는 명사는 "과", 없는 명사는 "와".
+    #[test]
+    fn indian_name_josa_by_batchim() {
+        // ENTP=늑대(받침X) + Gemini(gem, ~와 함께 춤을) -> "와"
+        let wolf: Mbti = "entp".parse().unwrap();
+        let a: Blood = "a".parse().unwrap();
+        let gem: Zodiac = "gem".parse().unwrap();
+        assert!(indian_name(wolf, a, gem).contains("와 함께 춤을"));
+        // ESTJ=황소(받침X)도 "와"; ISTJ=산(받침O) -> "과"
+        let mountain: Mbti = "istj".parse().unwrap();
+        assert!(indian_name(mountain, a, gem).contains("과 함께 춤을"));
+    }
+
+    /// 빈 이름이면 인디언식 자동 생성.
+    #[test]
+    fn assemble_empty_name_autogenerates() {
+        let m: Mbti = "enfp".parse().unwrap();
+        let b: Blood = "b".parse().unwrap();
+        let z: Zodiac = "leo".parse().unwrap();
+        let r: Role = "friend".parse().unwrap();
+        let p = assemble(r, m, b, z, "");
+        assert!(!p.persona.name.trim().is_empty(), "빈 이름이면 자동 생성되어야 한다");
+        assert_eq!(p.persona.name, "지혜로운바람처럼"); // B(지혜로운)+ENFP(바람)+leo(처럼)
     }
 }
