@@ -1,5 +1,5 @@
 ---
-title: 다음 세션 첫 대화 복붙 프롬프트 (web 프런트엔드 트랙 P1 수직 슬라이스)
+title: 다음 세션 첫 대화 복붙 프롬프트 (web 제품 UX 1단계 = 동적 persona 초대)
 type: reference
 status: active
 updated_at: 2026-06-03
@@ -7,40 +7,43 @@ updated_at: 2026-06-03
 
 # 다음 세션 킥오프 프롬프트
 
-아래 블록을 새 세션 첫 메시지로 복붙하세요. (v0.10 friend engine 의미검색까지 완료. 다음은 별개의 병렬 제품 트랙 = web 프런트엔드.)
+아래 블록을 새 세션 첫 메시지로 복붙하세요. (이번 세션에서 v0.10 마감 + web P1~P3 + 일시정지 + thinking + persona_kit/인디언 이름까지 완료. 다음은 web 제품 UX 큰그림의 1단계 = 동적 persona 초대, 엔진 대수술이라 깨끗한 컨텍스트에서.)
 
 ---
 
 ```
-tunaSalon 이어서 작업한다. 먼저 CLAUDE.md(핸드오프)와 docs/plans/salon-web-frontend.md, 그리고 최근 커밋(git log --oneline -15)을 읽어 현재 상태를 파악해.
+tunaSalon 이어서 작업한다. 먼저 CLAUDE.md(핸드오프) + 메모리(web-ux-flow, web-frontend-track, friend-server-vllm) + docs/plans/salon-web-frontend.md + git log --oneline -25 를 읽고 현황을 파악해.
 
-현재: v0.1~v0.10 구현 완료(엔진 + friend engine 의미검색까지). default 226 / friend-engine 235 / friend-engine-semantic 263 tests, 골든 5/5 무손상. 다음은 엔진 버전 라인과 별개의 병렬 제품 트랙 = web 프런트엔드(채팅 UI를 브라우저로, "외부 사용자가 봤을 때 프로덕션 레벨 앱").
+현재 완료: v0.1~v0.10(엔진 + friend engine 의미검색). web 프런트(P1~P3): axum WebSocket + Kimi React(web/) 배선, 아바타 하단 얇은 λ바, 이름 옆 모델 표시, 방 상태 통합 카드, 토픽 한글 IME 버그 fix, WS 자동 재연결+연결상태, 일시정지/재개(paused). LLM thinking opt-in(BackendConfig.thinking; qwen3.6-35b reasoning ~70s/발화, gemma ~5s). persona_kit(40조각 런타임 조립 assemble + /invite parse + 인디언식 이름 indian_name: 혈액형->형용사 + MBTI->자연/동물 + 별자리->어미, 예 "평화로운태양아래에서", 사람·페르소나 공용, assemble(name="")이면 자동). default 250+ tests, 골든 5/5 무손상.
 
-목표(salon-web-frontend.md): Rust 엔진은 재작성 0. axum WebSocket을 새 출력 sink로 얹어 엔진 이벤트(발화/강도/흐름/식힘/생각중)를 브라우저로 push + 사람 입력을 submit_human으로 받는다. 엔진은 blocking 유지하고 async는 채널 브리지로 격리(엔진 코어에 async 미도입). golden/headless/smoke 무손상(전부 `web` feature flag 뒤, 기본 빌드 무영향). 키는 서버에만(WASM-only 불가). TUI(chat.rs)는 디버그 sink로 동결.
+다음 = web 제품 UX 큰그림(메모리 [[web-ux-flow]]: 방 선택/생성 -> 본인 프로필 -> 참가자 초대 -> 채팅 -> 나가기/탭닫힘 시 저장+이어가기). 그 1단계 = **동적 persona 초대**(엔진 대수술).
 
-착수 결정(확정, 사용자 2026-06-03 - 다시 묻지 말 것. 구 플랜에서 갱신됨. salon-web-frontend.md 상단 갱신 노트 참고):
-1) **프런트 = Kimi 초안(web/, Vite + React + TS + Tailwind + shadcn/ui + three.js) 채택**. 구 플랜의 "정적 1장 / 프레임워크 미도입"은 폐기. axum은 Vite 빌드 산출물(web/dist)을 정적 서빙하고, 개발 중에는 Vite dev server + /ws 프록시.
-2) **바인딩 = 0.0.0.0:PORT로 LAN(공유기 192.168.1.X) 접속 허용**. 외부 노출은 사용자가 Cloudflare 터널로 처리(서버는 터널/포트포워딩 비관여). 인증은 범위 밖(신뢰된 홈 LAN 가정).
+확정 결정(다시 묻지 말 것):
+- 영속 = 서버측 SQLite(방 이어가기엔 서버 필수). 프로필/프리셋도 서버.
+- 초대 persona 모델 배정 = 자동(cloud 1 / qwen 2).
+- 이름 = persona_kit indian_name 자동 생성(임의 수정 불가, 혈/MBTI/별은 수정 가능).
+- 동적 초대 설계 = **방향 B**(pool 가변화 회피): pool은 Arc<BackendPool>로 워커 공유라 런타임 가변 불가. LiveSession이 persona_meta[id -> (backend_name, system_prompt, modifier)]로 라우팅/프롬프트 전권 관리, 생성 job에 prompt/backend를 실어 pool.generate_on(backend, history, prompt) 호출(pool은 cloud/qwen 고정 컨테이너). add_persona(assemble 결과 + 자동 모델배분) / remove_persona가 state.intensities/excitations + CouplingMatrix(α, 신규 쌍 기본 0) + store.join 을 동적 갱신. 기존 고정 3명도 persona_meta로 통일.
 
-그다음 P1 수직 슬라이스를 task로 분해(salon-web-frontend-task-NN.md)하고 구현해라:
-- axum WS 라우트 1개(`/ws` 업그레이드) + 정적 서빙(web/dist), `--web [--port N] [--host H]` 플래그(opt-in, 기본 host 0.0.0.0으로 LAN 허용), `web` feature flag(Cargo.toml). 기본 실행·`--chat`·`--headless`는 그대로.
-- 엔진<->async 브리지: blocking LiveSession을 전용 스레드에서 구동 + tokio mpsc로 WS task와 양방향. 엔진 코어 무수정(LiveSession은 이미 워커 스레드 + mpsc로 논블로킹 생성 보유 → 재사용).
-- 이벤트 직렬화 어댑터: 엔진 Event/intensities/FlowMetric/mu_scale을 web 프레임 스키마로(serde JSON). 서버->클라(utterance/intensities/flow/mu_scale/pending) + 클라->서버(human_message).
-- 프런트 = Kimi 초안(web/) 배선: 채팅 로그(auto-scroll) + 사이드바 게이지(λ 애니, θ 마커, 흐름/식힘) + 입력창 + 엔진상태 패널을 실 WS 프레임에 연결. 먼저 `cd web && pnpm install && pnpm dev`로 초안 현황(강한 부분·미완 영역) 파악. (이 프로젝트는 npm이 아니라 **pnpm** 사용.)
-- 수직 슬라이스 한 바퀴(엔진 push -> 브라우저 렌더 -> 사람 입력 -> 엔진) 먼저 증명한 뒤 폴리시(P2~).
+진행: 먼저 plan 문서(salon-web-frontend.md 확장 또는 새 plan)로 설계 B + 단계를 박은 뒤 단계별로 Sonnet에 위임:
+1) 엔진: LiveSession add/remove_persona + persona_meta + pool.generate_on + state/α 동적. live.rs/pool.rs/model.rs(EngineState, CouplingMatrix.values: BTreeMap<(PersonaId,PersonaId),f64>) 구조 보고 설계. 단위 테스트(add/remove 후 state 일관, 결정성, store.join, 기존 3명 동작 보존). 골든 무손상(LiveSession 전용, driver/headless 불침투).
+2) web.rs: ClientFrame Invite{blood,mbti,zodiac}/Remove{id} -> EngineCmd -> LiveSession. participants(model 포함) 동적 반영. types/index.ts 계약 일관.
+3) 프런트: 빈 방 초대 UI(혈/MBTI/별 드롭다운 -> persona_kit 이름 미리보기 -> 추가, 최대 3명) + remove.
 
-검증: 골든 5종 + 기본/friend-engine/friend-engine-semantic 테스트 전부 green 유지(web은 feature flag 뒤라 기본 빌드 무영향). WS 수직 슬라이스는 로컬 브라우저로 수동 확인.
+이후(다음 단계들): 영속(서버 SQLite: 방 메시지+참가자 저장/복원, 나가기·탭닫힘 시 저장) -> 멀티룸(방 선택/생성/전환) -> 본인 프로필 + 프리셋 8개 + 저장된 프리셋.
 
-구현은 Sonnet 서브에이전트(Agent tool, model sonnet)에 위임, Claude(Opus)가 스펙·리뷰·커밋. codex 비사용. 최종 답변은 한국어, em-dash 금지.
+검증: 골든 5종 + default/friend-engine/friend-engine-semantic 테스트 green. web feature 빌드(cargo build --features web) + 프런트 pnpm build(이 셸에서 pnpm 안 되면 web/node_modules/.bin/tsc·vite 직접). 실 LLM은 mixed_bench(SALON_THINK 토글)/--web.
+
+구현은 Sonnet 서브에이전트(Agent tool, model sonnet)에 위임, Claude(Opus)가 스펙·리뷰·커밋. codex 비사용. pnpm 사용(npm 아님). 최종 답변 한국어, em-dash 금지.
 ```
 
 ---
 
 ## 참고 (핸드오프 보강)
 
-- **전송 = WebSocket 확정**(플랜 §5): 채팅앱은 양방향·빈번이라 단일 duplex가 자연스럽다. SSE+POST는 거절(두 채널 조율 + 인터럽트/타이핑 표현 어색). WS 추가 비용은 ping/pong keepalive + 재연결 직접 구현(localhost 단계선 무시 가능).
-- **데이터 계약/UI 참고**: `docs/temp/salon-web-ui-kimi-prompt.md`(Kimi에 준 데이터 계약·UI 프롬프트), persona-ui §5(채팅 pane + 게이지 사이드바 + 입력창). Kimi 초안은 `web/`(React/Vite, 중앙 3D 큐브·채팅영역 미완).
-- **키 보안**(INV-3): `OLLAMA_CLOUD_API_KEY`는 루트 `.env`(gitignored) + 서버 Authorization 헤더에만. WS 프레임/HTML/JS에 절대 노출 금지.
-- **아키텍처 델타**: 신규 `src/web.rs`(axum 라우터 + WS<->LiveSession 브리지) + `web/` 정적 디렉터리. `Cargo.toml`에 `axum`+`tokio`(ws feature)를 `web` feature flag 뒤로.
-- **리팩토링 주의(web sink 도입 시 재평가)**: refactoring-review-v9-snapshot.md 5-1/2-2 - `LiveSession`이 7가지 책임을 한 struct에 들고(엔진/디스패치/인풋/회상/화제/라벨/거시) `Arc<BackendPool>` 결합이 있다. web sink가 LiveSession을 그대로 가져가면 결합이 복제될 수 있으니, 브리지 어댑터를 얇게 두고 LiveSession 공개 API에 web 전용 타입을 새로 박지 말 것. 큰 분리는 변동이 실제로 생길 때.
-- **골든 베이스라인**: 5종 `/tmp/salon_golden/`(레포 밖). 비교는 `cargo build` 후 명시적 순차 실행(zsh는 `$feat` 따옴표 변수 워드스플릿 안 됨 - feature 인자는 따로 호출).
+- **엔진 구조(동적 초대 핵심)**: `EngineState{ intensities: BTreeMap<PersonaId,f64>, excitations: BTreeMap<.., f64>, history, last_speaker, rng_seed }`. `CouplingMatrix{ values: BTreeMap<(PersonaId,PersonaId), f64> }`(신규 persona 쌍은 기본 0 = 자극 없음으로 시작, 이후 modifier 기반 튜닝 가능). `pool`: backends/semaphores 고정 + routing/fallbacks(BTreeMap). `pool.add_route`는 &mut라 Arc로는 호출 불가 -> 방향 B로 우회.
+- **persona_kit 재사용**: `assemble(role, mbti, blood, zodiac, name) -> AssembledPersona{ persona, system_prompt, modifier, visual }`, `indian_name(mbti, blood, zodiac)`, `parse_invite("entp b sag critic 입털이")`. 4축 FromStr(대소문자 무관). 이미 28 tests green.
+- **모델 자동 배분(cloud 1/qwen 2)**: 현재 라우팅과 일치(summarizer=cloud gemma, friend/chaos=qwen). 동적 초대 시 backend를 cloud 1명 채우고 나머지 qwen으로(cap 설정 cloud 1/qwen 2와 정합).
+- **thinking 주의**: qwen3.6-35b reasoning은 발화당 ~70초([[friend-server-vllm]]). 동적 초대로 qwen persona가 늘면 그만큼 느려짐 - 페이싱 체감 시 gemma 비중/ tick 주기 재검토 여지.
+- **데이터 계약**: web.rs ServerFrame/ClientFrame <-> web/src/types/index.ts 항상 양쪽 일관. participants에 model: Option<String> 이미 있음.
+- **골든 베이스라인**: 5종 /tmp/salon_golden/(레포 밖). `cargo build` 후 명시적 순차 실행(zsh는 feature 인자 따옴표 변수 워드스플릿 안 됨 - 따로 호출).
+- **비주얼층(픽셀아트)**: 외부 이미지 에셋 대기로 보류. persona_kit VisualHint{palette, prop} 슬롯만 있음(렌더 X). 동적 초대/프로필에서 이름·게이지까지만, 캐릭터 스프라이트는 에셋 도착 후.
