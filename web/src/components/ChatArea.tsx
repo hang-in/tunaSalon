@@ -1,6 +1,7 @@
 import { useRef, useEffect, useMemo } from "react";
 import { MessageCircle, Sparkles, UserPlus, UserMinus } from "lucide-react";
 import type { ChatMessage, EngineState, PersonaConfig } from "@/types";
+import { bloodLabel, zodiacLabel, roleLabel } from "@/lib/personaLabels";
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -115,6 +116,15 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
           // config.name은 하드코딩 3명만 정확하고 동적 persona는 폴백이라 쓰지 않는다.
           const displayName = group.messages[0]?.name || config.name;
 
+          // 이 speaker의 마지막 그룹인지 판정(pending 깜빡임을 마지막 그룹에만 적용).
+          const isLastGroupOfSpeaker =
+            gi === grouped.map((g) => g.speaker).lastIndexOf(group.speaker);
+
+          // 이 participant의 axes 정보 (동적 persona만 존재).
+          const participantAxes = engineState.participants.find(
+            (p) => p.id === group.speaker
+          )?.axes;
+
           return (
             <div
               key={gi}
@@ -123,13 +133,13 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
               {/* Avatar */}
               <div
                 className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold select-none transition-transform duration-300 ${
-                  engineState.pending === group.speaker ? "scale-110" : ""
+                  engineState.pending === group.speaker && isLastGroupOfSpeaker ? "scale-110" : ""
                 }`}
                 style={{
                   background: `${config.color}22`,
                   color: config.color,
                   boxShadow:
-                    engineState.pending === group.speaker
+                    engineState.pending === group.speaker && isLastGroupOfSpeaker
                       ? `0 0 12px ${config.glowColor}`
                       : "none",
                 }}
@@ -139,10 +149,28 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
 
               {/* Bubble(s) */}
               <div className={`flex flex-col ${isHuman ? "items-end" : "items-start"} max-w-[75%] sm:max-w-[65%]`}>
-                {/* Name label */}
+                {/* Name label + axes 배지 */}
                 {!isHuman && (
-                  <span className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 ml-1">
-                    {displayName}
+                  <span className="flex items-baseline gap-1.5 mb-1 ml-1">
+                    <span className="text-[11px] font-medium text-[var(--text-secondary)]">
+                      {displayName}
+                    </span>
+                    {participantAxes && (
+                      <>
+                        {/* 데스크탑: MBTI · 혈액형 · 별자리 · 역할 */}
+                        <span
+                          className="hidden sm:inline text-[10px] text-[var(--text-secondary)] opacity-60"
+                        >
+                          {participantAxes.mbti} · {bloodLabel(participantAxes.blood)} · {zodiacLabel(participantAxes.zodiac)} · {roleLabel(participantAxes.role)}
+                        </span>
+                        {/* 모바일: MBTI · 혈액형 */}
+                        <span
+                          className="inline sm:hidden text-[10px] text-[var(--text-secondary)] opacity-60"
+                        >
+                          {participantAxes.mbti}·{participantAxes.blood}
+                        </span>
+                      </>
+                    )}
                   </span>
                 )}
 

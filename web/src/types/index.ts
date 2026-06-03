@@ -4,6 +4,12 @@ export interface Participant {
   id: string;
   name: string;
   model?: string;
+  axes?: {
+    blood: string;
+    mbti: string;
+    zodiac: string;
+    role: string;
+  };
 }
 
 export interface StateFrame {

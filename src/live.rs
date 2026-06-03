@@ -35,6 +35,17 @@ pub enum TickOutcome {
     AwaitingGeneration,
 }
 
+/// 페르소나 4축 정보(초대 시 raw 토큰).
+///
+/// blood/mbti/zodiac/role 값을 그대로 보관한다(예: blood="O", mbti="ENTP", zodiac="leo", role="friend").
+#[derive(Debug, Clone)]
+pub struct PersonaAxes {
+    pub blood: String,
+    pub mbti: String,
+    pub zodiac: String,
+    pub role: String,
+}
+
 /// 페르소나별 백엔드 라우팅 + system_prompt 보관.
 ///
 /// `LiveSession`이 `persona_meta` 맵으로 관리한다.
@@ -47,6 +58,8 @@ pub struct PersonaMeta {
     pub system_prompt: String,
     /// 케미 계수 보관용(이 단계 alpha에서는 미사용).
     pub modifier: crate::model::PersonaModifier,
+    /// 초대 시 4축 정보. 동적 persona만 Some; 데모/복원 persona는 None.
+    pub axes: Option<PersonaAxes>,
 }
 
 /// 워커로 보내는 job: (placeholder_idx, speaker, history_snapshot, tick, recall, route).
@@ -1270,6 +1283,7 @@ mod tests {
             backend: backend.to_string(),
             system_prompt: format!("system prompt for {backend}"),
             modifier: crate::model::PersonaModifier::default(),
+            axes: None,
         }
     }
 

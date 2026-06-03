@@ -2,7 +2,7 @@
 //! web 프런트엔드 sink: axum WebSocket으로 엔진 이벤트를 브라우저에 push + 사람 입력 수신.
 //! 엔진은 blocking(전용 스레드), axum은 tokio(async). 둘은 tokio 채널로 브리지.
 
-use crate::live::{LiveSession, PersonaMeta};
+use crate::live::{LiveSession, PersonaAxes, PersonaMeta};
 use crate::persona_kit::{assemble, Blood, Mbti, Role, Zodiac};
 use crate::roomstore::RoomStore;
 use serde::{Deserialize, Serialize};
@@ -13,12 +13,23 @@ use tokio::sync::{broadcast, mpsc};
 
 // ── 프레임 스키마 ──────────────────────────────────────────────
 
+/// Participant의 4축 정보 (직렬화 전용).
+#[derive(Serialize, Clone)]
+struct ParticipantAxes {
+    blood: String,
+    mbti: String,
+    zodiac: String,
+    role: String,
+}
+
 #[derive(Serialize, Clone)]
 struct Participant {
     id: String,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    axes: Option<ParticipantAxes>,
 }
 
 #[derive(Serialize)]
@@ -138,14 +149,21 @@ fn run_engine(
             .personas()
             .iter()
             .map(|p| {
-                let model = session
-                    .persona_meta()
-                    .get(&p.id)
-                    .map(|m| backend_to_model(&m.backend));
+                let meta = session.persona_meta().get(&p.id);
+                let model = meta.map(|m| backend_to_model(&m.backend));
+                let axes = meta
+                    .and_then(|m| m.axes.as_ref())
+                    .map(|a| ParticipantAxes {
+                        blood: a.blood.clone(),
+                        mbti: a.mbti.clone(),
+                        zodiac: a.zodiac.clone(),
+                        role: a.role.clone(),
+                    });
                 Participant {
                     id: p.id.clone(),
                     name: p.name.clone(),
                     model,
+                    axes,
                 }
             })
             .collect();
@@ -153,6 +171,7 @@ fn run_engine(
             id: human_id.to_string(),
             name: human_id.to_string(),
             model: None,
+            axes: None,
         });
         ServerFrame::State {
             intensities,
@@ -318,6 +337,12 @@ fn run_engine(
                             backend,
                             system_prompt: assembled.system_prompt,
                             modifier: assembled.modifier,
+                            axes: Some(PersonaAxes {
+                                blood: blood.clone(),
+                                mbti: mbti.clone(),
+                                zodiac: zodiac.clone(),
+                                role: role.clone().unwrap_or_else(|| "friend".to_string()),
+                            }),
                         },
                     );
                     emit(
@@ -526,11 +551,13 @@ mod tests {
                 id: "friend".to_string(),
                 name: "Friendly Regular".to_string(),
                 model: Some("gemma4:31b-cloud".to_string()),
+                axes: None,
             },
             Participant {
                 id: "나".to_string(),
                 name: "나".to_string(),
                 model: None,
+                axes: None,
             },
         ];
 
@@ -749,5 +776,41 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
         assert_eq!(v["type"], "system");
         assert_eq!(v["text"], "화제가 '부처님 오신날'로 바뀌었습니다");
+    }
+
+    /// Participant에 axes Some이 있으면 직렬화에 포함된다.
+    #[test]
+    fn participant_axes_some_serializes() {
+        let p = Participant {
+            id: "entp_o_leo_friend".to_string(),
+            name: "호기심발랄레오".to_string(),
+            model: Some("gemma4:31b-cloud".to_string()),
+            axes: Some(ParticipantAxes {
+                blood: "O".to_string(),
+                mbti: "ENTP".to_string(),
+                zodiac: "leo".to_string(),
+                role: "friend".to_string(),
+            }),
+        };
+        let json = serde_json::to_string(&p).expect("직렬화 실패");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
+        assert_eq!(v["axes"]["blood"], "O");
+        assert_eq!(v["axes"]["mbti"], "ENTP");
+        assert_eq!(v["axes"]["zodiac"], "leo");
+        assert_eq!(v["axes"]["role"], "friend");
+    }
+
+    /// Participant에 axes None이면 직렬화에서 axes 키가 누락된다(skip_serializing_if).
+    #[test]
+    fn participant_axes_none_omitted() {
+        let p = Participant {
+            id: "friend".to_string(),
+            name: "데모친구".to_string(),
+            model: None,
+            axes: None,
+        };
+        let json = serde_json::to_string(&p).expect("직렬화 실패");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
+        assert!(v.get("axes").is_none(), "axes None -> 키 없어야 함");
     }
 }

@@ -235,6 +235,7 @@ impl RoomStore {
                         reactivity: row.get(5)?,
                         provocativeness: row.get(6)?,
                     },
+                    axes: None,
                 };
                 Ok((persona, meta))
             })?;
@@ -329,6 +330,7 @@ mod tests {
             backend: backend.to_string(),
             system_prompt: prompt.to_string(),
             modifier: PersonaModifier { reactivity, provocativeness },
+            axes: None,
         }
     }
 

@@ -615,6 +615,7 @@ fn build_demo_persona_meta() -> BTreeMap<PersonaId, PersonaMeta> {
                     backend: backend_for(id),
                     system_prompt,
                     modifier,
+                    axes: None,
                 },
             )
         })
