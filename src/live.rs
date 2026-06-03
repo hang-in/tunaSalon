@@ -380,14 +380,12 @@ impl LiveSession {
             candidates.clone()
         };
 
-        // forbid_self_repeat로 후보가 모두 걸러지면(예: 동적 초대로 persona가 1명만 남아
-        // 자기 자신이 last_speaker) 침묵하는 대신 원래 후보로 폴백한다 — 1인 방 영구 침묵 방지.
-        // driver/headless는 고정 N명이라 이 상황이 없어 골든에 영향 없음.
-        let filtered = if filtered.is_empty() {
-            candidates
-        } else {
-            filtered
-        };
+        if filtered.is_empty() {
+            // 강제 화자 연속 불가 + 다른 후보 없음 → 침묵.
+            // 1인 방(동적 초대로 persona 1명): 막 발화한 persona는 자기 차례를 건너뛰고
+            // 사람 입력을 기다린다(자기 자신과 자문자답하는 것을 막는다 — 이게 올바른 동작).
+            return TickOutcome::Silent;
+        }
 
         // 6. rrf 화자 선택 (rng 소비: driver와 동일 순서)
         let selection = rrf::select(
