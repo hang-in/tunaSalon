@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useChat } from "@/hooks/useChat";
 import { Header } from "@/components/Header";
 import { ChatArea } from "@/components/ChatArea";
@@ -27,13 +27,14 @@ function App() {
     [sendMessage]
   );
 
-  // Three.js background visible when few messages
+  // Three.js 배경: 기본 off(GPU 절약). 헤더 토글로 켜며, 켜도 메시지가 적을 때만 보인다.
+  const [bg3d, setBg3d] = useState(false);
   const showThreeBg = messages.length < 6;
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden" style={{ background: "var(--bg-base)" }}>
-      {/* Three.js living room background */}
-      <ThreeBackground intensities={engineState.intensities} visible={showThreeBg} />
+      {/* Three.js living room background (기본 off, 켜졌을 때만 마운트) */}
+      {bg3d && <ThreeBackground intensities={engineState.intensities} visible={showThreeBg} />}
 
       {/* Header */}
       <Header
@@ -41,6 +42,8 @@ function App() {
         connected={connected}
         participantCount={engineState.participants.length}
         onToggleSidebar={() => setSidebarOpen(true)}
+        bg3d={bg3d}
+        onToggle3d={() => setBg3d((v) => !v)}
       />
 
       {/* Main content */}

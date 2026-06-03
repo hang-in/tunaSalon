@@ -1,13 +1,15 @@
-import { Users, Tag, PanelRightOpen } from "lucide-react";
+import { Users, Tag, PanelRightOpen, Box } from "lucide-react";
 
 interface HeaderProps {
   topics: string[];
   connected: boolean;
   participantCount: number;
   onToggleSidebar: () => void;
+  bg3d: boolean;
+  onToggle3d: () => void;
 }
 
-export function Header({ topics, connected, participantCount, onToggleSidebar }: HeaderProps) {
+export function Header({ topics, connected, participantCount, onToggleSidebar, bg3d, onToggle3d }: HeaderProps) {
   return (
     <header
       className="fixed top-0 left-0 right-0 h-16 z-40 flex items-center px-4 lg:px-6"
@@ -74,6 +76,17 @@ export function Header({ topics, connected, participantCount, onToggleSidebar }:
 
       {/* Right: Status */}
       <div className="flex items-center gap-3 shrink-0">
+        <button
+          onClick={onToggle3d}
+          className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          aria-label="3D 배경 켜기/끄기"
+          title={bg3d ? "3D 배경 끄기 (GPU 절약)" : "3D 배경 켜기"}
+        >
+          <Box
+            size={16}
+            style={{ color: bg3d ? "var(--accent-warm)" : "var(--text-secondary)" }}
+          />
+        </button>
         <div className="flex items-center gap-1.5">
           <div
             className={`w-2 h-2 rounded-full ${connected ? "pulse-dot" : ""}`}

@@ -13,6 +13,8 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
   const lightsRef = useRef<THREE.PointLight[]>([]);
   const meshRef = useRef<THREE.Mesh | null>(null);
   const frameRef = useRef(0);
+  // 저전력: animate 루프가 prop 클로저(빈 deps) 대신 ref로 현재 visible을 읽는다.
+  const visibleRef = useRef(visible);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -33,7 +35,8 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(w, h);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // 저전력: 레티나 풀해상도(devicePixelRatio 2~3) 렌더를 피해 GPU 부하를 낮춘다.
+    renderer.setPixelRatio(1);
     renderer.domElement.style.width = "100%";
     renderer.domElement.style.height = "100%";
     renderer.domElement.style.display = "block";
@@ -79,17 +82,24 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
     const wireframe = new THREE.LineSegments(wireGeo, wireMat);
     mesh.add(wireframe);
 
-    // Animation loop
+    // Animation loop (저전력)
     let running = true;
+    const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const animate = () => {
       if (!running) return;
       frameRef.current = requestAnimationFrame(animate);
 
-      mesh.rotation.x += 0.003;
-      mesh.rotation.y += 0.005;
+      // 안 보이거나(opacity 0) 탭이 숨겨졌으면 GPU 렌더를 건너뛴다.
+      // rAF는 브라우저가 백그라운드 탭에서 자동 throttle 하므로 루프만 유지.
+      if (!visibleRef.current || document.hidden) return;
 
-      // Map intensities to light brightness
-      const ids = ["friend", "realist", "summarizer"];
+      if (!prefersReduced) {
+        mesh.rotation.x += 0.003;
+        mesh.rotation.y += 0.005;
+      }
+
+      // Map intensities to light brightness (엔진 persona id: friend/chaos/summarizer)
+      const ids = ["friend", "chaos", "summarizer"];
       for (let i = 0; i < 3; i++) {
         const val = intensities[ids[i]] || 0;
         lights[i].intensity = val * 2.5;
@@ -124,9 +134,14 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
     };
   }, []);
 
+  // visible prop을 ref로 동기화(animate 루프가 최신 값을 읽도록).
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
+
   // Update light intensities each frame from prop
   useEffect(() => {
-    const ids = ["friend", "realist", "summarizer"];
+    const ids = ["friend", "chaos", "summarizer"];
     for (let i = 0; i < 3; i++) {
       const val = intensities[ids[i]] || 0;
       if (lightsRef.current[i]) {

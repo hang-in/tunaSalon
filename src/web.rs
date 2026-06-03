@@ -211,7 +211,7 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String) {
         use axum::extract::State as AxumState;
         use axum::response::IntoResponse;
         use axum::{routing::get, Router};
-        use tower_http::services::ServeDir;
+        use tower_http::services::{ServeDir, ServeFile};
 
         #[derive(Clone)]
         struct AppState {
@@ -271,9 +271,25 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String) {
             cmd_tx: cmd_tx.clone(),
         };
 
+        // 정적 산출물 경로: cwd 의존을 피해 컴파일 시점의 repo 경로(CARGO_MANIFEST_DIR) 기준 절대경로.
+        // (어느 디렉터리에서 실행하든 <repo>/web/dist 를 서빙)
+        let dist_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist");
+        let index_file = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist/index.html");
+        if !std::path::Path::new(index_file).exists() {
+            eprintln!(
+                "[tunaSalon] web: 정적 산출물이 없습니다 ({index_file}).\n\
+                 먼저 `cd web && pnpm install && pnpm build` 로 web/dist 를 생성하세요."
+            );
+        } else {
+            eprintln!("[tunaSalon] web: 정적 서빙 {dist_dir}");
+        }
+        // SPA fallback: 없는 경로는 index.html 로(클라이언트 라우팅 대비).
+        let serve_dir = ServeDir::new(dist_dir)
+            .append_index_html_on_directories(true)
+            .not_found_service(ServeFile::new(index_file));
         let app = Router::new()
             .route("/ws", get(ws_handler))
-            .fallback_service(ServeDir::new("web/dist").append_index_html_on_directories(true))
+            .fallback_service(serve_dir)
             .with_state(app_state);
 
         let addr = format!("{host}:{port}");
