@@ -7,7 +7,7 @@ edition = "2021"
 friend-engine = ["dep:lindera", "dep:rusqlite"]
 friend-engine-semantic = ["friend-engine", "dep:ort", "dep:ndarray", "dep:tokenizers", "dep:usearch"]
 coreml = ["ort/coreml"]
-web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:futures-util"]
+web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:futures-util", "dep:rusqlite"]
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"], optional = true }

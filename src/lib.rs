@@ -29,4 +29,6 @@ pub mod sweep;
 pub mod tui;
 pub mod utterance;
 #[cfg(feature = "web")]
+pub mod roomstore;
+#[cfg(feature = "web")]
 pub mod web;
