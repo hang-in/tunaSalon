@@ -3,8 +3,8 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.9-blue)
-![tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.10-blue)
+![tests](https://img.shields.io/badge/tests-226%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
@@ -227,7 +227,20 @@ v0.8 remembered in-memory with raw token overlap. v0.9 deepens it by lifting the
 - **SQLite + FTS5 BM25** (Stage 1): the store becomes real SQLite with an FTS5 index; recall ranks past lines by BM25 (term frequency / rarity / length) with OR-match, instead of a raw token count.
 - **Cross-session memory**: `--chat` persists to `~/.local/share/tunaSalon/memory.db` (`$SALON_MEMORY_DB` overrides), so personas remember across runs. Tests stay in `:memory:` and write nothing to disk.
 
-Next (v0.10): BGE-M3 semantic search + HNSW + hybrid fusion. Alongside v0.9 the `--chat` room got livelier — a tuned 3-way config (cross-excitation + no same-speaker-twice) and `/topic` to steer the conversation (gated by `smoke_chat`).
+Alongside v0.9 the `--chat` room got livelier — a tuned 3-way config (cross-excitation + no same-speaker-twice) and `/topic` to steer the conversation (gated by `smoke_chat`).
+
+---
+
+## Semantic recall (v0.10)
+
+v0.9 recall was lexical (BM25 over morphemes) — it misses lines that share meaning but no words. v0.10 adds **semantic recall** on top, behind a `friend-engine-semantic` sub-feature (v0.9 still builds without the ML stack; the default build stays ML-free and golden-clean):
+
+- **BGE-M3 embeddings** (Stage 2a): utterances are embedded in-process via ONNX Runtime (`ort`, download-binaries, optional CoreML) — no daemon, no Ollama. Measured on this Mac: ~3.8 s load, ~29 ms/embed, ~2.3 GB. A deterministic `MockEmbedder` keeps everyday tests reproducible.
+- **HNSW ANN** (Stage 2b): vectors go into a usearch index (cosine); each embedding persists as a SQLite BLOB next to the memory.
+- **Hybrid RRF** (Stage 2c): recall fuses the BM25 (lexical) and vector (semantic) legs with Reciprocal Rank Fusion (k=60), both participation-isolated.
+- **Live wiring** (Stage 2d): `--chat` loads the real BGE-M3 embedder when the model is present (Mock fallback otherwise). The embedder is kept consistent per-DB (`meta.embedder_kind`); switching it triggers a full re-embed so Mock and Ort vectors never mix.
+
+So lexically-different-but-semantically-same lines now recall: a stored "강아지랑 산책 다녀왔어" surfaces for the query "반려동물 데리고 나갔어" (verified by an `#[ignore]` real-model test).
 
 ---
 
@@ -245,10 +258,11 @@ cargo run -- --room chaos --fsm                   # chemistry + no speaker twice
 cargo run -- --theta 0.7 --k 5 --beta 0.4         # turn the knobs
 cargo run -- --llm                                # opt in to LLM (default cloud model, needs network)
 cargo run --features friend-engine -- --chat      # personas remember across sessions (morphology + SQLite BM25 recall)
+cargo run --features friend-engine-semantic -- --chat  # + semantic recall (loads BGE-M3 if the model is present)
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
 cargo run --example chat_demo                     # non-interactive chat loop with flow readout per line
-cargo test                                        # 222 tests (230 with --features friend-engine)
+cargo test                                        # 226 tests (235 with friend-engine, 263 with friend-engine-semantic)
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -257,7 +271,7 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.9 (now):** friend engine, deeper — Korean morphology (Lindera) + SQLite/FTS5 BM25 recall + cross-session persistence, lifted from the author's seCall engine and gated behind a `friend-engine` feature (golden untouched). Plus a livelier `--chat` (tuned 3-way + `/topic`). Rust, 222 tests (230 with the feature), smoke gates green.
+**v0.10 (now):** semantic recall — BGE-M3 embeddings (ONNX, in-process) + HNSW (usearch) + hybrid BM25/vector RRF fusion, on top of the v0.9 store and behind a `friend-engine-semantic` feature (default build still ML-free and golden-clean). The real embedder loads in `--chat` when the model is present (Mock fallback), with per-DB embedder consistency. Rust, 226 tests (235 / 263 with the features), smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
@@ -269,9 +283,10 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 - **v0.7 — MetaController:** macro→micro feedback (cool the room as it converges). The original engine-layer roadmap — rhythm → chemistry → LLM → concurrency → chat → flow-meter → meta-controller — is now complete.
 - **v0.8 — friend engine (first increment):** participation-based memory + keyword recall + recall-eval harness. Personas start remembering what was said in rooms they were in.
 - **v0.9 — friend engine, deeper:** Korean morphology + SQLite/FTS5 BM25 recall + cross-session persistence (feature-gated). Livelier `--chat` (3-way config + `/topic`).
+- **v0.10 — semantic recall:** BGE-M3 embeddings (ONNX) + HNSW (usearch) + hybrid BM25/vector RRF fusion (feature-gated), real embedder wired into `--chat` with per-DB consistency.
 
 **What's next (separate tracks, no fixed order):**
-- **v0.10 — semantic recall:** BGE-M3 embeddings (ONNX) + HNSW (usearch) + hybrid BM25/vector fusion, on top of the v0.9 store. Then forgetting, subjective storage, cross-room impressions.
+- **friend engine, further:** forgetting, subjective per-persona storage, cross-room impressions of people, on top of the v0.10 store.
 - **Web frontend:** moving the chat UI to the browser for a production-grade, shareable app (Rust engine kept as-is, served over WebSocket; the TUI stays as a debug tool). Planned — see `docs/plans/salon-web-frontend.md`.
 - **Persona synthesis + characters:** building personas from MBTI / blood-type / zodiac / role presets, with pixel-art (Cyworld-minimi-style) avatars for the web — see `docs/temp/salon-persona-ui.md`.
 
