@@ -19,6 +19,7 @@ pub mod model;
 pub mod ollama;
 pub mod openai;
 pub mod pool;
+pub mod persona_kit;
 pub mod preset;
 pub mod rrf;
 pub mod runtime;
