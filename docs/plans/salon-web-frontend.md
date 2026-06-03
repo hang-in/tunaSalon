@@ -77,7 +77,7 @@ roadmap_ref: salon-engine-v1.md
 |------|------|
 | 엔진 코어 | **무수정**. LiveSession 재사용(이미 워커 스레드 + mpsc, 논블로킹 생성) |
 | 신규 `src/web.rs`(가칭) | axum 라우터(정적 파일 서빙 + `/ws` 업그레이드), WS task ↔ LiveSession 브리지 |
-| `web/` Kimi 초안(이미 존재) | Vite + React + TS + Tailwind + shadcn/ui + three.js SPA. `npm run build` → `web/dist`. axum이 `dist`를 정적 서빙(개발 중에는 Vite dev server + `/ws` 프록시). 채팅/사이드바/입력 + 엔진상태 패널 |
+| `web/` Kimi 초안(이미 존재) | Vite + React + TS + Tailwind + shadcn/ui + three.js SPA. **pnpm** 사용(npm 아님): `pnpm install && pnpm build` → `web/dist`. axum이 `dist`를 정적 서빙(개발 중에는 Vite dev server + `/ws` 프록시). 채팅/사이드바/입력 + 엔진상태 패널 |
 | 신규 프레임 스키마 | 서버→클라(utterance, intensities, flow, mu_scale, pending) / 클라→서버(human_message). serde JSON |
 | `Cargo.toml` | `axum` + `tokio`(+ ws feature). **feature flag 뒤**에 둬 기본 빌드/CI/골든은 무영향(`--features web`) |
 | `main.rs` | `--web [--port N] [--host H]` 플래그(opt-in). 기본 host `0.0.0.0`(LAN 허용), 기본 port 예: 8080. 기본 실행·`--chat`·`--headless`는 그대로 |

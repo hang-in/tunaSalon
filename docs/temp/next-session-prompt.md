@@ -26,7 +26,7 @@ tunaSalon 이어서 작업한다. 먼저 CLAUDE.md(핸드오프)와 docs/plans/s
 - axum WS 라우트 1개(`/ws` 업그레이드) + 정적 서빙(web/dist), `--web [--port N] [--host H]` 플래그(opt-in, 기본 host 0.0.0.0으로 LAN 허용), `web` feature flag(Cargo.toml). 기본 실행·`--chat`·`--headless`는 그대로.
 - 엔진<->async 브리지: blocking LiveSession을 전용 스레드에서 구동 + tokio mpsc로 WS task와 양방향. 엔진 코어 무수정(LiveSession은 이미 워커 스레드 + mpsc로 논블로킹 생성 보유 → 재사용).
 - 이벤트 직렬화 어댑터: 엔진 Event/intensities/FlowMetric/mu_scale을 web 프레임 스키마로(serde JSON). 서버->클라(utterance/intensities/flow/mu_scale/pending) + 클라->서버(human_message).
-- 프런트 = Kimi 초안(web/) 배선: 채팅 로그(auto-scroll) + 사이드바 게이지(λ 애니, θ 마커, 흐름/식힘) + 입력창 + 엔진상태 패널을 실 WS 프레임에 연결. 먼저 `cd web && npm install && npm run dev`로 초안 현황(강한 부분·미완 영역) 파악.
+- 프런트 = Kimi 초안(web/) 배선: 채팅 로그(auto-scroll) + 사이드바 게이지(λ 애니, θ 마커, 흐름/식힘) + 입력창 + 엔진상태 패널을 실 WS 프레임에 연결. 먼저 `cd web && pnpm install && pnpm dev`로 초안 현황(강한 부분·미완 영역) 파악. (이 프로젝트는 npm이 아니라 **pnpm** 사용.)
 - 수직 슬라이스 한 바퀴(엔진 push -> 브라우저 렌더 -> 사람 입력 -> 엔진) 먼저 증명한 뒤 폴리시(P2~).
 
 검증: 골든 5종 + 기본/friend-engine/friend-engine-semantic 테스트 전부 green 유지(web은 feature flag 뒤라 기본 빌드 무영향). WS 수직 슬라이스는 로컬 브라우저로 수동 확인.

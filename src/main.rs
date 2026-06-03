@@ -138,7 +138,7 @@ fn main() {
         {
             eprintln!("--web은 `cargo run --features web -- --web`로 빌드/실행해야 합니다.");
             eprintln!(
-                "(web 프런트는 먼저 `cd web && npm install && npm run build`로 web/dist 생성)"
+                "(web 프런트는 먼저 `cd web && pnpm install && pnpm build`로 web/dist 생성)"
             );
         }
         return;
