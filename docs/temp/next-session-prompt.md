@@ -17,7 +17,7 @@ tunaSalon 이어서 작업한다. 먼저 CLAUDE.md(핸드오프)와 docs/plans/s
 현재: v0.1~v0.9 완료. v0.10(friend engine Stage 2=의미검색)은 2a(임베더 embed.rs)·2b(usearch ANN ann.rs)·2c(hybrid RRF 회상 memory.rs)까지 완료·커밋. 전부 friend-engine-semantic feature 뒤, MockEmbedder로 결정적 테스트. ORT BGE-M3 in-process 실측 viable(로드 3.8s/embed 29ms/2.3GB, download-binaries, 모델은 ~/.cache/tunaSalon/models/bge-m3/에 받아둠). default 225/friend-engine 234/semantic 260 tests, 골든 무손상.
 
 순서:
-1) **먼저 리팩토링 리뷰**: docs/plans/refactoring-review-v9-snapshot.md 를 작성해라. 긴 세션 동안 memory.rs에 cfg 다중 impl(Vec/SQLite/semantic)·recall 중복(non-semantic vs semantic)·embed.rs/ann.rs가 쌓였다. 코드를 읽고 (a) 중복·복잡도·cfg 스프롤, (b) 정리하면 좋을 부분, (c) 위험 낮은 리팩토링 제안을 정리해라. 골든/feature off-on 불변식은 절대 보존(헤드리스 golden 5종 + friend-engine·semantic 테스트). 리뷰 후 안전한 정리만 적용(큰 재설계는 제안만).
+1) **먼저 리팩토링 리뷰 적용**: docs/reference/refactoring-review-v9-snapshot.md 가 이미 작성돼 있다(pi/MiniMax-M3, v0.9 스냅샷, 27KB). 그걸 읽고, 제안 중 **골든/feature off-on 불변식에 안전한 정리만** 골라 적용해라(헤드리스 golden 5종 + 기본/friend-engine/semantic 테스트 전부 green 유지가 절대 조건). 큰 재설계·행동 변경은 보류(제안만 기록). memory.rs cfg 다중 impl·recall 중복이 주 후보.
 
 2) **그다음 task-50 = v0.10 마감**(docs/plans/salon-engine-v10.md §3 task 50):
    - 실 OrtEmbedder를 라이브 live_store(memory.rs)에 배선: 모델 있으면 OrtEmbedder, 없으면 MockEmbedder 폴백(loud 경고). 테스트/:memory:는 Mock 유지(모델 로드 0). 주의: 임베더는 DB당 일관해야 한다(Mock/Ort 혼용 시 벡터공간 불일치 → ANN 재구축 필요; 최소한 경고/문서화).
