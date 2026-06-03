@@ -187,7 +187,7 @@ export function Composer({ onSend, onSetTopics, currentTopics, disabled }: Compo
             background: text.trim() ? "var(--accent-warm)" : "var(--bg-elevated)",
             color: text.trim() ? "#fff" : "var(--text-secondary)",
           }}
-          aria-label="병내기"
+          aria-label="보내기"
         >
           <Send size={18} />
         </button>

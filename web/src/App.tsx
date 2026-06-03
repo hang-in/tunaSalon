@@ -18,6 +18,7 @@ function App() {
     sendTopics,
     getPersonaConfig,
     personaConfigs,
+    humanPulse,
   } = useChat();
 
   const handleSend = useCallback(
@@ -46,14 +47,33 @@ function App() {
         onToggle3d={() => setBg3d((v) => !v)}
       />
 
-      {/* Main content */}
-      <div className="flex flex-1 overflow-hidden mt-16 relative z-10">
+      {/* P2-1: 연결 끊김 배너 */}
+      {!connected && (
+        <div
+          className="fixed top-16 left-0 right-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium"
+          style={{
+            background: "rgba(217, 100, 90, 0.12)",
+            borderBottom: "1px solid rgba(217, 100, 90, 0.25)",
+            color: "#D9645A",
+          }}
+        >
+          <span
+            className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin shrink-0"
+            aria-hidden="true"
+          />
+          연결이 끊겼습니다. 재연결 중...
+        </div>
+      )}
+
+      {/* Main content - 배너가 있을 때 top offset 추가 */}
+      <div className={`flex flex-1 overflow-hidden mt-16 relative z-10 transition-all duration-300 ${!connected ? "pt-9" : ""}`}>
         {/* Chat column */}
         <main className="flex flex-col flex-1 min-w-0">
           <ChatArea
             messages={messages}
             engineState={engineState}
             getPersonaConfig={getPersonaConfig}
+            connected={connected}
           />
           <Composer
             onSend={handleSend}
@@ -68,6 +88,7 @@ function App() {
           personaConfigs={personaConfigs}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
+          humanPulse={humanPulse}
         />
       </div>
 

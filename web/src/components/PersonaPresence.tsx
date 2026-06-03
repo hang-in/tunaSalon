@@ -8,9 +8,10 @@ interface PersonaPresenceProps {
   isPending: boolean;
   isHuman?: boolean;
   model?: string;
+  humanPulse?: boolean;
 }
 
-function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false, model }: PersonaPresenceProps) {
+function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false, model, humanPulse = false }: PersonaPresenceProps) {
   const pct = Math.max(0, Math.min(1, lambda));
 
   // Avatar glyph expression based on λ band
@@ -23,16 +24,21 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
     return "‿";
   };
 
-  // Ring color: above theta or pending = vivid, below = dim
+  // λ-band 분류
   const isActive = isPending || pct >= theta;
+  const isAntsy = !isActive && pct >= theta * 0.7; // 들썩임 구간
+
+  // Ring color: above theta or pending = vivid, below = dim
   const ringColor = isActive ? config.color : `${config.color}55`;
 
   // glow intensity
-  const glowShadow = isPending
+  const glowShadow = humanPulse
+    ? `0 0 18px ${config.glowColor}`
+    : isPending
     ? `0 0 12px ${config.glowColor}`
     : isActive
-      ? `0 0 6px ${config.glowColor}`
-      : "none";
+    ? `0 0 6px ${config.glowColor}`
+    : "none";
 
   // conic-gradient: 6시(from 180deg) 시계방향, pct * 360deg
   const ringDeg = pct * 360;
@@ -42,27 +48,31 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
 
   return (
     <div
-      className="persona-card rounded-xl p-2.5"
+      className={`persona-card rounded-xl p-2.5 ${humanPulse && !isHuman ? "human-pulse-card" : ""} ${isAntsy ? "antsy-card" : ""}`}
       style={{
         background: config.bgColor,
         borderWidth: 1,
         borderStyle: "solid",
-        borderColor: isPending
+        borderColor: humanPulse && !isHuman
+          ? config.color
+          : isPending
           ? config.color
           : pct >= theta
-            ? `${config.color}55`
-            : "transparent",
-        boxShadow: isPending
+          ? `${config.color}55`
+          : "transparent",
+        boxShadow: humanPulse && !isHuman
+          ? `0 0 16px ${config.glowColor}`
+          : isPending
           ? `0 0 10px ${config.glowColor}`
           : pct >= theta
-            ? `0 0 5px ${config.glowColor}30`
-            : "none",
+          ? `0 0 5px ${config.glowColor}30`
+          : "none",
       }}
     >
       <div className="flex items-center gap-2.5">
         {/* Avatar with conic ring wrapper */}
         <div
-          className="rounded-full shrink-0"
+          className={`rounded-full shrink-0 ${humanPulse && !isHuman ? "human-pulse-ring" : ""}`}
           style={{
             padding: isHuman ? 2 : 3,
             background: ringBg,

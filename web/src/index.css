@@ -151,6 +151,44 @@
 .silhouette-speaking { opacity: 1; transform: translateY(-3px); }
 .silhouette-satisfied { opacity: 0.6; transform: translateY(0); }
 
+/* ── Human pulse: "모두 나를 본다" 링 글로우 ──────────────── */
+@keyframes human-pulse-ring {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.18); }
+  60%  { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+
+.human-pulse-ring {
+  animation: human-pulse-ring 0.55s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+/* ── Human pulse: 카드 플래시 ───────────────────────────── */
+@keyframes human-pulse-card {
+  0%   { filter: brightness(1); }
+  35%  { filter: brightness(1.25); }
+  100% { filter: brightness(1); }
+}
+
+.human-pulse-card {
+  animation: human-pulse-card 0.7s ease-out forwards;
+}
+
+/* ── Antsy: θ 근접 들썩임 ────────────────────────────────── */
+@keyframes antsy-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  25%       { transform: translateY(-1.5px) scale(1.01); }
+  75%       { transform: translateY(0.5px) scale(0.99); }
+}
+
+.antsy-card {
+  animation: antsy-bounce 1.8s ease-in-out infinite;
+}
+
+/* ── no-scrollbar ──────────────────────────────────────── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
 /* ── Reduced motion fallback ──────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,

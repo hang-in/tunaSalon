@@ -6,9 +6,10 @@ interface ChatAreaProps {
   messages: ChatMessage[];
   engineState: EngineState;
   getPersonaConfig: (id: string) => PersonaConfig;
+  connected: boolean;
 }
 
-export function ChatArea({ messages, engineState, getPersonaConfig }: ChatAreaProps) {
+export function ChatArea({ messages, engineState, getPersonaConfig, connected }: ChatAreaProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -55,8 +56,29 @@ export function ChatArea({ messages, engineState, getPersonaConfig }: ChatAreaPr
       )}
 
       <div className="flex flex-col gap-1 px-4 lg:px-6 py-6">
-        {/* Welcome state */}
-        {messages.length === 0 && (
+        {/* 연결 전 로딩 상태 */}
+        {messages.length === 0 && !connected && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div
+              className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
+              style={{ background: "rgba(229, 164, 74, 0.06)" }}
+            >
+              <span
+                className="w-8 h-8 rounded-full border-2 border-[var(--accent-warm)] border-t-transparent animate-spin"
+                aria-hidden="true"
+              />
+            </div>
+            <h2 className="text-base font-semibold text-[var(--text-secondary)] mb-2">
+              엔진에 연결 중...
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)] opacity-60">
+              서버와 연결을 맺고 있습니다
+            </p>
+          </div>
+        )}
+
+        {/* Welcome state (연결 후, 메시지 없을 때) */}
+        {messages.length === 0 && connected && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div
               className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
@@ -70,7 +92,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig }: ChatAreaPr
             <p className="text-sm text-[var(--text-secondary)] max-w-sm leading-relaxed">
               세 명의 AI 페르소나가 당신을 기다리고 있어요.
               <br />
-              메시지를 별낸 별을 보는 대화가 시작됩니다.
+              메시지를 보내면 대화가 시작됩니다.
             </p>
             <div className="flex items-center gap-2 mt-6">
               <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: "#4ade80" }} />

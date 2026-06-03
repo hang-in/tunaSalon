@@ -1,4 +1,5 @@
-import { Users, Tag, PanelRightOpen, Box } from "lucide-react";
+import { useState } from "react";
+import { Users, Tag, PanelRightOpen, Box, HelpCircle, X } from "lucide-react";
 
 interface HeaderProps {
   topics: string[];
@@ -10,6 +11,7 @@ interface HeaderProps {
 }
 
 export function Header({ topics, connected, participantCount, onToggleSidebar, bg3d, onToggle3d }: HeaderProps) {
+  const [helpOpen, setHelpOpen] = useState(false);
   return (
     <header
       className="fixed top-0 left-0 right-0 h-16 z-40 flex items-center px-4 lg:px-6"
@@ -87,6 +89,75 @@ export function Header({ topics, connected, participantCount, onToggleSidebar, b
             style={{ color: bg3d ? "var(--accent-warm)" : "var(--text-secondary)" }}
           />
         </button>
+
+        {/* 도움말 버튼 */}
+        <div className="relative">
+          <button
+            onClick={() => setHelpOpen((v) => !v)}
+            className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+            aria-label="도움말"
+            title="도움말"
+          >
+            <HelpCircle
+              size={16}
+              style={{ color: helpOpen ? "var(--accent-warm)" : "var(--text-secondary)" }}
+            />
+          </button>
+
+          {helpOpen && (
+            <>
+              {/* backdrop for closing */}
+              <div className="fixed inset-0 z-40" onClick={() => setHelpOpen(false)} />
+
+              <div
+                className="absolute right-0 top-9 z-50 w-72 rounded-xl p-4 shadow-2xl"
+                style={{
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border-color)",
+                }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[13px] font-bold text-[var(--text-primary)]">tunaSalon 사용법</span>
+                  <button
+                    onClick={() => setHelpOpen(false)}
+                    className="p-1 rounded-md hover:bg-white/5 transition-colors"
+                  >
+                    <X size={13} className="text-[var(--text-secondary)]" />
+                  </button>
+                </div>
+
+                <ul className="space-y-2.5 text-[12px] text-[var(--text-secondary)] leading-relaxed">
+                  <li>
+                    <span className="font-semibold text-[var(--text-primary)]">메시지 전송</span>
+                    <br />
+                    Enter로 전송, Shift+Enter로 줄바꿈
+                  </li>
+                  <li>
+                    <span className="font-semibold text-[var(--text-primary)]"># 주제 설정</span>
+                    <br />
+                    입력창의 # 버튼으로 1-5개 주제 태그 설정 - 페르소나가 그 주제로 대화합니다
+                  </li>
+                  <li>
+                    <span className="font-semibold text-[var(--text-primary)]">발화 욕구(λ) 링</span>
+                    <br />
+                    사이드바 아바타 외곽 링이 차오를수록 말하고 싶다는 뜻, θ를 넘으면 발화합니다
+                  </li>
+                  <li>
+                    <span className="font-semibold text-[var(--text-primary)]">방 상태</span>
+                    <br />
+                    흐름: 대화 다양성 / 냉각도: 엔진 활성도
+                  </li>
+                  <li>
+                    <span className="font-semibold text-[var(--text-primary)]">3D 배경</span>
+                    <br />
+                    헤더 박스 아이콘으로 켜고 끌 수 있습니다
+                  </li>
+                </ul>
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="flex items-center gap-1.5">
           <div
             className={`w-2 h-2 rounded-full ${connected ? "pulse-dot" : ""}`}

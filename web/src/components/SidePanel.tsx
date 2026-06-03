@@ -8,9 +8,10 @@ interface SidePanelProps {
   personaConfigs: PersonaConfig[];
   open: boolean;
   onClose: () => void;
+  humanPulse?: boolean;
 }
 
-export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePanelProps) {
+export function SidePanel({ engineState, personaConfigs, open, onClose, humanPulse = false }: SidePanelProps) {
   // Compute silence status
   const isSilent = useMemo(() => {
     const ids = Object.keys(engineState.intensities).filter((id) => id !== "나");
@@ -91,6 +92,7 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
                       theta={engineState.theta}
                       isPending={engineState.pending === config.id}
                       model={participant?.model}
+                      humanPulse={humanPulse}
                     />
                   );
                 })}
@@ -124,16 +126,20 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
               <div className="mb-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11px] font-medium text-[var(--text-secondary)]">흐름</span>
-                  <span className="text-[11px] font-semibold tabular-nums" style={{ color: flowDesc.color }}>
+                  <span
+                    className="text-[11px] font-semibold tabular-nums"
+                    style={{ color: flowDesc.color, transition: "color 0.6s ease" }}
+                  >
                     {flowDesc.text}
                   </span>
                 </div>
                 <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--gauge-bg)" }}>
                   <div
-                    className="h-full rounded-full transition-all duration-700"
+                    className="h-full rounded-full"
                     style={{
                       width: `${engineState.flow * 100}%`,
                       background: `linear-gradient(90deg, #8ABF9F, ${flowDesc.color})`,
+                      transition: "width 0.9s cubic-bezier(0.25, 1, 0.5, 1), background 0.6s ease",
                     }}
                   />
                 </div>
@@ -143,16 +149,28 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11px] font-medium text-[var(--text-secondary)]">냉각도</span>
-                  <span className="text-[11px] font-semibold tabular-nums" style={{ color: "#E5A44A" }}>
+                  <span
+                    className="text-[11px] font-semibold tabular-nums"
+                    style={{
+                      color: muPct > 0.6 ? "#8ABF9F" : muPct > 0.35 ? "#E5A44A" : "#D9645A",
+                      transition: "color 0.6s ease",
+                    }}
+                  >
                     {muDesc.text}
                   </span>
                 </div>
                 <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--gauge-bg)" }}>
                   <div
-                    className="h-full rounded-full transition-all duration-700"
+                    className="h-full rounded-full"
                     style={{
                       width: `${muPct * 100}%`,
-                      background: "linear-gradient(90deg, #C47A1A, #E5A44A)",
+                      background:
+                        muPct > 0.6
+                          ? "linear-gradient(90deg, #6DAF87, #8ABF9F)"
+                          : muPct > 0.35
+                          ? "linear-gradient(90deg, #C47A1A, #E5A44A)"
+                          : "linear-gradient(90deg, #B03530, #D9645A)",
+                      transition: "width 0.9s cubic-bezier(0.25, 1, 0.5, 1), background 0.6s ease",
                     }}
                   />
                 </div>

@@ -3,6 +3,8 @@ import type { ServerFrame, ChatMessage, EngineState, PersonaConfig } from "@/typ
 import { connect as connectReal } from "@/lib/realEngine";
 import { connect as connectMock } from "@/lib/mockEngine";
 
+const HUMAN_PULSE_MS = 1200;
+
 // VITE_MOCK=1 이면 mock 데모, 기본은 실 WebSocket 서버
 const connect = import.meta.env.VITE_MOCK === "1" ? connectMock : connectReal;
 
@@ -59,8 +61,10 @@ export function useChat() {
   });
   const [connected, setConnected] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [humanPulse, setHumanPulse] = useState(false);
   const connRef = useRef<ReturnType<typeof connect> | null>(null);
   const msgIdRef = useRef(0);
+  const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const conn = connect((frame: ServerFrame) => {
@@ -123,10 +127,17 @@ export function useChat() {
     return () => conn.disconnect();
   }, []);
 
+  const triggerHumanPulse = useCallback(() => {
+    setHumanPulse(true);
+    if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+    pulseTimerRef.current = setTimeout(() => setHumanPulse(false), HUMAN_PULSE_MS);
+  }, []);
+
   const sendMessage = useCallback((text: string) => {
     if (!text.trim() || !connRef.current) return;
     connRef.current.send({ type: "message", text: text.trim() });
-  }, []);
+    triggerHumanPulse();
+  }, [triggerHumanPulse]);
 
   const sendTopics = useCallback((topics: string[]) => {
     if (!connRef.current) return;
@@ -147,5 +158,6 @@ export function useChat() {
     sendTopics,
     getPersonaConfig,
     personaConfigs: PERSONA_CONFIGS,
+    humanPulse,
   };
 }
