@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-friend-engine = ["dep:lindera", "dep:rusqlite"]
+morphology = ["dep:lindera"]
+friend-engine = ["morphology", "dep:rusqlite"]
 friend-engine-semantic = ["friend-engine", "dep:ort", "dep:ndarray", "dep:tokenizers", "dep:usearch"]
 coreml = ["ort/coreml"]
-web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:futures-util", "dep:rusqlite"]
+web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:futures-util", "dep:rusqlite", "morphology"]
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"], optional = true }

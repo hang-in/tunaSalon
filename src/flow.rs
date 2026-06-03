@@ -21,27 +21,39 @@ pub struct FlowMetric {
 
 /// 단일 발화 문자열을 토큰 집합으로 변환한다.
 ///
-/// 규칙:
-/// 1. 소문자화.
-/// 2. 공백으로 분리.
-/// 3. 각 토큰의 양끝 ASCII 구두점(`.` `,` `!` `?` `'` `"` `(` `)` `:` `;`) 제거.
-/// 4. 빈 문자열이 된 토큰은 버린다.
+/// `morphology` feature ON: 한국어 형태소(어간/명사) 기반 토크나이저.
+///   "날씨가"/"날씨를" 모두 "날씨"로 통일돼 한국어 수렴도 측정이 개선된다.
+///   영어/비한글은 `morphological_tokens`가 SL 태그로 처리(fallback 포함).
 ///
-/// 한국어는 공백 분리 근사(v0.6 목표는 정밀도보다 빠른 측정).
+/// `morphology` feature OFF(기본): 공백+ASCII 구두점 분리.
+///   1. 소문자화.
+///   2. 공백으로 분리.
+///   3. 각 토큰의 양끝 ASCII 구두점(`.` `,` `!` `?` `'` `"` `(` `)` `:` `;`) 제거.
+///   4. 빈 문자열이 된 토큰은 버린다.
 pub(crate) fn tokenize(utterance: &str) -> BTreeSet<String> {
-    const STRIP: &[char] = &['.', ',', '!', '?', '\'', '"', '(', ')', ':', ';'];
-    utterance
-        .to_lowercase()
-        .split_whitespace()
-        .filter_map(|tok| {
-            let trimmed = tok.trim_matches(STRIP);
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
-        .collect()
+    #[cfg(feature = "morphology")]
+    {
+        return crate::tokenize_ko::morphological_tokens(utterance)
+            .into_iter()
+            .map(|t| t.to_lowercase())
+            .collect();
+    }
+    #[cfg(not(feature = "morphology"))]
+    {
+        const STRIP: &[char] = &['.', ',', '!', '?', '\'', '"', '(', ')', ':', ';'];
+        return utterance
+            .to_lowercase()
+            .split_whitespace()
+            .filter_map(|tok| {
+                let trimmed = tok.trim_matches(STRIP);
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            .collect();
+    }
 }
 
 /// 두 토큰 집합의 Jaccard 유사도를 계산한다.
@@ -105,7 +117,11 @@ pub fn measure(recent: &[&str]) -> Option<FlowMetric> {
 mod tests {
     use super::*;
 
-    /// (1) 동일/거의 동일한 발화 여러 개 → convergence 높음 (> 0.5).
+    /// (1, 어절 경로 전용) 동일/거의 동일한 발화 여러 개 → convergence 높음 (> 0.5).
+    ///
+    /// morphology ON에서 형태소 분해 결과가 달라져 임계값이 다를 수 있으므로
+    /// 어절 경로(morphology off)에서만 실행.
+    #[cfg(not(feature = "morphology"))]
     #[test]
     fn near_identical_utterances_yield_high_convergence() {
         let utterances = ["비 온다 심심해", "비 온다 심심해", "비 온다 그래"];
@@ -117,7 +133,10 @@ mod tests {
         );
     }
 
-    /// (2) 전혀 다른 토큰으로만 구성된 발화들 → convergence 낮음 (< 0.2).
+    /// (2, 어절 경로 전용) 전혀 다른 토큰으로만 구성된 발화들 → convergence 낮음 (< 0.2).
+    ///
+    /// morphology ON에서 Lindera가 영어(SL)를 다르게 쪼갤 수 있어 어절 경로 전용.
+    #[cfg(not(feature = "morphology"))]
     #[test]
     fn all_distinct_tokens_yield_low_convergence() {
         let utterances = ["apple banana", "cat dog", "echo foxtrot"];
@@ -129,7 +148,7 @@ mod tests {
         );
     }
 
-    /// (3) 유효 발화 1개 이하 → None.
+    /// (3) 유효 발화 1개 이하 → None (경로 무관).
     #[test]
     fn insufficient_utterances_return_none() {
         // 빈 슬라이스
@@ -148,7 +167,7 @@ mod tests {
         );
     }
 
-    /// (4) 같은 입력 두 번 measure → 동일 값(결정성).
+    /// (4) 같은 입력 두 번 measure → 동일 값(결정성, 경로 무관).
     #[test]
     fn measure_is_deterministic() {
         let utterances = ["안녕 세계", "안녕 친구", "세계 평화"];
@@ -157,8 +176,12 @@ mod tests {
         assert_eq!(r1, r2, "동일 입력에 대한 두 번의 호출이 같아야 한다");
     }
 
-    /// (5) Jaccard 손계산 검증: ["a b", "a c"] → {a,b} vs {a,c}.
+    /// (5, 어절 경로 전용) Jaccard 손계산 검증: ["a b", "a c"] → {a,b} vs {a,c}.
     /// 교집합 = {a}, 합집합 = {a,b,c} → 1/3 ≈ 0.3333...
+    ///
+    /// morphology ON에서 morphological_tokens는 1글자 토큰("a")을 제거하므로
+    /// 빈 집합이 되어 measure()가 None을 반환한다. 어절 경로 전용.
+    #[cfg(not(feature = "morphology"))]
     #[test]
     fn jaccard_hand_computed_verification() {
         let result = measure(&["a b", "a c"]).expect("측정 가능해야 한다");
@@ -170,7 +193,10 @@ mod tests {
         );
     }
 
-    /// (6) 구두점 트리밍 확인: "hello," "hello." → 동일 토큰 "hello" → Jaccard=1.
+    /// (6, 어절 경로 전용) 구두점 트리밍 확인: "hello," "hello." → 동일 토큰 "hello" → Jaccard=1.
+    ///
+    /// morphology ON에서 Lindera SL 처리 결과가 다를 수 있어 어절 경로 전용.
+    #[cfg(not(feature = "morphology"))]
     #[test]
     fn punctuation_is_stripped_from_tokens() {
         let result = measure(&["hello,", "hello."]).expect("측정 가능해야 한다");
@@ -181,13 +207,54 @@ mod tests {
         );
     }
 
-    /// (7) 대소문자 정규화: "Apple" vs "apple" → 동일 토큰 → Jaccard=1.
+    /// (7, 어절 경로 전용) 대소문자 정규화: "Apple" vs "apple" → 동일 토큰 → Jaccard=1.
+    ///
+    /// morphology ON에서 Lindera SL이 영어를 어떻게 처리하는지 불확실하여 어절 경로 전용.
+    #[cfg(not(feature = "morphology"))]
     #[test]
     fn case_normalization_works() {
         let result = measure(&["Apple Banana", "apple banana"]).expect("측정 가능해야 한다");
         assert!(
             (result.convergence - 1.0).abs() < 1e-9,
             "대소문자 정규화 후 동일 → convergence=1.0 기대, 실제: {}",
+            result.convergence
+        );
+    }
+
+    /// (8, morphology 전용) 조사만 다른 한국어 발화 → convergence 개선 확인.
+    ///
+    /// "오늘 날씨가 정말 맑다" vs "오늘 날씨를 다시 봤다".
+    /// 어절 기반: "날씨가"/"날씨를"이 겹치지 않아 convergence 거의 0.
+    /// 형태소 기반: "오늘"(NNG)/"날씨"(NNG) 공유 → convergence 확연히 높음.
+    #[cfg(feature = "morphology")]
+    #[test]
+    fn korean_josa_difference_yields_higher_convergence_with_morphology() {
+        let result = measure(&[
+            "오늘 날씨가 정말 맑다",
+            "오늘 날씨를 다시 봤다",
+        ])
+        .expect("측정 가능해야 한다");
+
+        assert!(
+            result.convergence > 0.1,
+            "형태소 분석 시 조사 제거로 convergence > 0.1 기대, 실제: {}",
+            result.convergence
+        );
+    }
+
+    /// (9, morphology 전용) 같은 발화 두 번 → convergence 높음 (형태소 경로에서도).
+    #[cfg(feature = "morphology")]
+    #[test]
+    fn morphology_identical_utterances_yield_high_convergence() {
+        let utterances = [
+            "오늘 날씨 정말 좋아",
+            "오늘 날씨 정말 좋아",
+            "오늘 날씨 맑네",
+        ];
+        let result = measure(&utterances).expect("측정 가능해야 한다");
+        assert!(
+            result.convergence > 0.3,
+            "동일 한국어 발화 반복 시 convergence > 0.3 기대, 실제: {}",
             result.convergence
         );
     }

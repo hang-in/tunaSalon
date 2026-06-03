@@ -6,7 +6,7 @@
 //! 공개 인터페이스: `morphological_tokens(text) -> Vec<String>`.
 //! OnceLock으로 1회 초기화(임베딩 사전). 오류 시 whitespace fallback.
 
-#![cfg(feature = "friend-engine")]
+#![cfg(feature = "morphology")]
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
