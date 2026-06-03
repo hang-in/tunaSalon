@@ -1,7 +1,7 @@
 ---
 title: "Salon v0.10 Task 48: HNSW ANN (usearch) + 임베딩 저장 (Stage 2b)"
 type: plan-task
-status: in_progress
+status: done
 updated_at: 2026-06-03
 parent_plan: salon-engine-v10.md
 task_id: "48"

@@ -184,7 +184,89 @@ mod sqlite_impl {
                 mem_id  UNINDEXED,
                 tokenize='unicode61'
             );",
-        )
+        )?;
+
+        // semantic feature: 임베딩 BLOB 저장 테이블
+        #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memory_vectors (
+                mem_id    INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL
+            );",
+        )?;
+
+        Ok(())
+    }
+
+    // ─── ANN 재구축 헬퍼 (semantic only) ──────────────────────────────────────
+
+    /// `memory_vectors` 테이블의 BLOB로 ANN 인덱스를 재구축한다.
+    /// `.usearch` 파일이 없거나 로드 실패 시 호출된다.
+    /// 오류 시 None 반환(eprintln 경고), 패닉 없음.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    fn rebuild_ann_from_db(
+        conn: &Connection,
+        usearch_path: &std::path::Path,
+        _embedder: &dyn crate::embed::Embedder,
+    ) -> Option<crate::ann::AnnIndex> {
+        let ann = match crate::ann::AnnIndex::open_or_create(usearch_path, 1024) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("[tunaSalon] warn: ANN open_or_create for rebuild failed: {e}");
+                return None;
+            }
+        };
+
+        // memory_vectors 전체 행 읽기
+        let mut stmt = match conn.prepare("SELECT mem_id, embedding FROM memory_vectors") {
+            Ok(s) => s,
+            Err(_) => return Some(ann), // 테이블 없음 or 비어 있음 → 빈 인덱스
+        };
+
+        let rows_result = stmt.query_map([], |row| {
+            let mem_id: i64 = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            Ok((mem_id, blob))
+        });
+
+        let rows = match rows_result {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[tunaSalon] warn: ANN rebuild query failed: {e}");
+                return Some(ann);
+            }
+        };
+
+        for item in rows {
+            if let Ok((mem_id, blob)) = item {
+                let vec = blob_to_f32(&blob);
+                if let Err(e) = ann.add(mem_id as u64, &vec) {
+                    eprintln!("[tunaSalon] warn: ANN rebuild add key={mem_id} failed: {e}");
+                }
+            }
+        }
+
+        Some(ann)
+    }
+
+    // ─── BLOB ↔ f32 직렬화 (to_le_bytes / from_le_bytes, dim=1024 고정) ──────
+
+    /// f32 슬라이스를 little-endian 바이트 Vec으로 직렬화한다.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    fn f32_to_blob(vec: &[f32]) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(vec.len() * 4);
+        for &v in vec {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        buf
+    }
+
+    /// little-endian 바이트 Vec을 f32 슬라이스로 역직렬화한다.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    fn blob_to_f32(blob: &[u8]) -> Vec<f32> {
+        blob.chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
     }
 
     /// 메모리 스토어: `:memory:` SQLite + FTS5 BM25 구현.
@@ -193,11 +275,18 @@ mod sqlite_impl {
     ///   - `memories(id, room, ts, speaker, content)`
     ///   - `participation(room, persona)` UNIQUE
     ///   - `memories_fts(tokens, room UNINDEXED, mem_id UNINDEXED, tokenize='unicode61')`
+    ///   - `memory_vectors(mem_id, embedding BLOB)` — `friend-engine-semantic` only
     ///
     /// 결정성: `:memory:` + 고정 insert 순서 + `ORDER BY score ASC, ts DESC, id DESC`.
     /// rusqlite Connection은 Send, !Sync → LiveSession 단일 스레드에서만 소유.
     pub struct MemoryStore {
         conn: Connection,
+        /// 임베더 (semantic feature on, non-windows 시).
+        #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+        embedder: Box<dyn crate::embed::Embedder>,
+        /// HNSW ANN 인덱스 (semantic feature on, non-windows 시).
+        #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+        ann: Option<crate::ann::AnnIndex>,
     }
 
     impl MemoryStore {
@@ -208,6 +297,19 @@ mod sqlite_impl {
             let conn = Connection::open_in_memory()
                 .expect("in-memory sqlite must open");
             init_schema(&conn).expect("in-memory sqlite schema must init");
+
+            #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+            {
+                use crate::embed::MockEmbedder;
+                let embedder: Box<dyn crate::embed::Embedder> =
+                    Box::new(MockEmbedder::default());
+                let ann = crate::ann::AnnIndex::in_memory(1024)
+                    .map_err(|e| eprintln!("[tunaSalon] warn: ANN in_memory init failed: {e}"))
+                    .ok();
+                return Self { conn, embedder, ann };
+            }
+
+            #[cfg(not(all(feature = "friend-engine-semantic", not(target_os = "windows"))))]
             Self { conn }
         }
 
@@ -236,6 +338,45 @@ mod sqlite_impl {
             // WAL 모드: 크래시 복구·동시 읽기 성능 향상. 단일 writer(라이브 틱 순차) 환경에 적합.
             conn.pragma_update(None, "journal_mode", "WAL")?;
             init_schema(&conn)?;
+
+            #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+            {
+                use crate::embed::MockEmbedder;
+                let embedder: Box<dyn crate::embed::Embedder> =
+                    Box::new(MockEmbedder::default());
+
+                // `.usearch` 인덱스: <db path>.usearch
+                let usearch_path = {
+                    let mut p = path.to_path_buf();
+                    let mut fname = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("memory.db")
+                        .to_string();
+                    fname.push_str(".usearch");
+                    p.set_file_name(fname);
+                    p
+                };
+
+                let ann = if usearch_path.exists() {
+                    // 파일 인덱스 로드
+                    crate::ann::AnnIndex::open_or_create(&usearch_path, 1024)
+                        .map_err(|e| {
+                            eprintln!("[tunaSalon] warn: ANN load failed ({e}), rebuilding...");
+                        })
+                        .ok()
+                        .or_else(|| {
+                            rebuild_ann_from_db(&conn, &usearch_path, &*embedder)
+                        })
+                } else {
+                    // `.usearch` 없음 → memory_vectors 행에서 재구축
+                    rebuild_ann_from_db(&conn, &usearch_path, &*embedder)
+                };
+
+                return Ok(Self { conn, embedder, ann });
+            }
+
+            #[cfg(not(all(feature = "friend-engine-semantic", not(target_os = "windows"))))]
             Ok(Self { conn })
         }
 
@@ -309,6 +450,7 @@ mod sqlite_impl {
         /// 1. `memories` 테이블에 row 삽입.
         /// 2. `morphological_tokens`로 FTS 토큰 생성 → `memories_fts`에 삽입.
         /// 3. 화자 자동 참여 등록.
+        /// 4. (semantic only) 임베딩 계산 → `memory_vectors` BLOB 저장 → ANN add.
         pub fn record(&mut self, event: MemoryEvent) {
             // memories 삽입
             let result = self.conn.execute(
@@ -334,6 +476,66 @@ mod sqlite_impl {
                 "INSERT OR IGNORE INTO participation(room, persona) VALUES (?1, ?2)",
                 params![event.room, event.speaker],
             );
+
+            // ── semantic: 임베딩 계산 → memory_vectors BLOB → ANN add ──────
+            #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+            {
+                match self.embedder.embed(&event.content) {
+                    Ok(vec) => {
+                        // BLOB 저장
+                        let blob = f32_to_blob(&vec);
+                        let db_result = self.conn.execute(
+                            "INSERT OR REPLACE INTO memory_vectors(mem_id, embedding) VALUES (?1, ?2)",
+                            params![mem_id, blob],
+                        );
+                        if let Err(e) = db_result {
+                            eprintln!("[tunaSalon] warn: memory_vectors insert failed (mem_id={mem_id}): {e}");
+                        }
+                        // ANN add
+                        if let Some(ann) = &self.ann {
+                            if let Err(e) = ann.add(mem_id as u64, &vec) {
+                                eprintln!("[tunaSalon] warn: ANN add failed (mem_id={mem_id}): {e}");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[tunaSalon] warn: embed failed (mem_id={mem_id}): {e}");
+                    }
+                }
+            }
+        }
+
+        /// ANN 의미 검색 (semantic only).
+        ///
+        /// `query`를 임베딩 → ANN 검색 → `(mem_id, distance)` 반환.
+        /// distance 낮을수록 가까움(코사인). 참여 격리 없음(raw 검색) — 격리는 task-49 hybrid에서.
+        /// 오류·ANN 없음 → 빈 Vec.
+        #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+        pub fn vector_search(&self, query: &str, k: usize) -> Vec<(i64, f32)> {
+            if k == 0 {
+                return vec![];
+            }
+            let ann = match &self.ann {
+                Some(a) => a,
+                None => return vec![],
+            };
+            let vec = match self.embedder.embed(query) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[tunaSalon] warn: vector_search embed failed: {e}");
+                    return vec![];
+                }
+            };
+            match ann.search(&vec, k) {
+                Ok(results) => results
+                    .into_iter()
+                    .map(|(key, dist)| (key as i64, dist))
+                    .collect(),
+                Err(e) => {
+                    eprintln!("[tunaSalon] warn: vector_search ann.search failed: {e}");
+                    vec![]
+                }
+            }
         }
 
         /// `persona`의 과거 사건 중 `query`와 FTS5 BM25 점수가 높은 것을 최대 `k`개 반환한다(owned).
@@ -446,6 +648,31 @@ mod sqlite_impl {
         /// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
         pub fn format_recall(events: &[MemoryEvent]) -> Option<String> {
             format_recall_impl(events)
+        }
+
+        // ── 테스트 전용 접근자 ────────────────────────────────────────────────
+
+        /// `memory_vectors` 행 수 (semantic feature 테스트용).
+        #[cfg(all(test, feature = "friend-engine-semantic", not(target_os = "windows")))]
+        pub fn test_vector_row_count(&self) -> i64 {
+            self.conn
+                .query_row("SELECT COUNT(*) FROM memory_vectors", [], |r| r.get(0))
+                .unwrap_or(0)
+        }
+
+        /// ANN 크기 (semantic feature 테스트용).
+        #[cfg(all(test, feature = "friend-engine-semantic", not(target_os = "windows")))]
+        pub fn test_ann_size(&self) -> usize {
+            self.ann.as_ref().map(|a| a.size()).unwrap_or(0)
+        }
+
+        /// ANN 레퍼런스 (semantic feature 테스트용, roundtrip save).
+        #[cfg(all(test, feature = "friend-engine-semantic", not(target_os = "windows")))]
+        pub fn test_ann_save(&self) -> Result<(), String> {
+            match &self.ann {
+                Some(a) => a.save(),
+                None => Ok(()),
+            }
         }
     }
 
@@ -760,6 +987,122 @@ mod tests {
         match prev {
             Some(v) => std::env::set_var("SALON_MEMORY_DB", v),
             None => std::env::remove_var("SALON_MEMORY_DB"),
+        }
+    }
+
+    // ── semantic feature 테스트 (friend-engine-semantic + non-windows) ─────────
+
+    /// record N건 → memory_vectors에 N행 + ann.size()==N.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn semantic_record_stores_vectors() {
+        let mut store = MemoryStore::new();
+        store.record(ev("salon", 1, "alice", "안녕 세계 rust"));
+        store.record(ev("salon", 2, "alice", "고양이 강아지 귀엽다"));
+        store.record(ev("salon", 3, "bob", "오늘 날씨 맑다"));
+
+        // memory_vectors 행 수 확인
+        assert_eq!(store.test_vector_row_count(), 3, "memory_vectors에 3행이 있어야 한다");
+        // ANN size 확인
+        assert_eq!(store.test_ann_size(), 3, "ANN에 3개 벡터가 있어야 한다");
+    }
+
+    /// vector_search: 토큰 겹치는 쿼리가 해당 사건 mem_id를 상위로.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn semantic_vector_search_returns_relevant() {
+        let mut store = MemoryStore::new();
+        // record는 mem_id 1, 2, 3 순으로 자동 할당됨 (AUTOINCREMENT)
+        store.record(ev("salon", 1, "alice", "rust programming language"));
+        store.record(ev("salon", 2, "alice", "고양이 강아지 귀엽다"));
+        store.record(ev("salon", 3, "alice", "오늘 날씨 맑다"));
+
+        // "rust language"와 토큰 겹치는 것은 첫 번째 사건
+        let results = store.vector_search("rust language", 3);
+        assert!(!results.is_empty(), "vector_search 결과가 비어 있으면 안 된다");
+        // 첫 번째 결과의 mem_id가 1이어야 한다 (MockEmbedder 기준)
+        assert_eq!(
+            results[0].0, 1,
+            "상위 결과의 mem_id가 1이어야 한다 (rust 토큰 공유). 결과: {results:?}"
+        );
+    }
+
+    /// 결정성: 같은 스토어+쿼리로 두 번 호출 → 동일 결과.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn semantic_vector_search_deterministic() {
+        let mut store = MemoryStore::new();
+        store.record(ev("room", 1, "alice", "hello world rust"));
+        store.record(ev("room", 2, "alice", "고양이 귀엽다"));
+
+        let r1 = store.vector_search("hello rust", 2);
+        let r2 = store.vector_search("hello rust", 2);
+        assert_eq!(r1.len(), r2.len(), "두 번 호출 결과 길이가 같아야 한다");
+        for (a, b) in r1.iter().zip(r2.iter()) {
+            assert_eq!(a.0, b.0, "mem_id가 동일해야 한다");
+            assert!((a.1 - b.1).abs() < 1e-6, "distance가 동일해야 한다");
+        }
+    }
+
+    /// vector_search k=0 → 빈 Vec.
+    #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn semantic_vector_search_k_zero_empty() {
+        let mut store = MemoryStore::new();
+        store.record(ev("room", 1, "alice", "hello world"));
+        let results = store.vector_search("hello", 0);
+        assert!(results.is_empty(), "k=0이면 빈 Vec");
+    }
+
+    /// open(file) roundtrip: record → drop → reopen → vector_search 동작.
+    #[cfg(all(feature = "friend-engine", feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[test]
+    fn semantic_open_roundtrip_vector_search() {
+        let tmp_dir = std::env::temp_dir();
+        let pid = std::process::id();
+        let db_path = tmp_dir.join(format!("tunasalon_sem_roundtrip_{pid}.db"));
+        let usearch_path = tmp_dir.join(format!("tunasalon_sem_roundtrip_{pid}.db.usearch"));
+
+        // 잔여 파일 정리
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&usearch_path);
+        for suf in &["-wal", "-shm"] {
+            let _ = std::fs::remove_file(
+                tmp_dir.join(format!("tunasalon_sem_roundtrip_{pid}{suf}.db")),
+            );
+        }
+
+        // 1단계: 파일 DB 열고 사건 기록 후 save + drop
+        {
+            let mut store = MemoryStore::open(&db_path)
+                .expect("open()이 성공해야 한다");
+            store.record(ev("salon", 1, "alice", "rust programming language semantic"));
+            store.record(ev("salon", 2, "alice", "고양이 강아지 귀엽다"));
+            // ANN 저장
+            let _ = store.test_ann_save();
+        }
+
+        // 2단계: 재오픈 → ANN 로드 → vector_search
+        {
+            let store = MemoryStore::open(&db_path).expect("재오픈이 성공해야 한다");
+            let results = store.vector_search("rust language", 2);
+            assert!(
+                !results.is_empty(),
+                "재오픈 후 vector_search 결과가 있어야 한다"
+            );
+            assert_eq!(
+                results[0].0, 1,
+                "재오픈 후 상위 mem_id=1이어야 한다. 결과: {results:?}"
+            );
+        }
+
+        // 정리
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&usearch_path);
+        for suf in &["-wal", "-shm"] {
+            let _ = std::fs::remove_file(
+                tmp_dir.join(format!("tunasalon_sem_roundtrip_{pid}{suf}.db")),
+            );
         }
     }
 }
