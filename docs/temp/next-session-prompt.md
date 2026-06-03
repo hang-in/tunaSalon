@@ -18,15 +18,15 @@ tunaSalon 이어서 작업한다. 먼저 CLAUDE.md(핸드오프)와 docs/plans/s
 
 목표(salon-web-frontend.md): Rust 엔진은 재작성 0. axum WebSocket을 새 출력 sink로 얹어 엔진 이벤트(발화/강도/흐름/식힘/생각중)를 브라우저로 push + 사람 입력을 submit_human으로 받는다. 엔진은 blocking 유지하고 async는 채널 브리지로 격리(엔진 코어에 async 미도입). golden/headless/smoke 무손상(전부 `web` feature flag 뒤, 기본 빌드 무영향). 키는 서버에만(WASM-only 불가). TUI(chat.rs)는 디버그 sink로 동결.
 
-착수 전에 결정 2가지를 먼저 나에게 물어라:
-1) 프런트 형태: Kimi 초안(web/, React/Vite, 엔진상태 패널은 강하나 채팅영역 미완)을 살릴지 vs 플랜대로 정적 HTML/CSS/JS 1장(프레임워크 미도입)부터 갈지. 플랜 non-goal이 "프레임워크 미도입"이라 Kimi 초안과 방향이 갈린다.
-2) 시작 범위: localhost 단일 세션부터(권장, 인증·멀티세션 없음, 프로토콜만 확장 여지) vs 처음부터 멀티세션 고려.
+착수 결정(확정, 사용자 2026-06-03 - 다시 묻지 말 것. 구 플랜에서 갱신됨. salon-web-frontend.md 상단 갱신 노트 참고):
+1) **프런트 = Kimi 초안(web/, Vite + React + TS + Tailwind + shadcn/ui + three.js) 채택**. 구 플랜의 "정적 1장 / 프레임워크 미도입"은 폐기. axum은 Vite 빌드 산출물(web/dist)을 정적 서빙하고, 개발 중에는 Vite dev server + /ws 프록시.
+2) **바인딩 = 0.0.0.0:PORT로 LAN(공유기 192.168.1.X) 접속 허용**. 외부 노출은 사용자가 Cloudflare 터널로 처리(서버는 터널/포트포워딩 비관여). 인증은 범위 밖(신뢰된 홈 LAN 가정).
 
 그다음 P1 수직 슬라이스를 task로 분해(salon-web-frontend-task-NN.md)하고 구현해라:
-- axum WS 라우트 1개(`/ws` 업그레이드) + 정적 파일 서빙, `--web [--port N]` 플래그(opt-in), `web` feature flag(Cargo.toml). 기본 실행·`--chat`·`--headless`는 그대로.
+- axum WS 라우트 1개(`/ws` 업그레이드) + 정적 서빙(web/dist), `--web [--port N] [--host H]` 플래그(opt-in, 기본 host 0.0.0.0으로 LAN 허용), `web` feature flag(Cargo.toml). 기본 실행·`--chat`·`--headless`는 그대로.
 - 엔진<->async 브리지: blocking LiveSession을 전용 스레드에서 구동 + tokio mpsc로 WS task와 양방향. 엔진 코어 무수정(LiveSession은 이미 워커 스레드 + mpsc로 논블로킹 생성 보유 → 재사용).
 - 이벤트 직렬화 어댑터: 엔진 Event/intensities/FlowMetric/mu_scale을 web 프레임 스키마로(serde JSON). 서버->클라(utterance/intensities/flow/mu_scale/pending) + 클라->서버(human_message).
-- 정적 1장: 채팅 로그(auto-scroll) + 사이드바 게이지(λ를 CSS 트랜지션으로 애니메이션, θ 마커, 흐름/식힘) + 입력창.
+- 프런트 = Kimi 초안(web/) 배선: 채팅 로그(auto-scroll) + 사이드바 게이지(λ 애니, θ 마커, 흐름/식힘) + 입력창 + 엔진상태 패널을 실 WS 프레임에 연결. 먼저 `cd web && npm install && npm run dev`로 초안 현황(강한 부분·미완 영역) 파악.
 - 수직 슬라이스 한 바퀴(엔진 push -> 브라우저 렌더 -> 사람 입력 -> 엔진) 먼저 증명한 뒤 폴리시(P2~).
 
 검증: 골든 5종 + 기본/friend-engine/friend-engine-semantic 테스트 전부 green 유지(web은 feature flag 뒤라 기본 빌드 무영향). WS 수직 슬라이스는 로컬 브라우저로 수동 확인.

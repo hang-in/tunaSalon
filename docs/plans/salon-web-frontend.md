@@ -5,7 +5,7 @@ status: planned
 priority: P1
 updated_at: 2026-06-03
 owner: shared
-summary: "외부 사용자가 봤을 때 제대로 된(프로덕션 레벨) 앱"을 목표로, 채팅 UI를 web으로 옮긴다. Rust 엔진은 그대로 두고(재작성 0), axum WebSocket 서버를 새 출력 sink로 얹어 엔진 이벤트를 브라우저로 push + 사람 입력을 받는다. TUI(chat.rs)는 디버그 sink로 강등(유지). golden/headless/smoke는 무손상(엔진 회귀 하네스 그대로). WASM-only는 불가(LLM 키가 서버에 있어야 함). 전송은 WebSocket(채팅앱 정석), 프런트는 정적 HTML/CSS/JS 한 장부터.
+summary: "외부 사용자가 봤을 때 제대로 된(프로덕션 레벨) 앱"을 목표로, 채팅 UI를 web으로 옮긴다. Rust 엔진은 그대로 두고(재작성 0), axum WebSocket 서버를 새 출력 sink로 얹어 엔진 이벤트를 브라우저로 push + 사람 입력을 받는다. TUI(chat.rs)는 디버그 sink로 강등(유지). golden/headless/smoke는 무손상(엔진 회귀 하네스 그대로). WASM-only는 불가(LLM 키가 서버에 있어야 함). 전송은 WebSocket(채팅앱 정석). 프런트는 Kimi 초안(web/, Vite+React+TS+Tailwind+shadcn/ui+three.js)을 채택해 배선한다(2026-06-03 결정). 서버는 0.0.0.0 바인딩으로 LAN 접속 허용, 외부는 사용자가 Cloudflare 터널로 처리.
 design_ref: ../reference/salon-engine-design.md
 ui_ref: ../temp/salon-persona-ui.md
 roadmap_ref: salon-engine-v1.md
@@ -16,6 +16,10 @@ roadmap_ref: salon-engine-v1.md
 > 번호 주의: 엔진 버전 라인(v0.1~v0.8, 다음 v0.9=friend engine 심화)과 별개의 **병렬 제품 트랙**이다. 한때 "v0.9"로 적었으나 v0.9는 friend engine 심화에 배정됨(2026-06-03). 이 트랙은 엔진 버전 번호를 점유하지 않는다.
 
 > 상태: **planned (착수 전, 결정만 기록)**. 사용자 지시(2026-06-03): "플랜 문서로 만들어 두고 하던 작업 이어가자" - 즉 이 트랙은 **파킹**해 두고 다른 작업을 먼저 진행한다. 이 문서는 web 전환 결정과 아키텍처를 잃지 않으려는 기록이다.
+
+> **갱신(2026-06-03, v0.10 완료 후 착수 결정 확정)**:
+> - (a) **프런트는 Kimi 초안(`web/`, Vite + React + TS + Tailwind + shadcn/ui + three.js) 채택**. 아래 §2의 "프레임워크 미도입" non-goal은 **폐기**한다(레거시). axum은 Vite 빌드 산출물(`web/dist`)을 정적 서빙하고, 개발 중에는 Vite dev server + `/ws` 프록시를 쓴다.
+> - (b) **서버는 `0.0.0.0:PORT` 바인딩으로 내부 네트워크(공유기 192.168.1.X) 접속 허용**. 외부 노출은 사용자가 **Cloudflare 터널**로 처리한다(서버는 터널/포트포워딩에 비관여). 인증은 여전히 범위 밖(신뢰된 홈 LAN 가정).
 
 ## 0. Context / 동기
 
@@ -49,7 +53,7 @@ roadmap_ref: salon-engine-v1.md
 
 ### Non-goals (이 트랙 범위 밖, 이후)
 - ❌ 멀티세션/멀티룸 동시 서빙, 인증, 호스팅(외부 배포). 시작은 **localhost 단일 세션**. 단 WS 프로토콜은 멀티세션 확장 가능하게 설계.
-- ❌ SSR/프레임워크(React/Next/Svelte) 도입 - 정적 1장으로 시작, 컴포넌트가 정말 필요해지면 그때.
+- (폐기됨 2026-06-03) ~~SSR/프레임워크 도입 거절, 정적 1장으로 시작~~ → **Kimi 초안(Vite+React+TS) 채택**으로 변경. 단 **SSR은 여전히 안 한다**(SPA + WS). Vite 빌드 산출물(`web/dist`)을 axum이 정적 서빙.
 - ❌ 캐릭터 스프라이트(persona-ui §4) - web에서 더 잘 되지만 별도 대형 항목.
 - ❌ `/invite`·persona 비주얼 명령 UI - 채팅 루프 안정화 후.
 - ❌ TUI 신규 기능 - TUI는 동결(디버그용 현상 유지).
@@ -73,10 +77,10 @@ roadmap_ref: salon-engine-v1.md
 |------|------|
 | 엔진 코어 | **무수정**. LiveSession 재사용(이미 워커 스레드 + mpsc, 논블로킹 생성) |
 | 신규 `src/web.rs`(가칭) | axum 라우터(정적 파일 서빙 + `/ws` 업그레이드), WS task ↔ LiveSession 브리지 |
-| 신규 `web/` 정적 디렉터리 | `index.html` + `app.js` + `style.css`. 채팅/사이드바/입력 |
+| `web/` Kimi 초안(이미 존재) | Vite + React + TS + Tailwind + shadcn/ui + three.js SPA. `npm run build` → `web/dist`. axum이 `dist`를 정적 서빙(개발 중에는 Vite dev server + `/ws` 프록시). 채팅/사이드바/입력 + 엔진상태 패널 |
 | 신규 프레임 스키마 | 서버→클라(utterance, intensities, flow, mu_scale, pending) / 클라→서버(human_message). serde JSON |
 | `Cargo.toml` | `axum` + `tokio`(+ ws feature). **feature flag 뒤**에 둬 기본 빌드/CI/골든은 무영향(`--features web`) |
-| `main.rs` | `--web [--port N]` 플래그(opt-in). 기본 실행·`--chat`·`--headless`는 그대로 |
+| `main.rs` | `--web [--port N] [--host H]` 플래그(opt-in). 기본 host `0.0.0.0`(LAN 허용), 기본 port 예: 8080. 기본 실행·`--chat`·`--headless`는 그대로 |
 | `chat.rs`(TUI) | 강등(디버그 sink). 변경 없음 |
 
 전송 결정은 §5.
@@ -85,8 +89,8 @@ roadmap_ref: salon-engine-v1.md
 
 | Phase | 내용 | 의존성 | 골든 |
 |---|---|---|---|
-| **P1 수직 슬라이스** | axum WS 라우트 1개 + 엔진 브리지 + 정적 1장(채팅 로그 + λ 게이지 CSS 애니 + 입력). 엔진 push→렌더→입력→엔진 한 바퀴 증명 | axum/tokio(feature flag) | 무관(새 sink) |
-| **P2 프로덕션 외형** | 헤더(앱·방·상태) + 푸터/도움 + 화자별 색 테마 + 스크롤백 + 애니 스피너 + 빈/에러 상태 + 리사이즈 견고 | dep 0(프런트) | 무관 |
+| **P1 수직 슬라이스** | axum WS 라우트 1개 + 엔진 브리지 + Kimi 초안(`web/`) 배선(채팅 로그 + λ 게이지 + 입력 + 엔진상태 패널을 실 WS 프레임에 연결). 엔진 push→렌더→입력→엔진 한 바퀴 증명. 0.0.0.0 바인딩으로 LAN 접속 확인 | axum/tokio(feature flag) + web/ 빌드(npm) | 무관(새 sink) |
+| **P2 프로덕션 외형** | 헤더(앱·방·상태) + 푸터/도움 + 화자별 색 테마 + 스크롤백 + 애니 스피너 + 빈/에러 상태 + 리사이즈 견고 | shadcn/ui 컴포넌트 | 무관 |
 | **P3 생동감 디테일** | λ-band 상태 표현(멍/들썩/곧), 사람입력 시 게이지 일제 리셋 강조(persona-ui §5), 흐름/식힘 시각화 | dep 0 | 무관 |
 | **P4 명령/방 운영** | `/invite`·`/help`·`/persona random` + 미리보기 모달(persona-ui §3). 멀티룸은 이후 | - | 무관 |
 | **P5 캐릭터 비주얼** | persona-ui §4 스프라이트/포즈를 web 렌더로(시그니처 볼거리). 별도 대형 트랙 | - | 무관 |
@@ -108,8 +112,9 @@ WS의 유일한 추가 비용: ping/pong keepalive + 재연결 로직을 직접 
 
 ## 6. 범위/시작점 (사용자 결정 대기)
 
-- 시작: **(a) 나만 / localhost 단일 세션** 권장(인증·멀티세션 없음). 프로토콜은 (b) 확장 가능하게 설계.
-- 나중: **(b) 외부 사용자 / 호스팅·멀티세션·인증** - auth/세션/배포 추가.
+- 시작(확정 2026-06-03): **localhost + LAN 단일 세션**. axum `0.0.0.0:PORT` 바인딩으로 같은 공유기(192.168.1.X)의 다른 기기에서도 접속. 인증·멀티세션 없음(신뢰된 홈 LAN 가정). 프로토콜은 멀티세션 확장 가능하게 설계.
+- 외부 접속: 사용자가 **Cloudflare 터널**로 처리한다(서버는 0.0.0.0만 바인딩, 포트포워딩/호스팅 비관여).
+- 나중: 외부 공개 호스팅·멀티세션·인증 - auth/세션/배포 추가(그때 인증 필수).
 
 ## 7. 위험과 대응
 
@@ -121,6 +126,7 @@ WS의 유일한 추가 비용: ping/pong keepalive + 재연결 로직을 직접 
 | 표면 증가(서버+전송+프런트+빌드) | 정적 1장 + feature flag + 수직 슬라이스 우선으로 최소화. 프레임워크 미도입 |
 | TUI 방치로 부패 | 디버그 sink로 동결·유지, 회귀는 기존 chat 테스트로 |
 | 멀티세션 성급 도입 | localhost 단일부터. 프로토콜만 확장 여지 남김 |
+| LAN 바인딩(0.0.0.0) 노출 | 신뢰된 홈 LAN 가정. 키는 서버에만(INV-3, 브라우저로 안 감). 외부 노출은 Cloudflare 터널로만(직접 포트포워딩 금지). 공개 호스팅 단계에선 인증 필수(그때 추가) |
 
 ## 8. 산출물
 
