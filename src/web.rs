@@ -87,7 +87,7 @@ enum EngineCmd {
 }
 
 const STATE_PERIOD: Duration = Duration::from_millis(700);
-const DEFAULT_TICK_MS: u64 = 4000;
+const DEFAULT_TICK_MS: u64 = 6000;
 const POLL_PERIOD: Duration = Duration::from_millis(80);
 const SAVE_PERIOD: Duration = Duration::from_secs(5);
 

@@ -68,7 +68,7 @@ export function useChat() {
     ],
     topics: ["부처님 오신날"],
     paused: false,
-    tick_ms: 4000,
+    tick_ms: 6000,
   });
   const [connected, setConnected] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -89,7 +89,7 @@ export function useChat() {
           participants: frame.participants,
           topics: frame.topics,
           paused: frame.paused ?? false,
-          tick_ms: frame.tick_ms ?? 4000,
+          tick_ms: frame.tick_ms ?? 6000,
         });
         setConnected(true);
       } else if (frame.type === "utterance") {

@@ -508,7 +508,8 @@ pub fn indian_name(mbti: Mbti, blood: Blood, zodiac: Zodiac) -> String {
         "aqu" => format!("{eul} 부르는"),
         _ => "의 노래".to_string(), // pis
     };
-    format!("{adj}{noun}{suffix}")
+    // 닉네임 공백 제거(사용자 요청): "지혜로운 사슴과 달리는" -> "지혜로운사슴과달리는".
+    format!("{adj}{noun}{suffix}").replace(' ', "")
 }
 
 /// 이름에서 결정적 id slug 생성.
@@ -563,7 +564,8 @@ pub fn assemble(role: Role, mbti: Mbti, blood: Blood, zodiac: Zodiac, name: &str
     // 기존 데모 3인(demo_persona_system_prompts)과 동일하게 locale::reply_language()를 쓴다.
     let lang = crate::locale::reply_language();
     let system_prompt = format!(
-        "{role_prompt} {mbti_style} {zodiac_mood} {blood_char} {constraint} Always respond in {lang}, even if others write in another language.",
+        "You are {name}. {role_prompt} {mbti_style} {zodiac_mood} {blood_char} {constraint} React to what the others JUST said and build on it; do not ignore them or keep pushing your own topic, and do not drift into unrelated tangents. Never repeat, agree with, or react to your OWN earlier line as if someone else said it. When 나 says something, answer 나 directly and follow their lead. Always respond in {lang}, even if others write in another language. When asked your name, answer {name}.",
+        name = name,
         role_prompt  = role.prompt_fragment(),
         mbti_style   = mbti.style_fragment(),
         zodiac_mood  = zodiac.mood_fragment(),
@@ -923,10 +925,10 @@ mod tests {
         let wolf: Mbti = "entp".parse().unwrap();
         let a: Blood = "a".parse().unwrap();
         let gem: Zodiac = "gem".parse().unwrap();
-        assert!(indian_name(wolf, a, gem).contains("와 함께 춤을"));
+        assert!(indian_name(wolf, a, gem).contains("와함께춤을"));
         // ESTJ=황소(받침X)도 "와"; ISTJ=산(받침O) -> "과"
         let mountain: Mbti = "istj".parse().unwrap();
-        assert!(indian_name(mountain, a, gem).contains("과 함께 춤을"));
+        assert!(indian_name(mountain, a, gem).contains("과함께춤을"));
     }
 
     /// 빈 이름이면 인디언식 자동 생성.
