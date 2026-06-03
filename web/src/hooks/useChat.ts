@@ -118,7 +118,7 @@ export function useChat() {
           },
         ]);
       }
-    });
+    }, (isConnected: boolean) => setConnected(isConnected));
     connRef.current = conn;
     return () => conn.disconnect();
   }, []);

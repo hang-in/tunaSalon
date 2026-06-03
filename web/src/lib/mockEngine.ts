@@ -244,7 +244,10 @@ let engine: ConversationEngine | null = null;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let callback: ((frame: ServerFrame) => void) | null = null;
 
-export function connect(onFrame: (frame: ServerFrame) => void): { send: (frame: ClientFrame) => void; disconnect: () => void } {
+export function connect(
+  onFrame: (frame: ServerFrame) => void,
+  onStatus?: (connected: boolean) => void
+): { send: (frame: ClientFrame) => void; disconnect: () => void } {
   // Cleanup any previous connection
   if (intervalId) clearInterval(intervalId);
 
@@ -254,6 +257,9 @@ export function connect(onFrame: (frame: ServerFrame) => void): { send: (frame: 
   engine.deliver = (frames) => {
     for (const f of frames) onFrame(f);
   };
+
+  // mock은 즉시 연결됨
+  onStatus?.(true);
 
   // Initial state burst
   setTimeout(() => {
@@ -297,6 +303,7 @@ export function connect(onFrame: (frame: ServerFrame) => void): { send: (frame: 
       if (intervalId) clearTimeout(intervalId);
       engine = null;
       callback = null;
+      onStatus?.(false);
     },
   };
 }
