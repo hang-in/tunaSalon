@@ -134,8 +134,8 @@ fn main() {
             );
             // 모델 표시(라우팅 일치): friend/chaos -> qwen(지인서버 둘), summarizer -> gemma(cloud 하나).
             let mut models = std::collections::BTreeMap::new();
-            models.insert("friend".to_string(), "qwen3.6-35b-fast".to_string());
-            models.insert("chaos".to_string(), "qwen3.6-35b-fast".to_string());
+            models.insert("friend".to_string(), "qwen3.6-35b".to_string());
+            models.insert("chaos".to_string(), "qwen3.6-35b".to_string());
             models.insert("summarizer".to_string(), "gemma4:31b-cloud".to_string());
             salon::web::serve(&cli.host, cli.port, session, "나".to_string(), models);
         }
@@ -455,12 +455,17 @@ fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
 /// --chat 및 chat_demo 공용 데모 룸 풀을 빌드한다.
 ///
 /// 구성:
-///   - cloud  : Ollama(gemma4:31b-cloud, localhost:11434, cap=1, num_ctx=None)
-///   - friend : OpenAI(qwen3.6-35b-fast, yongseek.iptime.org:8008, cap=2, max_tokens=256)
+///   - cloud  : Ollama(gemma4:31b-cloud, localhost:11434, cap=1, num_ctx=None, thinking=true)
+///   - friend : OpenAI(qwen3.6-35b, yongseek.iptime.org:8008, cap=2, max_tokens=1024, thinking=true)
 ///   - 양쪽에 demo_persona_system_prompts() 적용.
 ///   - default = "friend"(qwen, 2명: friend/chaos), summarizer → "cloud"(gemma, 1명) 라우팅, 상호 폴백.
 ///   - `SALON_CLOUD_ONLY` 설정 시: friend 백엔드/라우팅/폴백을 건너뛰고 cloud(cap=1)만.
 ///     지인 vLLM 서버가 죽었을 때 라이브 테스트용(비파괴적 — 토글만 끄면 원복).
+///
+/// thinking 활성화 목적: 생성에 reasoning 시간을 둬 발화 텀을 의도적으로 늘린다.
+///   - friend(qwen3.6-35b): enable_thinking=true. max_tokens=1024(reasoning CoT + 답변 여유).
+///   - cloud(gemma4:31b-cloud): think=true 전송 시도.
+///     gemma4 thinking 지원 여부는 실측 필요 - 미지원 시 파라미터가 무시될 수 있음.
 ///
 /// SECURITY: api_key 없음(cloud는 localhost 프록시, friend는 내부망 서버).
 fn build_demo_room_pool() -> BackendPool {
@@ -468,18 +473,18 @@ fn build_demo_room_pool() -> BackendPool {
 
     // cloud 백엔드: Ollama, gemma4:31b-cloud, cap=1, num_ctx=None(원격 auto-max).
     // 동시성 1(사용자 결정 2026-06-03): cloud rate 보수적, 부하는 friend(qwen)로.
-    pool.add(
-        BackendConfig::new(
-            "cloud",
-            "gemma4:31b-cloud",
-            "http://localhost:11434",
-            None,
-            1,
-            None,
-            Duration::from_secs(60),
-        ),
-        demo_persona_system_prompts(),
+    // thinking=true: gemma4 thinking 지원 여부는 실측 필요, 미지원이면 무시될 수 있음.
+    let mut cloud_cfg = BackendConfig::new(
+        "cloud",
+        "gemma4:31b-cloud",
+        "http://localhost:11434",
+        None,
+        1,
+        None,
+        Duration::from_secs(60),
     );
+    cloud_cfg.thinking = true;
+    pool.add(cloud_cfg, demo_persona_system_prompts());
 
     // SALON_CLOUD_ONLY: 지인(friend) vLLM 서버가 죽었을 때 cloud만으로 라이브 테스트.
     // friend 백엔드/라우팅/폴백을 통째로 건너뛴다(서버 복구 시 토글만 끄면 원복).
@@ -491,20 +496,21 @@ fn build_demo_room_pool() -> BackendPool {
         return pool;
     }
 
-    // friend 백엔드: OpenAI 호환(vLLM), qwen3.6-35b-fast, cap=2, max_tokens=256.
+    // friend 백엔드: OpenAI 호환(vLLM), qwen3.6-35b(reasoning 버전), cap=2, max_tokens=1024.
     // 동시성 2(사용자 결정 2026-06-03): 지인 vLLM 서버에 더 많은 부하 배분.
-    pool.add(
-        BackendConfig::new_openai(
-            "friend",
-            "qwen3.6-35b-fast",
-            "http://yongseek.iptime.org:8008",
-            None,
-            2,
-            Some(256),
-            Duration::from_secs(60),
-        ),
-        demo_persona_system_prompts(),
+    // max_tokens=1024: reasoning CoT가 256을 소진해 content가 비는 것 방지(reasoning + 답변 여유).
+    // thinking=true: enable_thinking=true로 CoT 활성화, 생각 시간으로 발화 텀 연장.
+    let mut friend_cfg = BackendConfig::new_openai(
+        "friend",
+        "qwen3.6-35b",
+        "http://yongseek.iptime.org:8008",
+        None,
+        2,
+        Some(1024),
+        Duration::from_secs(60),
     );
+    friend_cfg.thinking = true;
+    pool.add(friend_cfg, demo_persona_system_prompts());
 
     // 라우팅(사용자 결정 2026-06-03): cloud(gemma, cap 1) = 1명(조용한 summarizer),
     // friend(qwen, cap 2) = 2명(friend/chaos). cap 설정과 일관.

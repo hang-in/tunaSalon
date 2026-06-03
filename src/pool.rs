@@ -83,6 +83,10 @@ pub struct BackendConfig {
     pub protocol: Protocol,
     /// OpenAI max_tokens 파라미터. OpenAI 프로토콜 전용. None이면 생략.
     pub max_tokens: Option<u64>,
+    /// thinking(reasoning) 모드. true이면 생성 요청에 thinking을 활성화한다.
+    /// Ollama: body에 "think": true 추가. OpenAI: enable_thinking = true.
+    /// 기본값 false(기존 동작 보존). main에서 config 생성 후 필드 직접 set.
+    pub thinking: bool,
 }
 
 /// SECURITY: api_key를 절대 출력하지 않는다. Some/None 여부만 표시한다.
@@ -98,6 +102,7 @@ impl std::fmt::Debug for BackendConfig {
             .field("timeout", &self.timeout)
             .field("protocol", &self.protocol)
             .field("max_tokens", &self.max_tokens)
+            .field("thinking", &self.thinking)
             .finish()
     }
 }
@@ -126,6 +131,7 @@ impl BackendConfig {
             timeout,
             protocol: Protocol::Ollama,
             max_tokens: None,
+            thinking: false,
         }
     }
 
@@ -151,6 +157,7 @@ impl BackendConfig {
             timeout,
             protocol: Protocol::OpenAI,
             max_tokens,
+            thinking: false,
         }
     }
 }
@@ -204,6 +211,7 @@ impl BackendPool {
                 system_prompts,
                 config.timeout,
                 config.num_ctx,
+                config.thinking,
             )),
             Protocol::OpenAI => Backend::OpenAI(OpenAIBackend::new(
                 config.model,
@@ -212,6 +220,7 @@ impl BackendPool {
                 system_prompts,
                 config.timeout,
                 config.max_tokens,
+                config.thinking,
             )),
         };
         // 백엔드별 세마포어: config.max_concurrent 슬롯으로 생성한다.

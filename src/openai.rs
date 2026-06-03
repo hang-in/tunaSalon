@@ -24,6 +24,9 @@ pub struct OpenAIBackend {
     system_prompts: BTreeMap<PersonaId, String>,
     /// OpenAI `max_tokens` 파라미터. None이면 body에서 생략(서버 기본값).
     max_tokens: Option<u64>,
+    /// thinking(reasoning) 모드. true이면 `chat_template_kwargs.enable_thinking = true`.
+    /// false(기본)이면 enable_thinking = false(기존 동작 보존).
+    thinking: bool,
 }
 
 /// SECURITY: api_key는 Some/None 여부만 표시한다. 값은 절대 출력하지 않는다.
@@ -47,6 +50,7 @@ impl OpenAIBackend {
     /// - `system_prompts`: 화자별 system prompt 맵.
     /// - `timeout`: HTTP 요청 타임아웃.
     /// - `max_tokens`: OpenAI max_tokens 파라미터. None이면 생략.
+    /// - `thinking`: true이면 `chat_template_kwargs.enable_thinking = true`. false(기본)이면 enable_thinking = false(기존 동작).
     ///
     /// reqwest Client 빌드 실패 시 기본 Client로 폴백(panic 없음).
     pub fn new(
@@ -56,13 +60,14 @@ impl OpenAIBackend {
         system_prompts: BTreeMap<PersonaId, String>,
         timeout: Duration,
         max_tokens: Option<u64>,
+        thinking: bool,
     ) -> Self {
         let client = reqwest::blocking::Client::builder()
             .timeout(timeout)
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-        Self { client, model, endpoint, api_key, system_prompts, max_tokens }
+        Self { client, model, endpoint, api_key, system_prompts, max_tokens, thinking }
     }
 
     /// `/v1/chat/completions` 요청 body JSON을 조립한다.
@@ -70,6 +75,8 @@ impl OpenAIBackend {
     /// - `system`이 Some이면 messages 배열에 system 메시지를 먼저 추가한다.
     /// - `max_tokens`가 Some이면 body에 포함한다.
     /// - `stream: false`는 항상 포함한다.
+    /// - `thinking`이 true이면 `chat_template_kwargs.enable_thinking = true`.
+    ///   false이면 enable_thinking = false(qwen3 CoT가 max_tokens를 다 먹는 것 방지).
     ///
     /// 네트워크 없이 직렬화 검증이 가능하도록 별도 함수로 분리.
     pub fn build_request_body(
@@ -77,6 +84,7 @@ impl OpenAIBackend {
         prompt: &str,
         system: Option<&str>,
         max_tokens: Option<u64>,
+        thinking: bool,
     ) -> Value {
         let mut messages: Vec<Value> = Vec::new();
 
@@ -98,11 +106,10 @@ impl OpenAIBackend {
             "model": model,
             "messages": messages,
             "stream": false,
-            // 살롱은 짧은 스몰토크라 reasoning(CoT)을 끈다. qwen3 계열 vLLM은
-            // chat_template_kwargs.enable_thinking=false를 받는다(쓰지 않는 템플릿은 무시).
-            // reasoning을 켜두면 max_tokens를 CoT가 다 먹어 content가 빈 채 잘린다(검증 2026-06-02:
-            // max_tokens 256 전부 reasoning 963자에 소모, content=null, finish_reason=length).
-            "chat_template_kwargs": { "enable_thinking": false },
+            // qwen3 계열 vLLM은 chat_template_kwargs.enable_thinking 으로 CoT를 제어한다.
+            // thinking=true: reasoning 켜기(생각 시간 - 발화 텀 의도적 연장).
+            // thinking=false: reasoning 끄기(기존 동작, CoT가 max_tokens를 소진하는 것 방지).
+            "chat_template_kwargs": { "enable_thinking": thinking },
         });
 
         // max_tokens가 Some일 때만 추가
@@ -190,7 +197,7 @@ impl OpenAIBackend {
 
         let system = self.system_prompts.get(speaker).map(String::as_str);
         let url = format!("{}/v1/chat/completions", self.endpoint);
-        let body = Self::build_request_body(&self.model, &user_prompt, system, self.max_tokens);
+        let body = Self::build_request_body(&self.model, &user_prompt, system, self.max_tokens, self.thinking);
 
         let mut req = self.client.post(&url).json(&body);
 
@@ -242,7 +249,7 @@ mod tests {
     /// system=Some이면 messages 배열에 system 메시지가 먼저, user 메시지가 뒤에 온다.
     #[test]
     fn build_request_body_with_system_has_correct_messages() {
-        let body = OpenAIBackend::build_request_body("qwen3.6-35b", "Hi", Some("You are X"), None);
+        let body = OpenAIBackend::build_request_body("qwen3.6-35b", "Hi", Some("You are X"), None, false);
 
         let messages = body["messages"].as_array().expect("messages는 배열이어야 함");
         assert_eq!(messages.len(), 2, "system+user 메시지 2개여야 함");
@@ -255,7 +262,7 @@ mod tests {
     /// system=None이면 user 메시지만 있어야 한다.
     #[test]
     fn build_request_body_without_system_has_only_user_message() {
-        let body = OpenAIBackend::build_request_body("m", "prompt", None, None);
+        let body = OpenAIBackend::build_request_body("m", "prompt", None, None, false);
 
         let messages = body["messages"].as_array().expect("messages는 배열이어야 함");
         assert_eq!(messages.len(), 1, "user 메시지만 있어야 함");
@@ -265,14 +272,14 @@ mod tests {
     /// max_tokens=Some이면 body에 max_tokens 필드가 포함된다.
     #[test]
     fn build_request_body_includes_max_tokens_when_some() {
-        let body = OpenAIBackend::build_request_body("m", "p", None, Some(512));
+        let body = OpenAIBackend::build_request_body("m", "p", None, Some(512), false);
         assert_eq!(body["max_tokens"], 512, "max_tokens가 512여야 함");
     }
 
     /// max_tokens=None이면 body에 max_tokens 필드가 없어야 한다.
     #[test]
     fn build_request_body_omits_max_tokens_when_none() {
-        let body = OpenAIBackend::build_request_body("m", "p", None, None);
+        let body = OpenAIBackend::build_request_body("m", "p", None, None, false);
         assert!(
             body.get("max_tokens").is_none(),
             "max_tokens=None이면 body에 포함되어서는 안 됨"
@@ -282,25 +289,34 @@ mod tests {
     /// stream: false는 항상 포함된다.
     #[test]
     fn build_request_body_stream_is_false() {
-        let body = OpenAIBackend::build_request_body("m", "p", None, None);
+        let body = OpenAIBackend::build_request_body("m", "p", None, None, false);
         assert_eq!(body["stream"], false);
     }
 
-    /// reasoning(thinking)을 끄기 위해 chat_template_kwargs.enable_thinking=false가 항상 포함된다.
-    /// (reasoning 모델이 max_tokens를 CoT로 소진해 content가 비는 것을 방지)
+    /// thinking=false이면 chat_template_kwargs.enable_thinking=false가 포함된다(기존 동작 보존).
     #[test]
     fn build_request_body_disables_thinking() {
-        let body = OpenAIBackend::build_request_body("m", "p", None, Some(256));
+        let body = OpenAIBackend::build_request_body("m", "p", None, Some(256), false);
         assert_eq!(
             body["chat_template_kwargs"]["enable_thinking"], false,
-            "enable_thinking=false가 body에 있어야 함"
+            "thinking=false이면 enable_thinking=false가 body에 있어야 함"
+        );
+    }
+
+    /// thinking=true이면 chat_template_kwargs.enable_thinking=true가 포함된다.
+    #[test]
+    fn build_request_body_enables_thinking_when_true() {
+        let body = OpenAIBackend::build_request_body("m", "p", None, Some(1024), true);
+        assert_eq!(
+            body["chat_template_kwargs"]["enable_thinking"], true,
+            "thinking=true이면 enable_thinking=true가 body에 있어야 함"
         );
     }
 
     /// model 필드가 올바르게 설정된다.
     #[test]
     fn build_request_body_sets_model() {
-        let body = OpenAIBackend::build_request_body("qwen3.6-35b", "p", None, None);
+        let body = OpenAIBackend::build_request_body("qwen3.6-35b", "p", None, None, false);
         assert_eq!(body["model"], "qwen3.6-35b");
     }
 
@@ -389,6 +405,7 @@ mod tests {
             BTreeMap::new(),
             Duration::from_secs(30),
             None,
+            false,
         );
 
         let debug_str = format!("{:?}", backend);
@@ -494,6 +511,7 @@ mod tests {
             BTreeMap::new(),
             Duration::from_secs(120),
             Some(256),
+            false,
         );
 
         let speaker = "friend".to_string();

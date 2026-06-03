@@ -318,7 +318,7 @@ fn batch_no_backend_returns_none_no_panic() {
 #[test]
 fn num_ctx_none_omitted_some_included() {
     // num_ctx=None → options 키 자체가 body에 없어야 함
-    let body_no_ctx = OllamaBackend::build_request_body("m", "p", None, None);
+    let body_no_ctx = OllamaBackend::build_request_body("m", "p", None, None, false);
     assert!(
         body_no_ctx.get("options").is_none(),
         "num_ctx=None이면 options 키가 body에 없어야 함: {:?}",
@@ -326,7 +326,7 @@ fn num_ctx_none_omitted_some_included() {
     );
 
     // num_ctx=Some(8192) → options.num_ctx == 8192
-    let body_with_ctx = OllamaBackend::build_request_body("m", "p", None, Some(8192));
+    let body_with_ctx = OllamaBackend::build_request_body("m", "p", None, Some(8192), false);
     let num_ctx_val = body_with_ctx
         .get("options")
         .and_then(|o| o.get("num_ctx"))

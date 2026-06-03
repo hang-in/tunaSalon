@@ -19,6 +19,9 @@ pub struct OllamaBackend {
     /// None이면 요청 body에서 options.num_ctx를 완전히 생략(cloud/원격 auto-max).
     /// Some(n)이면 options.num_ctx = n (로컬 e4b의 경우 RAM 상한 8192).
     num_ctx: Option<u64>,
+    /// Ollama thinking 모드. true이면 요청 body에 `"think": true`를 추가한다.
+    /// false(기본)이면 think 키를 생략(기존 동작 보존).
+    think: bool,
 }
 
 /// SECURITY: api_key를 절대 출력하지 않는다. Some/None 여부만 표시한다.
@@ -46,6 +49,7 @@ impl OllamaBackend {
     /// - `system_prompts`: 화자별 system prompt 맵. PersonaId → 역할 지시문.
     /// - `timeout`: HTTP 요청 타임아웃
     /// - `num_ctx`: 컨텍스트 윈도우 크기. None이면 요청 body에서 생략(cloud auto-max). Some(n)이면 options.num_ctx = n.
+    /// - `think`: true이면 요청 body에 `"think": true`를 추가한다(Ollama thinking API). false면 think 키 생략(기존 동작).
     ///
     /// reqwest Client 빌드에 실패하면 기본 Client로 폴백한다(panic 없음).
     pub fn new(
@@ -55,13 +59,14 @@ impl OllamaBackend {
         system_prompts: BTreeMap<PersonaId, String>,
         timeout: Duration,
         num_ctx: Option<u64>,
+        think: bool,
     ) -> Self {
         let client = reqwest::blocking::Client::builder()
             .timeout(timeout)
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-        Self { client, model, endpoint, api_key, system_prompts, num_ctx }
+        Self { client, model, endpoint, api_key, system_prompts, num_ctx, think }
     }
 
     /// user 프롬프트를 섹션 순서대로 조립한다.
@@ -89,6 +94,8 @@ impl OllamaBackend {
     /// - `num_ctx`가 Some(n)이면 `options.num_ctx = n`을 설정한다.
     ///   None이면 options.num_ctx를 생략한다(cloud/원격이 모델 최대 ctx로 auto-max).
     ///   options에 설정할 항목이 없으면 options 키 자체를 생략한다.
+    /// - `think`가 true이면 body에 `"think": true`를 추가한다(Ollama thinking API).
+    ///   false이면 think 키를 완전히 생략한다(기존 동작 보존).
     ///
     /// 별도 함수로 분리해 테스트에서 네트워크 없이 직렬화를 검증한다.
     pub fn build_request_body(
@@ -96,6 +103,7 @@ impl OllamaBackend {
         prompt: &str,
         system: Option<&str>,
         num_ctx: Option<u64>,
+        think: bool,
     ) -> Value {
         let mut body = serde_json::json!({
             "model": model,
@@ -107,6 +115,9 @@ impl OllamaBackend {
         }
         if let Some(sys) = system {
             body["system"] = serde_json::Value::String(sys.to_string());
+        }
+        if think {
+            body["think"] = serde_json::Value::Bool(true);
         }
         body
     }
@@ -171,7 +182,7 @@ impl OllamaBackend {
         let system = self.system_prompts.get(speaker).map(String::as_str);
 
         let url = format!("{}/api/generate", self.endpoint);
-        let body = Self::build_request_body(&self.model, &user_prompt, system, self.num_ctx);
+        let body = Self::build_request_body(&self.model, &user_prompt, system, self.num_ctx, self.think);
 
         let mut req = self.client.post(&url).json(&body);
 
@@ -235,7 +246,7 @@ mod tests {
     #[test]
     fn build_request_body_has_required_fields() {
         let body =
-            OllamaBackend::build_request_body("gemma4:e4b", "Hello, who are you?", None, None);
+            OllamaBackend::build_request_body("gemma4:e4b", "Hello, who are you?", None, None, false);
 
         assert_eq!(body["model"], "gemma4:e4b");
         assert_eq!(body["prompt"], "Hello, who are you?");
@@ -244,7 +255,7 @@ mod tests {
 
     #[test]
     fn build_request_body_includes_system_when_some() {
-        let body = OllamaBackend::build_request_body("m", "p", Some("you are X"), None);
+        let body = OllamaBackend::build_request_body("m", "p", Some("you are X"), None, false);
         assert_eq!(body["model"], "m");
         assert_eq!(body["prompt"], "p");
         assert_eq!(body["stream"], false);
@@ -253,7 +264,7 @@ mod tests {
 
     #[test]
     fn build_request_body_omits_system_when_none() {
-        let body = OllamaBackend::build_request_body("m", "p", None, None);
+        let body = OllamaBackend::build_request_body("m", "p", None, None, false);
         assert!(
             body.get("system").is_none(),
             "system 필드가 None일 때 body에 포함되어서는 안 됨"
@@ -316,6 +327,7 @@ mod tests {
             BTreeMap::new(),
             Duration::from_secs(30),
             Some(8192),
+            false,
         );
 
         let debug_str = format!("{:?}", backend);
@@ -375,7 +387,7 @@ mod tests {
     /// build_request_body의 num_ctx가 Some(8192)이면 options.num_ctx가 8192로 설정된다.
     #[test]
     fn build_request_body_sets_num_ctx() {
-        let body = OllamaBackend::build_request_body("m", "p", None, Some(8192));
+        let body = OllamaBackend::build_request_body("m", "p", None, Some(8192), false);
         let num_ctx = body
             .get("options")
             .and_then(|o| o.get("num_ctx"))
@@ -391,7 +403,7 @@ mod tests {
     /// build_request_body의 num_ctx가 None이면 options.num_ctx가 body에 없어야 한다.
     #[test]
     fn build_request_body_omits_num_ctx_when_none() {
-        let body = OllamaBackend::build_request_body("m", "p", None, None);
+        let body = OllamaBackend::build_request_body("m", "p", None, None, false);
         let has_num_ctx = body
             .get("options")
             .and_then(|o| o.get("num_ctx"))
@@ -407,6 +419,27 @@ mod tests {
         );
     }
 
+    /// think=true이면 body에 "think": true가 추가된다.
+    #[test]
+    fn build_request_body_sets_think_when_true() {
+        let body = OllamaBackend::build_request_body("m", "p", None, None, true);
+        assert_eq!(
+            body.get("think").and_then(|v| v.as_bool()),
+            Some(true),
+            "think=true이면 body[\"think\"]==true여야 함"
+        );
+    }
+
+    /// think=false이면 body에 "think" 키가 없어야 한다.
+    #[test]
+    fn build_request_body_omits_think_when_false() {
+        let body = OllamaBackend::build_request_body("m", "p", None, None, false);
+        assert!(
+            body.get("think").is_none(),
+            "think=false이면 body에 \"think\" 키가 없어야 함"
+        );
+    }
+
     /// 실제 네트워크가 필요한 라이브 호출 테스트 — CI에서는 skip.
     #[test]
     #[ignore]
@@ -419,6 +452,7 @@ mod tests {
             BTreeMap::new(),
             Duration::from_secs(30),
             Some(8192),
+            false,
         );
         let speaker = "friend".to_string();
         let history = Vec::new();

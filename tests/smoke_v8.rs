@@ -260,7 +260,7 @@ fn recall_slot_ollama_build_request_body() {
 
     // (a) recall=Some → body["prompt"]에 "[기억]" 포함
     let prompt_with = assemble_prompt(recent, Some(recall_text));
-    let body_with = OllamaBackend::build_request_body("gemma4:e4b", &prompt_with, None, None);
+    let body_with = OllamaBackend::build_request_body("gemma4:e4b", &prompt_with, None, None, false);
 
     let prompt_field = body_with["prompt"].as_str().expect("body에 prompt 필드가 있어야 함");
     assert!(
@@ -274,7 +274,7 @@ fn recall_slot_ollama_build_request_body() {
 
     // (b) recall=None → body["prompt"]에 "[기억]" 없음
     let prompt_none = assemble_prompt(recent, None);
-    let body_none = OllamaBackend::build_request_body("gemma4:e4b", &prompt_none, None, None);
+    let body_none = OllamaBackend::build_request_body("gemma4:e4b", &prompt_none, None, None, false);
 
     let prompt_field_none = body_none["prompt"].as_str().expect("body에 prompt 필드가 있어야 함");
     assert!(
@@ -300,7 +300,7 @@ fn recall_slot_openai_build_request_body() {
 
     // (c) recall=Some → messages[user].content에 "[기억]" 포함
     let prompt_with = assemble_prompt(recent, Some(recall_text));
-    let body_with = OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_with, None, None);
+    let body_with = OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_with, None, None, false);
 
     // system=None이면 messages[0]이 user 메시지
     let messages = body_with["messages"].as_array().expect("messages 배열이 있어야 함");
@@ -321,7 +321,7 @@ fn recall_slot_openai_build_request_body() {
 
     // (d) recall=None → messages[user].content에 "[기억]" 없음
     let prompt_none = assemble_prompt(recent, None);
-    let body_none = OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_none, None, None);
+    let body_none = OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_none, None, None, false);
 
     let messages_none = body_none["messages"].as_array().expect("messages 배열이 있어야 함");
     let user_msg_none = messages_none
