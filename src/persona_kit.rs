@@ -558,14 +558,18 @@ pub fn assemble(role: Role, mbti: Mbti, blood: Blood, zodiac: Zodiac, name: &str
     };
 
     // --- 내용층(system_prompt 합성) ---
-    // 순서: 역할 -> MBTI 말투 -> 별자리 분위기 -> 혈액형 캐릭터성 -> 발화 제약
+    // 순서: 역할 -> MBTI 말투 -> 별자리 분위기 -> 혈액형 캐릭터성 -> 발화 제약 -> 언어 지시.
+    // 언어 지시($LANG 기반, 기본 한국어): 없으면 동적 초대 persona가 영어로 답하는 버그.
+    // 기존 데모 3인(demo_persona_system_prompts)과 동일하게 locale::reply_language()를 쓴다.
+    let lang = crate::locale::reply_language();
     let system_prompt = format!(
-        "{role_prompt} {mbti_style} {zodiac_mood} {blood_char} {constraint}",
+        "{role_prompt} {mbti_style} {zodiac_mood} {blood_char} {constraint} Always respond in {lang}, even if others write in another language.",
         role_prompt  = role.prompt_fragment(),
         mbti_style   = mbti.style_fragment(),
         zodiac_mood  = zodiac.mood_fragment(),
         blood_char   = blood.character_fragment(),
         constraint   = role.constraint_fragment(),
+        lang = lang,
     );
 
     // --- id ---
