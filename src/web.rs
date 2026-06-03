@@ -4,6 +4,7 @@
 
 use crate::live::{LiveSession, PersonaMeta};
 use crate::persona_kit::{assemble, Blood, Mbti, Role, Zodiac};
+use crate::roomstore::RoomStore;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -84,6 +85,23 @@ enum EngineCmd {
 const STATE_PERIOD: Duration = Duration::from_millis(700);
 const TICK_PERIOD: Duration = Duration::from_millis(2000);
 const POLL_PERIOD: Duration = Duration::from_millis(80);
+const SAVE_PERIOD: Duration = Duration::from_secs(5);
+
+/// 방 상태를 RoomStore에 저장한다. 실패는 경고만(비밀 비노출, 크래시 금지).
+fn save_room(store: &Option<RoomStore>, session: &LiveSession) {
+    if let Some(ref s) = *store {
+        if let Err(e) = s.save(
+            "salon",
+            session.personas(),
+            session.persona_meta(),
+            &session.state().history,
+            session.topics(),
+            session.tick_count(),
+        ) {
+            eprintln!("[tunaSalon] rooms.db 저장 실패(비치명): {e}");
+        }
+    }
+}
 
 /// backend 문자열을 모델 이름으로 변환한다.
 /// "cloud" -> gemma4:31b-cloud, "friend" -> qwen3.6-35b, 그 외 -> 그대로.
@@ -101,6 +119,7 @@ fn run_engine(
     human_id: String,
     frame_tx: broadcast::Sender<String>,
     mut cmd_rx: mpsc::UnboundedReceiver<EngineCmd>,
+    store: Option<RoomStore>,
 ) {
     let emit = |tx: &broadcast::Sender<String>, frame: &ServerFrame| {
         if let Ok(json) = serde_json::to_string(frame) {
@@ -145,6 +164,8 @@ fn run_engine(
 
     let mut last_state = Instant::now();
     let mut last_tick = Instant::now();
+    let mut last_save = Instant::now();
+    let mut dirty = false;
     let mut paused = false;
     // 초기 state 1회
     emit(&frame_tx, &build_state(&session, &human_id, paused));
@@ -171,6 +192,7 @@ fn run_engine(
                         },
                     );
                     emit(&frame_tx, &build_state(&session, &human_id, paused)); // λ 스파이크 즉시 반영
+                    dirty = true;
                 }
                 EngineCmd::Topic(topics) => {
                     session.set_topics(topics.clone());
@@ -183,6 +205,7 @@ fn run_engine(
                         );
                     }
                     emit(&frame_tx, &build_state(&session, &human_id, paused));
+                    dirty = true;
                 }
                 EngineCmd::SetPaused(p) => {
                     paused = p;
@@ -203,6 +226,7 @@ fn run_engine(
                         },
                     );
                     emit(&frame_tx, &build_state(&session, &human_id, paused));
+                    dirty = true;
                 }
                 EngineCmd::Invite { blood, mbti, zodiac, role } => {
                     // 인원 제한: 최대 3명
@@ -293,8 +317,10 @@ fn run_engine(
                         },
                     );
                     emit(&frame_tx, &build_state(&session, &human_id, paused));
+                    dirty = true;
                 }
                 EngineCmd::Shutdown => {
+                    save_room(&store, &session);
                     session.shutdown();
                     return;
                 }
@@ -325,6 +351,7 @@ fn run_engine(
                         ts: ev.ts,
                     },
                 );
+                dirty = true;
             }
         }
 
@@ -334,12 +361,19 @@ fn run_engine(
             last_state = Instant::now();
         }
 
+        // 5. 주기 저장 (dirty && SAVE_PERIOD 경과)
+        if dirty && last_save.elapsed() >= SAVE_PERIOD {
+            save_room(&store, &session);
+            dirty = false;
+            last_save = Instant::now();
+        }
+
         std::thread::sleep(POLL_PERIOD);
     }
 }
 
 // axum 라우터 + serve. main에서 호출(blocking, 내부에서 tokio runtime).
-pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String) {
+pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, store: Option<RoomStore>) {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -354,7 +388,7 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String) {
         // 엔진 전용 스레드(blocking)
         let frame_tx_engine = frame_tx.clone();
         let engine_handle = std::thread::spawn(move || {
-            run_engine(session, human_id, frame_tx_engine, cmd_rx);
+            run_engine(session, human_id, frame_tx_engine, cmd_rx, store);
         });
 
         use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};

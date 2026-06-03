@@ -115,6 +115,8 @@ fn main() {
     if cli.web {
         #[cfg(feature = "web")]
         {
+            use salon::roomstore::RoomStore;
+
             let chat_personas = chat_personas();
             let mut chat_config = RoomPreset::Pub
                 .build_config_with_modifiers(&chat_personas, &demo_persona_modifiers());
@@ -124,16 +126,57 @@ fn main() {
             }
             chat_config.forbid_self_repeat = true;
             let pool = std::sync::Arc::new(build_demo_room_pool());
-            let session = LiveSession::with_store(
-                chat_config,
-                chat_personas,
-                cli.seed,
-                pool,
-                "나",
-                salon::memory::live_store(),
-            )
-            .with_persona_meta(build_demo_persona_meta());
-            salon::web::serve(&cli.host, cli.port, session, "나".to_string());
+
+            // RoomStore 열기 시도. 실패하면 None(영속 off)으로 계속 진행.
+            let store = RoomStore::default_rooms_db_path()
+                .and_then(|p| match RoomStore::open(&p) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        eprintln!("[tunaSalon] rooms.db 열기 실패(영속 off): {e}");
+                        None
+                    }
+                });
+
+            // 복원 시도
+            let snap_opt = store
+                .as_ref()
+                .and_then(|s| s.load("salon").ok().flatten());
+
+            let session = if let Some(snap) = snap_opt.filter(|s| !s.participants.is_empty()) {
+                // 복원 세션: 빈 personas로 시작하고 add_persona로 순서 복원.
+                let n_personas = snap.participants.len();
+                let n_messages = snap.messages.len();
+                let mut sess = LiveSession::with_store(
+                    chat_config,
+                    vec![],
+                    cli.seed,
+                    pool,
+                    "나",
+                    salon::memory::live_store(),
+                );
+                for (p, m) in snap.participants {
+                    sess.add_persona(p, m);
+                }
+                sess.restore_history(snap.messages, snap.tick_count);
+                sess.set_topics(snap.topics);
+                eprintln!(
+                    "[tunaSalon] 방 'salon' 복원: {n_personas}명, {n_messages}발화"
+                );
+                sess
+            } else {
+                // 기본 3명 세션
+                LiveSession::with_store(
+                    chat_config,
+                    chat_personas,
+                    cli.seed,
+                    pool,
+                    "나",
+                    salon::memory::live_store(),
+                )
+                .with_persona_meta(build_demo_persona_meta())
+            };
+
+            salon::web::serve(&cli.host, cli.port, session, "나".to_string(), store);
         }
         #[cfg(not(feature = "web"))]
         {

@@ -656,6 +656,17 @@ impl LiveSession {
         &self.persona_meta
     }
 
+    /// 영속 복원용: 저장된 대화 로그와 tick_count를 주입한다.
+    ///
+    /// add_persona로 참가자를 먼저 복원한 뒤 호출한다.
+    /// 강도(intensities/excitations)는 복원하지 않는다(base_rate에서 재차오름).
+    pub fn restore_history(&mut self, messages: Vec<crate::model::Event>, tick_count: u64) {
+        self.state.last_speaker = messages.last().map(|e| e.speaker.clone());
+        self.state.history = messages;
+        self.tick_count = tick_count;
+        self.pending = None;
+    }
+
     // -------------------------------------------------------------------------
     // 런타임 persona 추가 / 제거 (task B)
     // -------------------------------------------------------------------------
@@ -1368,6 +1379,64 @@ mod tests {
         // 초기 personas(aria/bjorn)는 여전히 존재해야 함.
         assert!(session.personas().iter().any(|p| p.id == "aria"));
         assert!(session.personas().iter().any(|p| p.id == "bjorn"));
+    }
+
+    // -------------------------------------------------------------------------
+    // task-G: restore_history 단위 테스트
+    // -------------------------------------------------------------------------
+
+    /// (task-G-restore) restore_history 후 state().history / tick_count() / last_speaker 일치.
+    #[test]
+    fn restore_history_sets_history_tick_and_last_speaker() {
+        use crate::model::Event;
+
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        let messages = vec![
+            Event {
+                ts: 0.0,
+                speaker: "aria".to_string(),
+                mark: 0.0,
+                content: Some("안녕".to_string()),
+            },
+            Event {
+                ts: 1.0,
+                speaker: "bjorn".to_string(),
+                mark: 0.0,
+                content: Some("반가워".to_string()),
+            },
+        ];
+
+        session.restore_history(messages.clone(), 77);
+
+        // tick_count 일치
+        assert_eq!(session.tick_count(), 77);
+        // history 일치
+        assert_eq!(session.state().history.len(), 2);
+        assert_eq!(session.state().history[0].speaker, "aria");
+        assert_eq!(session.state().history[1].speaker, "bjorn");
+        // last_speaker = 마지막 event의 speaker
+        assert_eq!(
+            session.state().last_speaker,
+            Some("bjorn".to_string()),
+            "last_speaker는 마지막 event의 speaker이어야 함"
+        );
+        // pending은 None
+        assert!(!session.is_pending(), "restore 후 pending은 None이어야 함");
+    }
+
+    /// (task-G-restore-empty) 빈 messages로 restore_history 시 last_speaker = None.
+    #[test]
+    fn restore_history_empty_messages_sets_no_last_speaker() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        session.restore_history(vec![], 0);
+
+        assert_eq!(session.state().last_speaker, None);
+        assert!(session.state().history.is_empty());
+        assert_eq!(session.tick_count(), 0);
     }
 
     /// (task-B-d) persona_meta 빈 세션의 tick/poll_generation이 기존과 동일하게 동작(회귀 없음).
