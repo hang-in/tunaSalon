@@ -104,11 +104,11 @@ fn save_room(store: &Option<RoomStore>, session: &LiveSession) {
 }
 
 /// backend 문자열을 모델 이름으로 변환한다.
-/// "cloud" -> gemma4:31b-cloud, "friend" -> qwen3.6-35b, 그 외 -> 그대로.
+/// "cloud" -> gemma4:31b-cloud, "friend" -> qwen3.6-35b-fast, 그 외 -> 그대로.
 fn backend_to_model(backend: &str) -> String {
     match backend {
         "cloud" => "gemma4:31b-cloud".to_string(),
-        "friend" => "qwen3.6-35b".to_string(),
+        "friend" => "qwen3.6-35b-fast".to_string(),
         other => other.to_string(),
     }
 }
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn backend_to_model_maps_correctly() {
         assert_eq!(backend_to_model("cloud"), "gemma4:31b-cloud");
-        assert_eq!(backend_to_model("friend"), "qwen3.6-35b");
+        assert_eq!(backend_to_model("friend"), "qwen3.6-35b-fast");
         assert_eq!(backend_to_model("custom"), "custom");
     }
 
