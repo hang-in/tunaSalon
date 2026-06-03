@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *  MOCK WEBSOCKET ENGINE  —  tunaSalon
+ *  MOCK WEBSOCKET ENGINE  -  tunaSalon
  * ═══════════════════════════════════════════════════════════════════════════
  *
  *  Isolated simulation of the Rust conversation-flow backend.
@@ -13,9 +13,9 @@
 import type { ServerFrame, ClientFrame, Participant } from "@/types";
 
 const PARTICIPANTS: Participant[] = [
-  { id: "friend", name: "Friendly Regular" },
-  { id: "chaos", name: "Grounded Realist" },
-  { id: "summarizer", name: "Quiet Summarizer" },
+  { id: "friend", name: "Friendly Regular", model: "gemma4:31b-cloud" },
+  { id: "chaos", name: "Grounded Realist", model: "gemma4:31b-cloud" },
+  { id: "summarizer", name: "Quiet Summarizer", model: "qwen3.6-35b-fast" },
   { id: "나", name: "나" },
 ];
 
@@ -126,7 +126,7 @@ class ConversationEngine {
 
       let delta: number;
       if (this.humanSpokeRecently) {
-        // Excited by human — faster rise
+        // Excited by human - faster rise
         delta = 0.04 + Math.random() * 0.06;
       } else {
         // Normal organic growth
@@ -225,7 +225,7 @@ class ConversationEngine {
   deliver: (frames: ServerFrame[]) => void = () => {};
 
   onHumanMessage() {
-    // All personas get excited — spike their λ
+    // All personas get excited - spike their λ
     for (const id of Object.keys(this.intensities)) {
       this.intensities[id] = Math.min(0.92, this.intensities[id] + 0.35 + Math.random() * 0.15);
     }

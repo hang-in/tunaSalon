@@ -132,7 +132,12 @@ fn main() {
                 "나",
                 salon::memory::live_store(),
             );
-            salon::web::serve(&cli.host, cli.port, session, "나".to_string());
+            // 모델 표시(라우팅 일치): friend/chaos -> qwen(지인서버 둘), summarizer -> gemma(cloud 하나).
+            let mut models = std::collections::BTreeMap::new();
+            models.insert("friend".to_string(), "qwen3.6-35b-fast".to_string());
+            models.insert("chaos".to_string(), "qwen3.6-35b-fast".to_string());
+            models.insert("summarizer".to_string(), "gemma4:31b-cloud".to_string());
+            salon::web::serve(&cli.host, cli.port, session, "나".to_string(), models);
         }
         #[cfg(not(feature = "web"))]
         {
@@ -453,7 +458,7 @@ fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
 ///   - cloud  : Ollama(gemma4:31b-cloud, localhost:11434, cap=1, num_ctx=None)
 ///   - friend : OpenAI(qwen3.6-35b-fast, yongseek.iptime.org:8008, cap=2, max_tokens=256)
 ///   - 양쪽에 demo_persona_system_prompts() 적용.
-///   - default = "cloud", summarizer → "friend" 라우팅, friend→cloud 폴백.
+///   - default = "friend"(qwen, 2명: friend/chaos), summarizer → "cloud"(gemma, 1명) 라우팅, 상호 폴백.
 ///   - `SALON_CLOUD_ONLY` 설정 시: friend 백엔드/라우팅/폴백을 건너뛰고 cloud(cap=1)만.
 ///     지인 vLLM 서버가 죽었을 때 라이브 테스트용(비파괴적 — 토글만 끄면 원복).
 ///
@@ -501,10 +506,13 @@ fn build_demo_room_pool() -> BackendPool {
         demo_persona_system_prompts(),
     );
 
-    pool.set_default("cloud");
-    pool.add_route("summarizer", "friend");
-    // friend 서버 다운 시 cloud로 폴백.
+    // 라우팅(사용자 결정 2026-06-03): cloud(gemma, cap 1) = 1명(조용한 summarizer),
+    // friend(qwen, cap 2) = 2명(friend/chaos). cap 설정과 일관.
+    pool.set_default("friend");
+    pool.add_route("summarizer", "cloud");
+    // 상호 폴백: 한쪽 서버 다운 시 다른 쪽으로.
     pool.set_fallback("friend", "cloud");
+    pool.set_fallback("cloud", "friend");
 
     pool
 }

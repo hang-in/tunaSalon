@@ -29,11 +29,14 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
   // mu_scale description
   const muDesc = useMemo(() => {
     const m = engineState.mu_scale;
-    if (m > 0.85) return { text: "활기참", pct: 1.0 };
-    if (m > 0.65) return { text: "적정", pct: 0.7 };
-    if (m > 0.45) return { text: "냉각 중", pct: 0.4 };
-    return { text: "조용함", pct: 0.15 };
+    if (m > 0.85) return { text: "활기참" };
+    if (m > 0.65) return { text: "적정" };
+    if (m > 0.45) return { text: "냉각 중" };
+    return { text: "조용함" };
   }, [engineState.mu_scale]);
+
+  // mu_scale bar width: 0.4~1.0 범위를 0~100%로 매핑
+  const muPct = Math.max(0, Math.min(1, (engineState.mu_scale - 0.4) / 0.6));
 
   return (
     <>
@@ -75,18 +78,22 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
               </h2>
             </div>
 
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
               {personaConfigs
                 .filter((p) => p.id !== "나")
-                .map((config) => (
-                  <PersonaPresence
-                    key={config.id}
-                    config={config}
-                    lambda={engineState.intensities[config.id] ?? 0}
-                    theta={engineState.theta}
-                    isPending={engineState.pending === config.id}
-                  />
-                ))}
+                .map((config) => {
+                  const participant = engineState.participants.find((p) => p.id === config.id);
+                  return (
+                    <PersonaPresence
+                      key={config.id}
+                      config={config}
+                      lambda={engineState.intensities[config.id] ?? 0}
+                      theta={engineState.theta}
+                      isPending={engineState.pending === config.id}
+                      model={participant?.model}
+                    />
+                  );
+                })}
 
               {/* Human card */}
               <PersonaPresence
@@ -102,7 +109,7 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
           {/* Divider */}
           <div className="h-px mb-6" style={{ background: "var(--border-color)" }} />
 
-          {/* Section: Global metrics */}
+          {/* Section: Global metrics - 흐름 + 냉각도 합친 카드 */}
           <div>
             <div className="flex items-center gap-2 mb-4">
               <Thermometer size={14} style={{ color: "var(--accent-warm)" }} />
@@ -111,62 +118,44 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
               </h2>
             </div>
 
-            {/* Flow gauge */}
-            <div className="mb-4 p-3 rounded-xl" style={{ background: "var(--bg-base)" }}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[12px] font-medium text-[var(--text-secondary)]">
-                  흐름 (flow)
-                </span>
-                <span className="text-[12px] font-bold tabular-nums" style={{ color: flowDesc.color }}>
-                  {flowDesc.text}
-                </span>
-              </div>
-              <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--gauge-bg)" }}>
-                <div
-                  className="h-full rounded-full transition-all duration-700"
-                  style={{
-                    width: `${engineState.flow * 100}%`,
-                    background: `linear-gradient(90deg, #8ABF9F, ${flowDesc.color})`,
-                  }}
-                />
-              </div>
-              <div className="flex justify-between mt-1">
-                <span className="text-[10px] text-[var(--text-secondary)]">활발</span>
-                <span className="text-[10px] text-[var(--text-secondary)]">수렴</span>
-              </div>
-            </div>
-
-            {/* mu_scale indicator */}
+            {/* 흐름 + 냉각도 통합 카드 */}
             <div className="p-3 rounded-xl" style={{ background: "var(--bg-base)" }}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[12px] font-medium text-[var(--text-secondary)]">
-                  냉각도 (cool)
-                </span>
-                <span className="text-[12px] font-bold tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                  {muDesc.text}
-                </span>
-              </div>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
+              {/* 흐름 바 */}
+              <div className="mb-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-medium text-[var(--text-secondary)]">흐름</span>
+                  <span className="text-[11px] font-semibold tabular-nums" style={{ color: flowDesc.color }}>
+                    {flowDesc.text}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--gauge-bg)" }}>
                   <div
-                    key={i}
-                    className="flex-1 h-6 rounded-md transition-all duration-500"
+                    className="h-full rounded-full transition-all duration-700"
                     style={{
-                      background:
-                        i / 5 <= muDesc.pct
-                          ? `rgba(229, 164, 74, ${0.2 + (i / 5) * 0.5})`
-                          : "var(--gauge-bg)",
-                      border:
-                        i / 5 <= muDesc.pct
-                          ? "1px solid rgba(229, 164, 74, 0.3)"
-                          : "1px solid transparent",
+                      width: `${engineState.flow * 100}%`,
+                      background: `linear-gradient(90deg, #8ABF9F, ${flowDesc.color})`,
                     }}
                   />
-                ))}
+                </div>
               </div>
-              <div className="flex justify-between mt-1">
-                <span className="text-[10px] text-[var(--text-secondary)]">활발</span>
-                <span className="text-[10px] text-[var(--text-secondary)]">차분</span>
+
+              {/* 냉각도 바 */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-medium text-[var(--text-secondary)]">냉각도</span>
+                  <span className="text-[11px] font-semibold tabular-nums" style={{ color: "#E5A44A" }}>
+                    {muDesc.text}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--gauge-bg)" }}>
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{
+                      width: `${muPct * 100}%`,
+                      background: "linear-gradient(90deg, #C47A1A, #E5A44A)",
+                    }}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -183,7 +172,7 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
             >
               <span className="inline-flex items-center gap-1.5">
                 <Wind size={12} />
-                조용한 순간 — 누군가 말하기를 기다리는 중
+                조용한 순간 - 누군가 말하기를 기다리는 중
               </span>
             </div>
           )}

@@ -3,6 +3,7 @@
 export interface Participant {
   id: string;
   name: string;
+  model?: string;
 }
 
 export interface StateFrame {

@@ -46,7 +46,7 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
     // Ambient
     scene.add(new THREE.AmbientLight("#303030", 0.6));
 
-    // Point lights — one per persona
+    // Point lights - one per persona
     const colors = ["#D9645A", "#8ABF9F", "#A89FCC"];
     const positions = [
       new THREE.Vector3(-2, 1.5, 2),
@@ -63,7 +63,7 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
     }
     lightsRef.current = lights;
 
-    // Central abstract form — a smoothed cube
+    // Central abstract form - a smoothed cube
     const geo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
     const mat = new THREE.MeshStandardMaterial({
       color: "#E5A44A",

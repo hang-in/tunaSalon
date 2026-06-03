@@ -25,7 +25,8 @@ export function Composer({ onSend, onSetTopics, currentTopics, disabled }: Compo
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      // 한글 IME 조합 중 Enter(조합 확정)는 제출로 처리하지 않는다(마지막 글자 중복/잘림 방지).
+      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
         e.preventDefault();
         handleSend();
       }
@@ -47,6 +48,11 @@ export function Composer({ onSend, onSetTopics, currentTopics, disabled }: Compo
   const handleAddTopic = useCallback(() => {
     const trimmed = topicInput.trim();
     if (!trimmed) return;
+    // 이미 있는 주제는 중복 추가하지 않는다(방어).
+    if (currentTopics.includes(trimmed)) {
+      setTopicInput("");
+      return;
+    }
     const newTopics = [trimmed, ...currentTopics].slice(0, 5);
     onSetTopics(newTopics);
     setTopicInput("");
@@ -62,7 +68,8 @@ export function Composer({ onSend, onSetTopics, currentTopics, disabled }: Compo
 
   const handleTopicKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
+      // 한글 IME 조합 중 Enter는 무시(조합 확정 Enter + 제출 Enter 중복 -> 마지막 글자가 별도 토픽으로 들어가는 버그 방지).
+      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
         e.preventDefault();
         handleAddTopic();
       }

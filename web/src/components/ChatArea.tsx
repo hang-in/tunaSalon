@@ -74,7 +74,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig }: ChatAreaPr
             </p>
             <div className="flex items-center gap-2 mt-6">
               <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: "#4ade80" }} />
-              <span className="text-xs text-[var(--text-secondary)]">엔진 가동 중 — 페르소나가 준비되었습니다</span>
+              <span className="text-xs text-[var(--text-secondary)]">엔진 가동 중 - 페르소나가 준비되었습니다</span>
             </div>
           </div>
         )}

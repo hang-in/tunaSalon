@@ -14,6 +14,8 @@ use tokio::sync::{broadcast, mpsc};
 struct Participant {
     id: String,
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -64,6 +66,7 @@ const POLL_PERIOD: Duration = Duration::from_millis(80);
 fn run_engine(
     mut session: LiveSession,
     human_id: String,
+    models: BTreeMap<String, String>,
     frame_tx: broadcast::Sender<String>,
     mut cmd_rx: mpsc::UnboundedReceiver<EngineCmd>,
 ) {
@@ -88,11 +91,13 @@ fn run_engine(
             .map(|(id, name)| Participant {
                 id: id.clone(),
                 name: name.clone(),
+                model: models.get(id).cloned(),
             })
             .collect();
         participants.push(Participant {
             id: human_id.clone(),
             name: human_id.clone(),
+            model: None,
         });
         ServerFrame::State {
             intensities,
@@ -189,7 +194,7 @@ fn run_engine(
 }
 
 // axum 라우터 + serve. main에서 호출(blocking, 내부에서 tokio runtime).
-pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String) {
+pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, models: BTreeMap<String, String>) {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -204,7 +209,7 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String) {
         // 엔진 전용 스레드(blocking)
         let frame_tx_engine = frame_tx.clone();
         let engine_handle = std::thread::spawn(move || {
-            run_engine(session, human_id, frame_tx_engine, cmd_rx);
+            run_engine(session, human_id, models, frame_tx_engine, cmd_rx);
         });
 
         use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -325,10 +330,12 @@ mod tests {
             Participant {
                 id: "friend".to_string(),
                 name: "Friendly Regular".to_string(),
+                model: Some("gemma4:31b-cloud".to_string()),
             },
             Participant {
                 id: "나".to_string(),
                 name: "나".to_string(),
+                model: None,
             },
         ];
 
