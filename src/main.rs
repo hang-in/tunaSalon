@@ -450,32 +450,33 @@ fn demo_persona_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
 /// --chat 및 chat_demo 공용 데모 룸 풀을 빌드한다.
 ///
 /// 구성:
-///   - cloud  : Ollama(gemma4:31b-cloud, localhost:11434, cap=3, num_ctx=None)
-///   - friend : OpenAI(qwen3.6-35b-fast, yongseek.iptime.org:8008, cap=1, max_tokens=256)
+///   - cloud  : Ollama(gemma4:31b-cloud, localhost:11434, cap=1, num_ctx=None)
+///   - friend : OpenAI(qwen3.6-35b-fast, yongseek.iptime.org:8008, cap=2, max_tokens=256)
 ///   - 양쪽에 demo_persona_system_prompts() 적용.
 ///   - default = "cloud", summarizer → "friend" 라우팅, friend→cloud 폴백.
-///   - `SALON_CLOUD_ONLY` 설정 시: friend 백엔드/라우팅/폴백을 건너뛰고 cloud(cap=3) x3만.
+///   - `SALON_CLOUD_ONLY` 설정 시: friend 백엔드/라우팅/폴백을 건너뛰고 cloud(cap=1)만.
 ///     지인 vLLM 서버가 죽었을 때 라이브 테스트용(비파괴적 — 토글만 끄면 원복).
 ///
 /// SECURITY: api_key 없음(cloud는 localhost 프록시, friend는 내부망 서버).
 fn build_demo_room_pool() -> BackendPool {
     let mut pool = BackendPool::new();
 
-    // cloud 백엔드: Ollama, gemma4:31b-cloud, cap=3, num_ctx=None(원격 auto-max).
+    // cloud 백엔드: Ollama, gemma4:31b-cloud, cap=1, num_ctx=None(원격 auto-max).
+    // 동시성 1(사용자 결정 2026-06-03): cloud rate 보수적, 부하는 friend(qwen)로.
     pool.add(
         BackendConfig::new(
             "cloud",
             "gemma4:31b-cloud",
             "http://localhost:11434",
             None,
-            3,
+            1,
             None,
             Duration::from_secs(60),
         ),
         demo_persona_system_prompts(),
     );
 
-    // SALON_CLOUD_ONLY: 지인(friend) vLLM 서버가 죽었을 때 cloud x3만으로 라이브 테스트.
+    // SALON_CLOUD_ONLY: 지인(friend) vLLM 서버가 죽었을 때 cloud만으로 라이브 테스트.
     // friend 백엔드/라우팅/폴백을 통째로 건너뛴다(서버 복구 시 토글만 끄면 원복).
     let cloud_only = std::env::var("SALON_CLOUD_ONLY")
         .map(|v| !v.is_empty() && v != "0")
@@ -485,14 +486,15 @@ fn build_demo_room_pool() -> BackendPool {
         return pool;
     }
 
-    // friend 백엔드: OpenAI 호환(vLLM), qwen3.6-35b-fast, cap=1, max_tokens=256.
+    // friend 백엔드: OpenAI 호환(vLLM), qwen3.6-35b-fast, cap=2, max_tokens=256.
+    // 동시성 2(사용자 결정 2026-06-03): 지인 vLLM 서버에 더 많은 부하 배분.
     pool.add(
         BackendConfig::new_openai(
             "friend",
             "qwen3.6-35b-fast",
             "http://yongseek.iptime.org:8008",
             None,
-            1,
+            2,
             Some(256),
             Duration::from_secs(60),
         ),

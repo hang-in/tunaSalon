@@ -138,24 +138,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig }: ChatAreaPr
                     {msg.content}
                   </div>
                 ))}
-
-                {/* Thinking indicator */}
-                {engineState.pending === group.speaker && (
-                  <div
-                    className="mt-1 px-4 py-2 rounded-2xl"
-                    style={{ background: "var(--bg-surface)" }}
-                  >
-                    <div className="flex items-center gap-1">
-                      {[0, 1, 2].map((i) => (
-                        <div
-                          key={i}
-                          className="w-2 h-2 rounded-full typing-dot"
-                          style={{ background: config.color }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* 생각중(...) 표시는 사이드바 "대화 엔진 상태" 카드로 이동(PersonaPresence). */}
               </div>
             </div>
           );

@@ -91,8 +91,19 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false 
               {config.name}
             </span>
             {isPending && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: config.color, color: "#fff" }}>
-                말하는 중
+              <span
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full"
+                style={{ background: config.color }}
+                aria-label="생각하는 중"
+                title="생각하는 중"
+              >
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    className="w-1.5 h-1.5 rounded-full typing-dot"
+                    style={{ background: "#fff" }}
+                  />
+                ))}
               </span>
             )}
           </div>

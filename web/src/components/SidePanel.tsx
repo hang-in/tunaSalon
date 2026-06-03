@@ -75,23 +75,6 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
               </h2>
             </div>
 
-            {/* Silence indicator */}
-            {isSilent && (
-              <div
-                className="mb-3 px-3 py-2 rounded-lg text-xs text-center"
-                style={{
-                  background: "rgba(138, 191, 159, 0.08)",
-                  color: "#8ABF9F",
-                  border: "1px solid rgba(138, 191, 159, 0.15)",
-                }}
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  <Wind size={12} />
-                  조용한 순간 — 누군가 말하기를 기다리는 중
-                </span>
-              </div>
-            )}
-
             <div className="flex flex-col gap-3">
               {personaConfigs
                 .filter((p) => p.id !== "나")
@@ -187,6 +170,23 @@ export function SidePanel({ engineState, personaConfigs, open, onClose }: SidePa
               </div>
             </div>
           </div>
+
+          {/* 조용한 순간 (사이드바 하단) */}
+          {isSilent && (
+            <div
+              className="mt-6 px-3 py-2 rounded-lg text-xs text-center"
+              style={{
+                background: "rgba(138, 191, 159, 0.08)",
+                color: "#8ABF9F",
+                border: "1px solid rgba(138, 191, 159, 0.15)",
+              }}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Wind size={12} />
+                조용한 순간 — 누군가 말하기를 기다리는 중
+              </span>
+            </div>
+          )}
         </div>
       </aside>
     </>
