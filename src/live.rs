@@ -127,6 +127,21 @@ fn build_directive(
     None
 }
 
+/// 발화 길이 변주 힌트(생성 워커 프롬프트용).
+///
+/// tick + 화자 기반 결정적 선택이라 **rng를 소비하지 않는다**(골든·화자선택 결정성 무영향).
+/// history_snapshot(복제본)에만 주입되어 state.history는 불변(INV-2). 라이브 발화 길이를
+/// 일률적이지 않게 흩뜨리는 용도.
+fn length_hint(tick: u64, speaker: &str) -> &'static str {
+    let salt: usize = speaker.bytes().map(|b| b as usize).sum();
+    match (tick as usize).wrapping_add(salt) % 4 {
+        0 => "[길이] 한 문장으로 아주 짧게 답하세요.",
+        1 => "[길이] 2-3문장으로 답하세요.",
+        2 => "[길이] 3-4문장으로 조금 길게 풀어서 답하세요.",
+        _ => "[길이] 짧게 한두 마디로만 답하세요.",
+    }
+}
+
 impl LiveSession {
     /// 새 LiveSession을 생성하고 워커 스레드를 스폰한다.
     ///
@@ -416,21 +431,27 @@ impl LiveSession {
             self.human_focus > 0,
             &self.topics,
         );
-        if let Some(content) = directive {
-            // 사람 우선 지시를 실제로 쓴 경우(human_focus>0) 1턴 소모.
-            if self.human_focus > 0 {
-                self.human_focus -= 1;
+        // 발화 길이 변주(tick+화자 기반 결정적, rng 무소비). 진행 지시와 한 줄로 합쳐
+        // history 마지막 4줄(ollama::format_recent) 중 1줄만 차지하게 한다.
+        let len_hint = length_hint(tick, &chosen);
+        let combined = match directive {
+            Some(d) => {
+                // 진행 지시(사람 우선/화제)를 실제로 쓴 경우 human_focus 1턴 소모.
+                if self.human_focus > 0 {
+                    self.human_focus -= 1;
+                }
+                format!("{d} {len_hint}")
             }
-            let topic_event = crate::model::Event {
-                ts: tick as f64 * self.config.tick_interval,
-                speaker: "(진행)".to_string(),
-                mark: 0.0,
-                content: Some(content),
-            };
-            // 맨 앞(insert 0)이 아니라 맨 뒤(push)에 넣는다: 생성은 history 마지막 4줄만
-            // 보므로(ollama::format_recent), 대화가 길어져도 지시가 항상 컨텍스트에 들어간다.
-            history_snapshot.push(topic_event);
-        }
+            None => len_hint.to_string(),
+        };
+        let topic_event = crate::model::Event {
+            ts: tick as f64 * self.config.tick_interval,
+            speaker: "(진행)".to_string(),
+            mark: 0.0,
+            content: Some(combined),
+        };
+        // 맨 뒤(push): 생성은 history 마지막 4줄만 보므로 대화가 길어져도 지시가 컨텍스트에 들어간다.
+        history_snapshot.push(topic_event);
 
         // 워커로 job 전송. 채널이 닫혔으면(워커 비정상 종료) 조용히 무시.
         if let Some(ref tx) = self.job_tx {
