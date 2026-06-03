@@ -2,9 +2,11 @@
 //! web 프런트엔드 sink: axum WebSocket으로 엔진 이벤트를 브라우저에 push + 사람 입력 수신.
 //! 엔진은 blocking(전용 스레드), axum은 tokio(async). 둘은 tokio 채널로 브리지.
 
-use crate::live::LiveSession;
+use crate::live::{LiveSession, PersonaMeta};
+use crate::persona_kit::{assemble, Blood, Mbti, Role, Zodiac};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
 
@@ -52,6 +54,16 @@ enum ClientFrame {
     Topic { topics: Vec<String> },
     #[serde(rename = "pause")]
     Pause { paused: bool },
+    #[serde(rename = "invite")]
+    Invite {
+        blood: String,
+        mbti: String,
+        zodiac: String,
+        #[serde(default)]
+        role: Option<String>,
+    },
+    #[serde(rename = "remove")]
+    Remove { id: String },
 }
 
 #[allow(dead_code)]
@@ -59,6 +71,13 @@ enum EngineCmd {
     Human(String),
     Topic(Vec<String>),
     SetPaused(bool),
+    Invite {
+        blood: String,
+        mbti: String,
+        zodiac: String,
+        role: Option<String>,
+    },
+    Remove(String),
     Shutdown,
 }
 
@@ -66,41 +85,50 @@ const STATE_PERIOD: Duration = Duration::from_millis(700);
 const TICK_PERIOD: Duration = Duration::from_millis(2000);
 const POLL_PERIOD: Duration = Duration::from_millis(80);
 
+/// backend 문자열을 모델 이름으로 변환한다.
+/// "cloud" -> gemma4:31b-cloud, "friend" -> qwen3.6-35b, 그 외 -> 그대로.
+fn backend_to_model(backend: &str) -> String {
+    match backend {
+        "cloud" => "gemma4:31b-cloud".to_string(),
+        "friend" => "qwen3.6-35b".to_string(),
+        other => other.to_string(),
+    }
+}
+
 // 엔진 스레드: blocking LiveSession 구동, frame을 broadcast로 push, cmd를 mpsc로 수신.
 fn run_engine(
     mut session: LiveSession,
     human_id: String,
-    models: BTreeMap<String, String>,
     frame_tx: broadcast::Sender<String>,
     mut cmd_rx: mpsc::UnboundedReceiver<EngineCmd>,
 ) {
-    // personas(id, name) 스냅샷(participants 빌드용)
-    let persona_meta: Vec<(String, String)> = session
-        .personas()
-        .iter()
-        .map(|p| (p.id.clone(), p.name.clone()))
-        .collect();
-
     let emit = |tx: &broadcast::Sender<String>, frame: &ServerFrame| {
         if let Ok(json) = serde_json::to_string(frame) {
             let _ = tx.send(json); // 구독자 없어도 무시(broadcast)
         }
     };
 
-    let build_state = |session: &LiveSession, paused: bool| -> ServerFrame {
+    let build_state = |session: &LiveSession, human_id: &str, paused: bool| -> ServerFrame {
         let intensities: BTreeMap<String, f64> =
             session.combined_intensities().into_iter().collect();
-        let mut participants: Vec<Participant> = persona_meta
+        let mut participants: Vec<Participant> = session
+            .personas()
             .iter()
-            .map(|(id, name)| Participant {
-                id: id.clone(),
-                name: name.clone(),
-                model: models.get(id).cloned(),
+            .map(|p| {
+                let model = session
+                    .persona_meta()
+                    .get(&p.id)
+                    .map(|m| backend_to_model(&m.backend));
+                Participant {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    model,
+                }
             })
             .collect();
         participants.push(Participant {
-            id: human_id.clone(),
-            name: human_id.clone(),
+            id: human_id.to_string(),
+            name: human_id.to_string(),
             model: None,
         });
         ServerFrame::State {
@@ -119,7 +147,7 @@ fn run_engine(
     let mut last_tick = Instant::now();
     let mut paused = false;
     // 초기 state 1회
-    emit(&frame_tx, &build_state(&session, paused));
+    emit(&frame_tx, &build_state(&session, &human_id, paused));
 
     loop {
         // 1. 명령 처리(즉시 반응)
@@ -142,7 +170,7 @@ fn run_engine(
                             ts,
                         },
                     );
-                    emit(&frame_tx, &build_state(&session, paused)); // λ 스파이크 즉시 반영
+                    emit(&frame_tx, &build_state(&session, &human_id, paused)); // λ 스파이크 즉시 반영
                 }
                 EngineCmd::Topic(topics) => {
                     session.set_topics(topics.clone());
@@ -154,11 +182,117 @@ fn run_engine(
                             },
                         );
                     }
-                    emit(&frame_tx, &build_state(&session, paused));
+                    emit(&frame_tx, &build_state(&session, &human_id, paused));
                 }
                 EngineCmd::SetPaused(p) => {
                     paused = p;
-                    emit(&frame_tx, &build_state(&session, paused)); // 즉시 paused 상태 반영
+                    emit(&frame_tx, &build_state(&session, &human_id, paused)); // 즉시 paused 상태 반영
+                }
+                EngineCmd::Remove(id) => {
+                    let name = session
+                        .personas()
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| id.clone());
+                    session.remove_persona(&id);
+                    emit(
+                        &frame_tx,
+                        &ServerFrame::System {
+                            text: format!("{name}님이 나갔습니다"),
+                        },
+                    );
+                    emit(&frame_tx, &build_state(&session, &human_id, paused));
+                }
+                EngineCmd::Invite { blood, mbti, zodiac, role } => {
+                    // 인원 제한: 최대 3명
+                    if session.personas().len() >= 3 {
+                        emit(
+                            &frame_tx,
+                            &ServerFrame::System {
+                                text: "방이 가득 찼습니다(최대 3명). 먼저 내보내세요".to_string(),
+                            },
+                        );
+                        continue;
+                    }
+                    // 파싱
+                    let parsed_blood = match Blood::from_str(&blood) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            emit(&frame_tx, &ServerFrame::System {
+                                text: format!("초대 실패: 잘못된 혈액형 '{blood}'"),
+                            });
+                            continue;
+                        }
+                    };
+                    let parsed_mbti = match Mbti::from_str(&mbti) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            emit(&frame_tx, &ServerFrame::System {
+                                text: format!("초대 실패: 잘못된 MBTI '{mbti}'"),
+                            });
+                            continue;
+                        }
+                    };
+                    let parsed_zodiac = match Zodiac::from_str(&zodiac) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            emit(&frame_tx, &ServerFrame::System {
+                                text: format!("초대 실패: 잘못된 별자리 '{zodiac}'"),
+                            });
+                            continue;
+                        }
+                    };
+                    let parsed_role = match role {
+                        Some(ref r) => match Role::from_str(r) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                emit(&frame_tx, &ServerFrame::System {
+                                    text: format!("초대 실패: 잘못된 역할 '{r}'"),
+                                });
+                                continue;
+                            }
+                        },
+                        None => Role::all()[0],
+                    };
+                    // 조립
+                    let assembled = assemble(parsed_role, parsed_mbti, parsed_blood, parsed_zodiac, "");
+                    // id 충돌 확인
+                    if session.persona_meta().contains_key(&assembled.persona.id)
+                        || session.personas().iter().any(|p| p.id == assembled.persona.id)
+                    {
+                        emit(&frame_tx, &ServerFrame::System {
+                            text: "이미 같은 조합의 참가자가 있습니다".to_string(),
+                        });
+                        continue;
+                    }
+                    // 자동 backend 배분: cloud 1명 우선, 나머지 friend
+                    let cloud_count = session
+                        .persona_meta()
+                        .values()
+                        .filter(|m| m.backend == "cloud")
+                        .count();
+                    let backend = if cloud_count < 1 {
+                        "cloud".to_string()
+                    } else {
+                        "friend".to_string()
+                    };
+                    let name = assembled.persona.name.clone();
+                    session.add_persona(
+                        assembled.persona.clone(),
+                        PersonaMeta {
+                            backend,
+                            system_prompt: assembled.system_prompt,
+                            modifier: assembled.modifier,
+                        },
+                    );
+                    emit(
+                        &frame_tx,
+                        &ServerFrame::System {
+                            text: format!("{name}님이 입장했습니다"),
+                        },
+                    );
+                    emit(&frame_tx, &build_state(&session, &human_id, paused));
                 }
                 EngineCmd::Shutdown => {
                     session.shutdown();
@@ -176,10 +310,11 @@ fn run_engine(
         // 3. 완성 발화 drain -> utterance frame
         while let Some(ev) = session.poll_generation() {
             if let Some(content) = ev.content {
-                let name = persona_meta
+                let name = session
+                    .personas()
                     .iter()
-                    .find(|(id, _)| *id == ev.speaker)
-                    .map(|(_, n)| n.clone())
+                    .find(|p| p.id == ev.speaker)
+                    .map(|p| p.name.clone())
                     .unwrap_or_else(|| ev.speaker.clone());
                 emit(
                     &frame_tx,
@@ -195,7 +330,7 @@ fn run_engine(
 
         // 4. state frame (주기)
         if last_state.elapsed() >= STATE_PERIOD {
-            emit(&frame_tx, &build_state(&session, paused));
+            emit(&frame_tx, &build_state(&session, &human_id, paused));
             last_state = Instant::now();
         }
 
@@ -204,7 +339,7 @@ fn run_engine(
 }
 
 // axum 라우터 + serve. main에서 호출(blocking, 내부에서 tokio runtime).
-pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, models: BTreeMap<String, String>) {
+pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String) {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -219,7 +354,7 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, mode
         // 엔진 전용 스레드(blocking)
         let frame_tx_engine = frame_tx.clone();
         let engine_handle = std::thread::spawn(move || {
-            run_engine(session, human_id, models, frame_tx_engine, cmd_rx);
+            run_engine(session, human_id, frame_tx_engine, cmd_rx);
         });
 
         use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -274,6 +409,10 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, mode
                             ClientFrame::Message { text } => EngineCmd::Human(text),
                             ClientFrame::Topic { topics } => EngineCmd::Topic(topics),
                             ClientFrame::Pause { paused } => EngineCmd::SetPaused(paused),
+                            ClientFrame::Invite { blood, mbti, zodiac, role } => {
+                                EngineCmd::Invite { blood, mbti, zodiac, role }
+                            }
+                            ClientFrame::Remove { id } => EngineCmd::Remove(id),
                         };
                         let _ = cmd_tx.send(cmd);
                     }
@@ -473,6 +612,55 @@ mod tests {
             }
             _ => panic!("ClientFrame::Topic 이어야 함"),
         }
+    }
+
+    #[test]
+    fn client_invite_frame_deserializes() {
+        let json = r#"{"type":"invite","blood":"O","mbti":"ENTJ","zodiac":"can"}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Invite { blood, mbti, zodiac, role } => {
+                assert_eq!(blood, "O");
+                assert_eq!(mbti, "ENTJ");
+                assert_eq!(zodiac, "can");
+                assert_eq!(role, None, "role 생략 시 None이어야 함");
+            }
+            _ => panic!("ClientFrame::Invite 이어야 함"),
+        }
+    }
+
+    #[test]
+    fn client_invite_frame_with_role_deserializes() {
+        let json = r#"{"type":"invite","blood":"A","mbti":"INFP","zodiac":"pis","role":"poet"}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Invite { blood, mbti, zodiac, role } => {
+                assert_eq!(blood, "A");
+                assert_eq!(mbti, "INFP");
+                assert_eq!(zodiac, "pis");
+                assert_eq!(role, Some("poet".to_string()));
+            }
+            _ => panic!("ClientFrame::Invite 이어야 함"),
+        }
+    }
+
+    #[test]
+    fn client_remove_frame_deserializes() {
+        let json = r#"{"type":"remove","id":"평화로운태양아래에서"}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Remove { id } => {
+                assert_eq!(id, "평화로운태양아래에서");
+            }
+            _ => panic!("ClientFrame::Remove 이어야 함"),
+        }
+    }
+
+    #[test]
+    fn backend_to_model_maps_correctly() {
+        assert_eq!(backend_to_model("cloud"), "gemma4:31b-cloud");
+        assert_eq!(backend_to_model("friend"), "qwen3.6-35b");
+        assert_eq!(backend_to_model("custom"), "custom");
     }
 
     #[test]

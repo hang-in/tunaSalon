@@ -56,7 +56,20 @@ export interface ClientPauseFrame {
   paused: boolean;
 }
 
-export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame;
+export interface ClientInviteFrame {
+  type: "invite";
+  blood: string;
+  mbti: string;
+  zodiac: string;
+  role?: string;
+}
+
+export interface ClientRemoveFrame {
+  type: "remove";
+  id: string;
+}
+
+export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame | ClientInviteFrame | ClientRemoveFrame;
 
 // ── UI-local types ──────────────────────────────────────────────
 

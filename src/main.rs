@@ -133,12 +133,7 @@ fn main() {
                 salon::memory::live_store(),
             )
             .with_persona_meta(build_demo_persona_meta());
-            // 모델 표시(라우팅 일치): friend/chaos -> qwen(지인서버 둘), summarizer -> gemma(cloud 하나).
-            let mut models = std::collections::BTreeMap::new();
-            models.insert("friend".to_string(), "qwen3.6-35b".to_string());
-            models.insert("chaos".to_string(), "qwen3.6-35b".to_string());
-            models.insert("summarizer".to_string(), "gemma4:31b-cloud".to_string());
-            salon::web::serve(&cli.host, cli.port, session, "나".to_string(), models);
+            salon::web::serve(&cli.host, cli.port, session, "나".to_string());
         }
         #[cfg(not(feature = "web"))]
         {
