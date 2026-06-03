@@ -35,9 +35,23 @@ pub enum TickOutcome {
     AwaitingGeneration,
 }
 
-/// 워커로 보내는 job: (placeholder_idx, speaker, history_snapshot, tick, recall).
-/// recall: 라이브 경로 회상 텍스트. None이면 회상 미주입.
-type Job = (usize, PersonaId, Vec<Event>, u64, Option<String>);
+/// 페르소나별 백엔드 라우팅 + system_prompt 보관.
+///
+/// `LiveSession`이 `persona_meta` 맵으로 관리한다.
+/// pool은 Arc<BackendPool>로 공유하며 가변 불필요.
+#[derive(Debug, Clone)]
+pub struct PersonaMeta {
+    /// pool의 backend 이름("cloud"/"friend" 등).
+    pub backend: String,
+    /// 해당 persona에 주입할 system_prompt.
+    pub system_prompt: String,
+    /// 케미 계수 보관용(이 단계 alpha에서는 미사용).
+    pub modifier: crate::model::PersonaModifier,
+}
+
+/// 워커로 보내는 job: (placeholder_idx, speaker, history_snapshot, tick, recall, route).
+/// route: Some((backend, system_prompt)) = persona_meta가 있는 경우, None = 기존 generate_one 경로.
+type Job = (usize, PersonaId, Vec<Event>, u64, Option<String>, Option<(String, String)>);
 /// 워커가 돌려보내는 결과: (placeholder_idx, generated_text).
 type Result = (usize, Option<String>);
 
@@ -76,6 +90,9 @@ pub struct LiveSession {
     room: String,
     /// 사람 화자 ID. submit_human 시 MemoryEvent 생성에 사용(HumanChannel 필드 직접 노출 회피).
     human_id: PersonaId,
+    /// 페르소나별 백엔드 라우팅 + system_prompt. with_persona_meta 빌더로 설정.
+    /// 빈 맵이면 모든 persona가 기존 generate_one(폴백 체인) 경로를 사용한다.
+    persona_meta: BTreeMap<PersonaId, PersonaMeta>,
     /// 방 화제 태그(최대 5개). 생성 워커로 보내는 history 스냅샷에만 주입(INV-2).
     topics: Vec<String>,
     /// 직전 사람 발화(사람 우선 지시용). human_focus와 함께 설정된다.
@@ -178,13 +195,21 @@ impl LiveSession {
         let (job_tx, job_rx) = mpsc::channel::<Job>();
         let (result_tx, result_rx) = mpsc::channel::<Result>();
 
-        // 워커 스레드: Arc<BackendPool>를 공유해 &self 경로로 generate_one 호출.
+        // 워커 스레드: Arc<BackendPool>를 공유해 &self 경로로 generate_one/generate_on 호출.
         let pool_clone = Arc::clone(&pool);
         let worker = std::thread::spawn(move || {
             // job_rx.recv()가 Err를 반환하면(job_tx drop) 루프 종료.
-            while let Ok((idx, speaker, history, tick, recall)) = job_rx.recv() {
+            while let Ok((idx, speaker, history, tick, recall, route)) = job_rx.recv() {
                 // recall: Option<String> → as_deref()로 Option<&str> 변환.
-                let text = pool_clone.generate_one(&speaker, &history, tick, recall.as_deref());
+                let text = if let Some((backend, ref prompt)) = route {
+                    // persona_meta 있는 경우: generate_on 우선, 실패 시 generate_one 폴백.
+                    pool_clone
+                        .generate_on(&backend, &speaker, &history, tick, recall.as_deref(), Some(prompt))
+                        .or_else(|| pool_clone.generate_one(&speaker, &history, tick, recall.as_deref()))
+                } else {
+                    // persona_meta 없는 경우: 기존과 정확히 동일하게 generate_one.
+                    pool_clone.generate_one(&speaker, &history, tick, recall.as_deref())
+                };
                 // result_tx 오류(수신단 닫힘)는 무시하고 종료.
                 if result_tx.send((idx, text)).is_err() {
                     break;
@@ -252,11 +277,22 @@ impl LiveSession {
             store,
             room,
             human_id,
+            persona_meta: BTreeMap::new(),
             topics: Vec::new(),
             last_human_msg: None,
             human_focus: 0,
             speaker_labels,
         }
+    }
+
+    /// persona_meta 맵을 통째로 설정하는 빌더 메서드.
+    ///
+    /// `with_store(...).with_persona_meta(map)` 체이닝으로 사용.
+    /// main.rs에서 `--chat`/`--web` 경로에만 적용한다.
+    /// 빈 맵이면(기본) 모든 persona가 generate_one(폴백 체인) 경로를 유지 — 기존 동작 보존.
+    pub fn with_persona_meta(mut self, meta: BTreeMap<PersonaId, PersonaMeta>) -> Self {
+        self.persona_meta = meta;
+        self
     }
 
     /// 사람 발화를 엔진 상태에 즉시 반영한다.
@@ -453,9 +489,23 @@ impl LiveSession {
         // 맨 뒤(push): 생성은 history 마지막 4줄만 보므로 대화가 길어져도 지시가 컨텍스트에 들어간다.
         history_snapshot.push(topic_event);
 
+        // persona_meta에서 라우팅 정보(backend, system_prompt) 추출.
+        // None이면 워커가 기존 generate_one 경로를 사용한다(persona_meta 빈 세션 = 기존 동작 보존).
+        let route = self
+            .persona_meta
+            .get(&chosen)
+            .map(|m| (m.backend.clone(), m.system_prompt.clone()));
+
         // 워커로 job 전송. 채널이 닫혔으면(워커 비정상 종료) 조용히 무시.
         if let Some(ref tx) = self.job_tx {
-            let _ = tx.send((placeholder_idx, chosen.clone(), history_snapshot, tick, recall));
+            let _ = tx.send((
+                placeholder_idx,
+                chosen.clone(),
+                history_snapshot,
+                tick,
+                recall,
+                route,
+            ));
             self.pending = Some(placeholder_idx);
         }
 
@@ -599,6 +649,86 @@ impl LiveSession {
     /// 현재 활성 화제 태그 참조.
     pub fn topics(&self) -> &[String] {
         &self.topics
+    }
+
+    /// persona_meta 맵 참조(task D web에서 backend->model 매핑에 사용).
+    pub fn persona_meta(&self) -> &BTreeMap<PersonaId, PersonaMeta> {
+        &self.persona_meta
+    }
+
+    // -------------------------------------------------------------------------
+    // 런타임 persona 추가 / 제거 (task B)
+    // -------------------------------------------------------------------------
+
+    /// 새 persona를 런타임에 방에 추가한다.
+    ///
+    /// - intensities: base_rate로 초기화.
+    /// - excitations: apply_excitation_on_speak의 or_insert(0.0)가 채우므로 명시 불필요.
+    /// - speaker_labels: 이름 + id + 이름 각 단어를 소문자로 추가.
+    /// - store: join(방, id) 호출로 참여 격리 등록.
+    /// - persona_meta: 전달받은 meta로 설정.
+    /// - config.alpha: 신규 쌍은 CouplingMatrix.get이 없으면 0을 반환 → 명시 insert 불필요(기본 0).
+    pub fn add_persona(&mut self, persona: Persona, meta: PersonaMeta) {
+        let id = persona.id.clone();
+        self.state.intensities.insert(id.clone(), persona.base_rate);
+        // excitations는 apply_excitation_on_speak의 or_insert(0.0)가 채우므로 명시 불필요.
+        self.speaker_labels.insert(persona.name.to_lowercase());
+        self.speaker_labels.insert(id.to_lowercase());
+        for w in persona.name.split_whitespace() {
+            self.speaker_labels.insert(w.to_lowercase());
+        }
+        self.store.join(&self.room, &id);
+        // config.alpha: 신규 쌍은 CouplingMatrix.get이 0을 반환 → 명시 insert 불필요(기본 0).
+        self.persona_meta.insert(id, meta);
+        self.personas.push(persona);
+    }
+
+    /// persona를 런타임에 방에서 제거한다.
+    ///
+    /// - personas: id 기준으로 제거.
+    /// - state.intensities / state.excitations / persona_meta: 키 제거.
+    /// - store: leave(방, id) 호출.
+    /// - config.alpha: 해당 id가 포함된 양방향 쌍 모두 제거.
+    /// - last_speaker: 제거 대상이면 None으로 초기화.
+    /// - speaker_labels: personas 전체를 기준으로 재구성(공유 단어 라벨 손실 방지).
+    ///
+    /// pending(생성 중)인 persona를 제거하는 경우: 상태 정리만 수행하고
+    /// placeholder는 건드리지 않는다. poll_generation이 기존대로 처리한다.
+    pub fn remove_persona(&mut self, id: &str) {
+        self.personas.retain(|p| p.id != id);
+        self.state.intensities.remove(id);
+        self.state.excitations.remove(id);
+        self.persona_meta.remove(id);
+        self.store.leave(&self.room, id);
+        // 해당 id가 포함된 양방향 쌍을 모두 제거.
+        self.config
+            .alpha
+            .values
+            .retain(|(a, b), _| a != id && b != id);
+        if self.state.last_speaker.as_deref() == Some(id) {
+            self.state.last_speaker = None;
+        }
+        self.rebuild_speaker_labels();
+    }
+
+    /// speaker_labels를 personas 전체 + human_id + "나" + "(진행)"로 재구성한다.
+    ///
+    /// remove_persona 후에 호출해 공유 단어 라벨이 잘못 제거되지 않게 한다.
+    /// with_store의 초기 라벨 구성 코드와 동일 규칙을 따른다.
+    fn rebuild_speaker_labels(&mut self) {
+        let mut labels: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for p in &self.personas {
+            labels.insert(p.name.to_lowercase());
+            labels.insert(p.id.to_lowercase());
+            for w in p.name.split_whitespace() {
+                labels.insert(w.to_lowercase());
+            }
+        }
+        labels.insert(self.human_id.to_lowercase());
+        labels.insert("나".to_string());
+        labels.insert("(진행)".to_string());
+        self.speaker_labels = labels;
     }
 }
 
@@ -1086,5 +1216,193 @@ mod tests {
             scale >= 0.4,
             "mu_scale()은 floor(0.4) 이상이어야 한다, 실제: {scale}"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // task-B: add_persona / remove_persona 단위 테스트
+    // -------------------------------------------------------------------------
+
+    fn make_persona_meta(backend: &str) -> PersonaMeta {
+        PersonaMeta {
+            backend: backend.to_string(),
+            system_prompt: format!("system prompt for {backend}"),
+            modifier: crate::model::PersonaModifier::default(),
+        }
+    }
+
+    /// (task-B-a) add_persona 후: personas / intensities / persona_meta 키에 새 id 존재,
+    /// store.recall이 그 persona로 동작(join됨).
+    #[test]
+    fn add_persona_registers_in_all_structures() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        let new_p = Persona {
+            id: "nova".to_string(),
+            name: "Nova Test".to_string(),
+            base_rate: 0.60,
+        };
+        let meta = make_persona_meta("cloud");
+        session.add_persona(new_p, meta);
+
+        // personas 목록에 존재
+        assert!(
+            session.personas().iter().any(|p| p.id == "nova"),
+            "add 후 personas에 nova 있어야 함"
+        );
+        // intensities에 존재
+        assert!(
+            session.state().intensities.contains_key("nova"),
+            "add 후 intensities에 nova 있어야 함"
+        );
+        // persona_meta에 존재
+        assert!(
+            session.persona_meta().contains_key("nova"),
+            "add 후 persona_meta에 nova 있어야 함"
+        );
+        // store join 확인: submit_human 이후 nova가 recall 가능해야 함.
+        session.submit_human("nova join test".to_string());
+        let recall = session.store.recall("nova", "nova join test", 5);
+        assert!(!recall.is_empty(), "join 후 nova가 사람 발화를 회상할 수 있어야 함");
+    }
+
+    /// (task-B-b) remove_persona 후:
+    /// personas / intensities / excitations / persona_meta에서 사라짐,
+    /// config.alpha에 그 id 포함 쌍 0개, last_speaker 정리.
+    #[test]
+    fn remove_persona_cleans_all_structures() {
+        let pool = offline_pool();
+        // config에 alpha 쌍을 명시적으로 추가해 제거를 검증한다.
+        let mut cfg = config();
+        cfg.alpha.values.insert(("aria".to_string(), "bjorn".to_string()), 0.3);
+        cfg.alpha.values.insert(("bjorn".to_string(), "aria".to_string()), 0.2);
+        let mut session = LiveSession::new(cfg, personas(), 42, Arc::clone(&pool), "you");
+
+        // excitation을 수동으로 추가(remove 후 사라지는지 검증용).
+        session.state.excitations.insert("aria".to_string(), 0.5);
+        // last_speaker를 aria로 설정.
+        session.state.last_speaker = Some("aria".to_string());
+
+        session.remove_persona("aria");
+
+        // personas에서 사라짐
+        assert!(
+            !session.personas().iter().any(|p| p.id == "aria"),
+            "remove 후 personas에 aria 없어야 함"
+        );
+        // intensities에서 사라짐
+        assert!(
+            !session.state().intensities.contains_key("aria"),
+            "remove 후 intensities에 aria 없어야 함"
+        );
+        // excitations에서 사라짐
+        assert!(
+            !session.state().excitations.contains_key("aria"),
+            "remove 후 excitations에 aria 없어야 함"
+        );
+        // persona_meta에서 사라짐
+        assert!(
+            !session.persona_meta().contains_key("aria"),
+            "remove 후 persona_meta에 aria 없어야 함"
+        );
+        // config.alpha에 aria 포함 쌍 0개
+        let aria_pairs: Vec<_> = session
+            .config
+            .alpha
+            .values
+            .keys()
+            .filter(|(a, b)| a == "aria" || b == "aria")
+            .collect();
+        assert_eq!(aria_pairs.len(), 0, "remove 후 alpha에 aria 포함 쌍 없어야 함");
+        // last_speaker 정리
+        assert_eq!(
+            session.state().last_speaker,
+            None,
+            "remove 후 last_speaker는 None이어야 함"
+        );
+    }
+
+    /// (task-B-c) add -> remove -> add 시퀀스 후 상태 일관(키셋 일치).
+    #[test]
+    fn add_remove_add_sequence_is_consistent() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        let make_nova = || Persona {
+            id: "nova".to_string(),
+            name: "Nova".to_string(),
+            base_rate: 0.55,
+        };
+
+        // add
+        session.add_persona(make_nova(), make_persona_meta("cloud"));
+        assert!(session.personas().iter().any(|p| p.id == "nova"));
+        assert!(session.persona_meta().contains_key("nova"));
+
+        // remove
+        session.remove_persona("nova");
+        assert!(!session.personas().iter().any(|p| p.id == "nova"));
+        assert!(!session.persona_meta().contains_key("nova"));
+        assert!(!session.state().intensities.contains_key("nova"));
+
+        // re-add
+        session.add_persona(make_nova(), make_persona_meta("friend"));
+        assert!(session.personas().iter().any(|p| p.id == "nova"));
+        assert!(session.persona_meta().contains_key("nova"));
+        assert!(session.state().intensities.contains_key("nova"));
+
+        // 상태 일관: nova가 personas / intensities / persona_meta 세 곳 모두에 있어야 함.
+        // (persona_meta는 add_persona로 추가된 persona만 관리한다 — new()의 초기 personas는 포함 안 됨.)
+        assert!(
+            session.personas().iter().any(|p| p.id == "nova"),
+            "re-add 후 personas에 nova 있어야 함"
+        );
+        assert!(
+            session.state().intensities.contains_key("nova"),
+            "re-add 후 intensities에 nova 있어야 함"
+        );
+        assert!(
+            session.persona_meta().contains_key("nova"),
+            "re-add 후 persona_meta에 nova 있어야 함"
+        );
+        // 초기 personas(aria/bjorn)는 여전히 존재해야 함.
+        assert!(session.personas().iter().any(|p| p.id == "aria"));
+        assert!(session.personas().iter().any(|p| p.id == "bjorn"));
+    }
+
+    /// (task-B-d) persona_meta 빈 세션의 tick/poll_generation이 기존과 동일하게 동작(회귀 없음).
+    ///
+    /// `new()`로 생성한 세션은 persona_meta가 비어 있으므로 generate_one 경로를 타야 한다.
+    /// 오프라인 백엔드(즉시 None 반환) + poll 후 pending 해제 확인.
+    #[test]
+    fn empty_persona_meta_session_behaves_identically_to_before() {
+        let pool = offline_pool();
+        // new()로 생성 = persona_meta 빈 맵.
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        assert!(session.persona_meta().is_empty(), "new()는 persona_meta가 빈 맵이어야 함");
+
+        // 화자가 선택될 때까지 틱.
+        let mut dispatched = false;
+        for _ in 0..50 {
+            if let TickOutcome::Dispatched(_) = session.tick() {
+                dispatched = true;
+                break;
+            }
+        }
+        assert!(dispatched, "50틱 내에 화자가 선택돼야 한다(persona_meta 빈 세션)");
+        assert!(session.is_pending(), "Dispatched 후 pending이 Some이어야 한다");
+
+        // bounded 폴링: 오프라인 → content=None으로 즉시 반환.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut filled = false;
+        while std::time::Instant::now() < deadline {
+            if session.poll_generation().is_some() {
+                filled = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(filled, "2s 내에 poll_generation이 Event를 반환해야 한다(persona_meta 빈 세션)");
+        assert!(!session.is_pending(), "poll 후 pending이 해제돼야 한다");
     }
 }

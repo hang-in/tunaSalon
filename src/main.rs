@@ -1,7 +1,7 @@
 use salon::chat::ChatApp;
 use salon::driver;
 use salon::headless::HeadlessSink;
-use salon::live::LiveSession;
+use salon::live::{LiveSession, PersonaMeta};
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
 use salon::pool::{BackendConfig, BackendPool};
 use salon::preset::RoomPreset;
@@ -131,7 +131,8 @@ fn main() {
                 pool,
                 "나",
                 salon::memory::live_store(),
-            );
+            )
+            .with_persona_meta(build_demo_persona_meta());
             // 모델 표시(라우팅 일치): friend/chaos -> qwen(지인서버 둘), summarizer -> gemma(cloud 하나).
             let mut models = std::collections::BTreeMap::new();
             models.insert("friend".to_string(), "qwen3.6-35b".to_string());
@@ -174,7 +175,8 @@ fn main() {
             pool,
             "나",
             salon::memory::live_store(),
-        );
+        )
+        .with_persona_meta(build_demo_persona_meta());
         match ChatApp::new(session, names, theta) {
             Ok(mut app) => {
                 let _ = app.run();
@@ -522,6 +524,60 @@ fn build_demo_room_pool() -> BackendPool {
     pool.set_fallback("cloud", "friend");
 
     pool
+}
+
+/// `--chat` / `--web` 경로에서 `LiveSession::with_persona_meta`에 전달하는 맵을 빌드한다.
+///
+/// 라우팅은 `build_demo_room_pool`과 일관성을 유지한다:
+///   - summarizer -> "cloud" (gemma4:31b-cloud)
+///   - friend / chaos  -> "friend" (qwen3.6-35b)
+///
+/// SALON_CLOUD_ONLY 환경변수가 설정되면 세 persona 모두 "cloud"로 라우팅한다.
+/// `build_demo_room_pool`이 cloud_only 분기에서 friend 백엔드를 통째로 건너뛰는 것과 동일 의도.
+///
+/// system_prompt는 `demo_persona_system_prompts()`와 동일 값.
+/// modifier는 `demo_persona_modifiers()`와 동일 값(없으면 default).
+fn build_demo_persona_meta() -> BTreeMap<PersonaId, PersonaMeta> {
+    let cloud_only = std::env::var("SALON_CLOUD_ONLY")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+
+    let prompts = demo_persona_system_prompts();
+    let modifiers = demo_persona_modifiers();
+
+    // 라우팅 결정: SALON_CLOUD_ONLY면 전부 cloud, 아니면 build_demo_room_pool 일치.
+    let backend_for = |id: &str| -> String {
+        if cloud_only {
+            "cloud".to_string()
+        } else {
+            match id {
+                "summarizer" => "cloud".to_string(),
+                _ => "friend".to_string(),
+            }
+        }
+    };
+
+    let ids = ["friend", "chaos", "summarizer"];
+    ids.iter()
+        .map(|id| {
+            let system_prompt = prompts
+                .get(*id)
+                .cloned()
+                .unwrap_or_default();
+            let modifier = modifiers
+                .get(*id)
+                .cloned()
+                .unwrap_or_default();
+            (
+                id.to_string(),
+                PersonaMeta {
+                    backend: backend_for(id),
+                    system_prompt,
+                    modifier,
+                },
+            )
+        })
+        .collect()
 }
 
 fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
