@@ -1,7 +1,7 @@
 ---
 title: Salon 엔진 플랜 v0.10 - friend engine Stage 2 (BGE-M3 의미검색 + HNSW + hybrid)
 type: plan
-status: planned
+status: in_progress
 priority: P1
 updated_at: 2026-06-03
 owner: shared

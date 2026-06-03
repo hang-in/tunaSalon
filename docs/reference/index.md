@@ -5,6 +5,7 @@
 ## 설계 문서 (SSOT)
 - [salon-engine-design.md](salon-engine-design.md) - Salon 대화 흐름 엔진 설계 DESIGN (Hawkes, RRF, SilenceGate, FlowMeter)
 - [development-guardrails.md](development-guardrails.md) - 개발 진행 시 참고하는 가드레일 (refactoring-review-prompt.md 기반)
+- [refactoring-review-v9-snapshot.md](refactoring-review-v9-snapshot.md) - 리팩토링 검토 보고서 v0.9 스냅샷 (2026-06-03)
 
 ## 계획 문서
 - [../plans/index.md](../plans/index.md)
