@@ -30,6 +30,7 @@ enum ServerFrame {
         pending: Option<String>,
         participants: Vec<Participant>,
         topics: Vec<String>,
+        paused: bool,
     },
     #[serde(rename = "utterance")]
     Utterance {
@@ -49,12 +50,15 @@ enum ClientFrame {
     Message { text: String },
     #[serde(rename = "topic")]
     Topic { topics: Vec<String> },
+    #[serde(rename = "pause")]
+    Pause { paused: bool },
 }
 
 #[allow(dead_code)]
 enum EngineCmd {
     Human(String),
     Topic(Vec<String>),
+    SetPaused(bool),
     Shutdown,
 }
 
@@ -83,7 +87,7 @@ fn run_engine(
         }
     };
 
-    let build_state = |session: &LiveSession| -> ServerFrame {
+    let build_state = |session: &LiveSession, paused: bool| -> ServerFrame {
         let intensities: BTreeMap<String, f64> =
             session.combined_intensities().into_iter().collect();
         let mut participants: Vec<Participant> = persona_meta
@@ -107,13 +111,15 @@ fn run_engine(
             pending: session.pending_speaker(),
             participants,
             topics: session.topics().to_vec(),
+            paused,
         }
     };
 
     let mut last_state = Instant::now();
     let mut last_tick = Instant::now();
+    let mut paused = false;
     // 초기 state 1회
-    emit(&frame_tx, &build_state(&session));
+    emit(&frame_tx, &build_state(&session, paused));
 
     loop {
         // 1. 명령 처리(즉시 반응)
@@ -136,7 +142,7 @@ fn run_engine(
                             ts,
                         },
                     );
-                    emit(&frame_tx, &build_state(&session)); // λ 스파이크 즉시 반영
+                    emit(&frame_tx, &build_state(&session, paused)); // λ 스파이크 즉시 반영
                 }
                 EngineCmd::Topic(topics) => {
                     session.set_topics(topics.clone());
@@ -148,7 +154,11 @@ fn run_engine(
                             },
                         );
                     }
-                    emit(&frame_tx, &build_state(&session));
+                    emit(&frame_tx, &build_state(&session, paused));
+                }
+                EngineCmd::SetPaused(p) => {
+                    paused = p;
+                    emit(&frame_tx, &build_state(&session, paused)); // 즉시 paused 상태 반영
                 }
                 EngineCmd::Shutdown => {
                     session.shutdown();
@@ -157,8 +167,8 @@ fn run_engine(
             }
         }
 
-        // 2. tick (주기)
-        if last_tick.elapsed() >= TICK_PERIOD {
+        // 2. tick (주기) - paused면 skip
+        if !paused && last_tick.elapsed() >= TICK_PERIOD {
             session.tick();
             last_tick = Instant::now();
         }
@@ -185,7 +195,7 @@ fn run_engine(
 
         // 4. state frame (주기)
         if last_state.elapsed() >= STATE_PERIOD {
-            emit(&frame_tx, &build_state(&session));
+            emit(&frame_tx, &build_state(&session, paused));
             last_state = Instant::now();
         }
 
@@ -263,6 +273,7 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, mode
                         let cmd = match frame {
                             ClientFrame::Message { text } => EngineCmd::Human(text),
                             ClientFrame::Topic { topics } => EngineCmd::Topic(topics),
+                            ClientFrame::Pause { paused } => EngineCmd::SetPaused(paused),
                         };
                         let _ = cmd_tx.send(cmd);
                     }
@@ -347,6 +358,7 @@ mod tests {
             pending: None,
             participants,
             topics: vec!["부처님 오신날".to_string()],
+            paused: false,
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
@@ -360,6 +372,7 @@ mod tests {
         assert!(v["pending"].is_null(), "pending None → null 이어야 함");
         assert!(v["participants"].is_array(), "participants 키 필요");
         assert!(v["topics"].is_array(), "topics 키 필요");
+        assert_eq!(v["paused"], false, "paused 키 필요");
 
         // intensities 값 검증
         assert!((v["intensities"]["friend"].as_f64().unwrap() - 0.72).abs() < 1e-9);
@@ -375,11 +388,50 @@ mod tests {
             pending: Some("friend".to_string()),
             participants: vec![],
             topics: vec![],
+            paused: false,
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
         assert_eq!(v["pending"], "friend");
+    }
+
+    #[test]
+    fn state_frame_paused_true_serializes() {
+        let frame = ServerFrame::State {
+            intensities: BTreeMap::new(),
+            theta: 0.6,
+            flow: 0.0,
+            mu_scale: 1.0,
+            pending: None,
+            participants: vec![],
+            topics: vec![],
+            paused: true,
+        };
+
+        let json = serde_json::to_string(&frame).expect("직렬화 실패");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
+        assert_eq!(v["paused"], true, "paused true 직렬화");
+    }
+
+    #[test]
+    fn client_pause_frame_deserializes() {
+        let json = r#"{"type":"pause","paused":true}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Pause { paused } => assert!(paused),
+            _ => panic!("ClientFrame::Pause 이어야 함"),
+        }
+    }
+
+    #[test]
+    fn client_pause_frame_false_deserializes() {
+        let json = r#"{"type":"pause","paused":false}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Pause { paused } => assert!(!paused),
+            _ => panic!("ClientFrame::Pause false 이어야 함"),
+        }
     }
 
     #[test]

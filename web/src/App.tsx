@@ -16,6 +16,7 @@ function App() {
     setSidebarOpen,
     sendMessage,
     sendTopics,
+    sendPause,
     getPersonaConfig,
     personaConfigs,
     humanPulse,
@@ -45,6 +46,8 @@ function App() {
         onToggleSidebar={() => setSidebarOpen(true)}
         bg3d={bg3d}
         onToggle3d={() => setBg3d((v) => !v)}
+        paused={engineState.paused}
+        onTogglePause={() => sendPause(!engineState.paused)}
       />
 
       {/* P2-1: 연결 끊김 배너 */}

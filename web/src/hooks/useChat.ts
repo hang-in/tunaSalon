@@ -58,6 +58,7 @@ export function useChat() {
       { id: "나", name: "나" },
     ],
     topics: ["부처님 오신날"],
+    paused: false,
   });
   const [connected, setConnected] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -77,6 +78,7 @@ export function useChat() {
           pending: frame.pending,
           participants: frame.participants,
           topics: frame.topics,
+          paused: frame.paused ?? false,
         });
         setConnected(true);
       } else if (frame.type === "utterance") {
@@ -144,6 +146,11 @@ export function useChat() {
     connRef.current.send({ type: "topic", topics });
   }, []);
 
+  const sendPause = useCallback((paused: boolean) => {
+    if (!connRef.current) return;
+    connRef.current.send({ type: "pause", paused });
+  }, []);
+
   const getPersonaConfig = useCallback((id: string): PersonaConfig => {
     return PERSONA_CONFIGS.find((p) => p.id === id) || PERSONA_CONFIGS[0];
   }, []);
@@ -156,6 +163,7 @@ export function useChat() {
     setSidebarOpen,
     sendMessage,
     sendTopics,
+    sendPause,
     getPersonaConfig,
     personaConfigs: PERSONA_CONFIGS,
     humanPulse,

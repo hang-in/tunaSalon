@@ -89,6 +89,7 @@ class ConversationEngine {
   isSpeaking = false;
   humanSpokeRecently = false;
   humanCooldown = 0;
+  paused = false;
 
   getStateFrame(): ServerFrame {
     return {
@@ -100,12 +101,19 @@ class ConversationEngine {
       pending: this.pending,
       participants: PARTICIPANTS,
       topics: [...currentTopics],
+      paused: this.paused,
     };
   }
 
   tick(): ServerFrame[] {
     const frames: ServerFrame[] = [];
     tickCount++;
+
+    // paused면 state frame만 emit(람다/발화 갱신 없음)
+    if (this.paused) {
+      frames.push(this.getStateFrame());
+      return frames;
+    }
 
     // Decay human-spoke-recently flag
     if (this.humanCooldown > 0) {
@@ -297,6 +305,9 @@ export function connect(
       } else if (frame.type === "topic") {
         engine.setTopics(frame.topics);
         callback?.(engine.getStateFrame());
+      } else if (frame.type === "pause") {
+        engine.paused = frame.paused;
+        callback?.(engine.getStateFrame()); // 즉시 paused 상태 반영
       }
     },
     disconnect() {

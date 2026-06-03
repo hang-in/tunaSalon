@@ -15,6 +15,7 @@ export interface StateFrame {
   pending: string | null;
   participants: Participant[];
   topics: string[];
+  paused: boolean;
 }
 
 export interface UtteranceFrame {
@@ -50,7 +51,12 @@ export interface ClientTopicFrame {
   topics: string[];
 }
 
-export type ClientFrame = ClientMessageFrame | ClientTopicFrame;
+export interface ClientPauseFrame {
+  type: "pause";
+  paused: boolean;
+}
+
+export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame;
 
 // ── UI-local types ──────────────────────────────────────────────
 
@@ -81,4 +87,5 @@ export interface EngineState {
   pending: string | null;
   participants: Participant[];
   topics: string[];
+  paused: boolean;
 }
