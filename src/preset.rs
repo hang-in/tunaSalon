@@ -2,6 +2,60 @@ use crate::hawkes::HawkesEngine;
 use crate::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
 use std::collections::BTreeMap;
 
+/// persona 목록과 모디파이어로 coupling α 행렬을 계산한다.
+///
+/// `build_config_with_modifiers`의 alpha 계산 블록을 free 함수로 추출.
+/// 동적 초대(`add_persona`/`remove_persona`) 시에도 동일 로직으로 재계산하는 데 사용.
+///
+/// - n <= 1이면 빈 행렬 반환.
+/// - raw = reactivity(p) * provocativeness(j), p != j.
+/// - branching_spectral_radius로 재정규화(target_rho).
+/// - cur <= 0이면 빈 행렬(자극 없음).
+pub fn coupling_from_modifiers(
+    personas: &[Persona],
+    modifiers: &BTreeMap<PersonaId, PersonaModifier>,
+    beta: f64,
+    target_rho: f64,
+) -> CouplingMatrix {
+    let n = personas.len();
+    if n <= 1 || target_rho <= 0.0 {
+        return CouplingMatrix::new();
+    }
+
+    // 1단계: raw 비대칭 α 계산
+    let mut raw = CouplingMatrix::new();
+    for p in personas {
+        let reactivity = modifiers
+            .get(&p.id)
+            .map(|m| m.reactivity)
+            .unwrap_or(PersonaModifier::default().reactivity);
+        for j in personas {
+            if p.id != j.id {
+                let provocativeness = modifiers
+                    .get(&j.id)
+                    .map(|m| m.provocativeness)
+                    .unwrap_or(PersonaModifier::default().provocativeness);
+                let value = reactivity * provocativeness;
+                if value > 0.0 {
+                    raw.values.insert((p.id.clone(), j.id.clone()), value);
+                }
+            }
+        }
+    }
+
+    // 2단계: 분기 spectral radius 계산 후 재정규화
+    let cur = HawkesEngine::branching_spectral_radius(&raw, personas, beta);
+    if cur <= 0.0 {
+        return CouplingMatrix::new();
+    }
+    let scale = target_rho / cur;
+    let mut scaled = CouplingMatrix::new();
+    for (key, value) in &raw.values {
+        scaled.values.insert(key.clone(), value * scale);
+    }
+    scaled
+}
+
 /// 방 분위기 프리셋. 각 프리셋은 β/θ/α를 한 번에 세팅한다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoomPreset {
@@ -40,6 +94,11 @@ impl RoomPreset {
         self.params().3
     }
 
+    /// alpha 정규화 목표 spectral radius.
+    pub fn target_rho(&self) -> f64 {
+        self.params().2
+    }
+
     /// 프리셋 값으로 EngineConfig를 구성한다.
     ///
     /// 모디파이어를 전부 기본(1.0)으로 설정한 build_config_with_modifiers와 동일.
@@ -64,45 +123,7 @@ impl RoomPreset {
         modifiers: &BTreeMap<PersonaId, PersonaModifier>,
     ) -> EngineConfig {
         let (beta, theta, target_rho, _mu_scale) = self.params();
-        let n = personas.len();
-
-        let alpha = if n <= 1 {
-            CouplingMatrix::new()
-        } else {
-            // 1단계: raw 비대칭 α 계산
-            let mut raw = CouplingMatrix::new();
-            for p in personas {
-                let reactivity = modifiers
-                    .get(&p.id)
-                    .map(|m| m.reactivity)
-                    .unwrap_or(PersonaModifier::default().reactivity);
-                for j in personas {
-                    if p.id != j.id {
-                        let provocativeness = modifiers
-                            .get(&j.id)
-                            .map(|m| m.provocativeness)
-                            .unwrap_or(PersonaModifier::default().provocativeness);
-                        let value = reactivity * provocativeness;
-                        if value > 0.0 {
-                            raw.values.insert((p.id.clone(), j.id.clone()), value);
-                        }
-                    }
-                }
-            }
-
-            // 2단계: 분기 spectral radius 계산 후 재정규화
-            let cur = HawkesEngine::branching_spectral_radius(&raw, personas, beta);
-            if cur <= 0.0 {
-                CouplingMatrix::new()
-            } else {
-                let scale = target_rho / cur;
-                let mut scaled = CouplingMatrix::new();
-                for (key, value) in &raw.values {
-                    scaled.values.insert(key.clone(), value * scale);
-                }
-                scaled
-            }
-        };
+        let alpha = coupling_from_modifiers(personas, modifiers, beta, target_rho);
 
         EngineConfig {
             beta,

@@ -95,6 +95,9 @@ pub struct LiveSession {
     persona_meta: BTreeMap<PersonaId, PersonaMeta>,
     /// 방 화제 태그(최대 5개). 생성 워커로 보내는 history 스냅샷에만 주입(INV-2).
     topics: Vec<String>,
+    /// alpha 정규화 목표 spectral radius. 0.0이면 coupling_from_modifiers가 빈 행렬 반환(케미 없음).
+    /// with_target_rho 빌더로 설정. add/remove_persona 시 alpha 재계산에 사용.
+    target_rho: f64,
     /// 직전 사람 발화(사람 우선 지시용). human_focus와 함께 설정된다.
     last_human_msg: Option<String>,
     /// 사람 발화 후 그 메시지를 최우선으로 둘 남은 페르소나 턴 수.
@@ -279,6 +282,7 @@ impl LiveSession {
             human_id,
             persona_meta: BTreeMap::new(),
             topics: Vec::new(),
+            target_rho: 0.0,
             last_human_msg: None,
             human_focus: 0,
             speaker_labels,
@@ -292,6 +296,16 @@ impl LiveSession {
     /// 빈 맵이면(기본) 모든 persona가 generate_one(폴백 체인) 경로를 유지 — 기존 동작 보존.
     pub fn with_persona_meta(mut self, meta: BTreeMap<PersonaId, PersonaMeta>) -> Self {
         self.persona_meta = meta;
+        self
+    }
+
+    /// alpha 정규화 목표 spectral radius를 설정하는 빌더 메서드.
+    ///
+    /// `with_store(...).with_target_rho(rho)` 체이닝으로 사용.
+    /// 설정 후 `add_persona`/`remove_persona` 호출 시 alpha가 이 rho로 정규화된다.
+    /// 기본 0.0 = coupling_from_modifiers가 빈 행렬 반환 = 케미 없음 = 기존 동작 보존.
+    pub fn with_target_rho(mut self, rho: f64) -> Self {
+        self.target_rho = rho;
         self
     }
 
@@ -691,9 +705,10 @@ impl LiveSession {
             self.speaker_labels.insert(w.to_lowercase());
         }
         self.store.join(&self.room, &id);
-        // config.alpha: 신규 쌍은 CouplingMatrix.get이 0을 반환 → 명시 insert 불필요(기본 0).
         self.persona_meta.insert(id, meta);
         self.personas.push(persona);
+        // target_rho가 설정된 세션에서 신규 persona 쌍의 alpha를 정규화된 값으로 갱신.
+        self.recompute_alpha();
     }
 
     /// persona를 런타임에 방에서 제거한다.
@@ -713,15 +728,12 @@ impl LiveSession {
         self.state.excitations.remove(id);
         self.persona_meta.remove(id);
         self.store.leave(&self.room, id);
-        // 해당 id가 포함된 양방향 쌍을 모두 제거.
-        self.config
-            .alpha
-            .values
-            .retain(|(a, b), _| a != id && b != id);
         if self.state.last_speaker.as_deref() == Some(id) {
             self.state.last_speaker = None;
         }
         self.rebuild_speaker_labels();
+        // 제거 후 나머지 persona 쌍의 alpha를 전체 재계산.
+        self.recompute_alpha();
     }
 
     /// speaker_labels를 personas 전체 + human_id + "나" + "(진행)"로 재구성한다.
@@ -742,6 +754,24 @@ impl LiveSession {
         labels.insert("나".to_string());
         labels.insert("(진행)".to_string());
         self.speaker_labels = labels;
+    }
+
+    /// personas 현재 목록과 persona_meta modifier로 config.alpha를 재계산한다.
+    ///
+    /// target_rho == 0.0이면 coupling_from_modifiers가 빈 행렬을 반환해 케미 없음(기존 동작).
+    /// add_persona / remove_persona 후에 호출해 신규/제거 쌍의 alpha를 갱신한다.
+    fn recompute_alpha(&mut self) {
+        let modifiers: std::collections::BTreeMap<crate::model::PersonaId, crate::model::PersonaModifier> = self
+            .persona_meta
+            .iter()
+            .map(|(id, m)| (id.clone(), m.modifier.clone()))
+            .collect();
+        self.config.alpha = crate::preset::coupling_from_modifiers(
+            &self.personas,
+            &modifiers,
+            self.config.beta,
+            self.target_rho,
+        );
     }
 }
 
@@ -1439,6 +1469,165 @@ mod tests {
         assert_eq!(session.state().last_speaker, None);
         assert!(session.state().history.is_empty());
         assert_eq!(session.tick_count(), 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // with_target_rho / recompute_alpha 테스트
+    // -------------------------------------------------------------------------
+
+    /// (alpha-recompute-1) with_target_rho(0.40) 세션에 add_persona 2명 후:
+    /// - config.alpha.values 비어있지 않음(케미 생성됨)
+    /// - branching_spectral_radius < 1 (안정)
+    #[test]
+    fn add_persona_with_target_rho_generates_stable_alpha() {
+        use crate::hawkes::HawkesEngine;
+        use crate::preset::RoomPreset;
+
+        let pool = offline_pool();
+        // 빈 personas로 시작 + target_rho 설정 (복원 분기와 동일 패턴).
+        let mut session = LiveSession::with_store(
+            config(),
+            vec![],
+            42,
+            pool,
+            "you",
+            crate::memory::MemoryStore::new(),
+        )
+        .with_target_rho(RoomPreset::Pub.target_rho());
+
+        let meta_a = make_persona_meta("cloud");
+        let meta_b = make_persona_meta("cloud");
+        let meta_c = make_persona_meta("friend");
+
+        let p_a = Persona { id: "alpha".to_string(), name: "Alpha".to_string(), base_rate: 0.70 };
+        let p_b = Persona { id: "beta".to_string(), name: "Beta".to_string(), base_rate: 0.60 };
+        let p_c = Persona { id: "gamma".to_string(), name: "Gamma".to_string(), base_rate: 0.55 };
+
+        // 1명 추가: n<=1이므로 alpha는 빈 행렬
+        session.add_persona(p_a, meta_a);
+        assert!(
+            session.config.alpha.values.is_empty(),
+            "1명이면 alpha는 빈 행렬이어야 한다"
+        );
+
+        // 2명 추가: n=2, alpha 생성됨
+        session.add_persona(p_b, meta_b);
+        assert!(
+            !session.config.alpha.values.is_empty(),
+            "2명 이후 alpha.values가 비어있으면 안 된다(케미 생성)"
+        );
+
+        // 안정성: branching_spectral_radius < 1
+        let beta = session.config.beta;
+        let radius = HawkesEngine::branching_spectral_radius(
+            &session.config.alpha,
+            session.personas(),
+            beta,
+        );
+        assert!(
+            radius < 1.0,
+            "alpha는 안정(spectral radius < 1)이어야 한다, 실제: {radius}"
+        );
+        // target_rho 근접: Pub = 0.40
+        let target = RoomPreset::Pub.target_rho();
+        assert!(
+            (radius - target).abs() < 1e-6,
+            "spectral radius({radius})가 target_rho({target})와 1e-6 이내이어야 한다"
+        );
+
+        // 3명 추가 후에도 안정
+        session.add_persona(p_c, meta_c);
+        let radius3 = HawkesEngine::branching_spectral_radius(
+            &session.config.alpha,
+            session.personas(),
+            beta,
+        );
+        assert!(
+            radius3 < 1.0,
+            "3명 후에도 안정이어야 한다, 실제: {radius3}"
+        );
+        assert!(
+            (radius3 - target).abs() < 1e-6,
+            "3명 후 spectral radius({radius3})가 target_rho({target})와 1e-6 이내이어야 한다"
+        );
+    }
+
+    /// (alpha-recompute-2) remove 후에도 안정.
+    #[test]
+    fn remove_persona_with_target_rho_keeps_alpha_stable() {
+        use crate::hawkes::HawkesEngine;
+        use crate::preset::RoomPreset;
+
+        let pool = offline_pool();
+        let mut session = LiveSession::with_store(
+            config(),
+            vec![],
+            42,
+            pool,
+            "you",
+            crate::memory::MemoryStore::new(),
+        )
+        .with_target_rho(RoomPreset::Pub.target_rho());
+
+        // 3명 추가
+        for (id, name) in [("aa", "AA"), ("bb", "BB"), ("cc", "CC")] {
+            let p = Persona { id: id.to_string(), name: name.to_string(), base_rate: 0.60 };
+            session.add_persona(p, make_persona_meta("cloud"));
+        }
+        let beta = session.config.beta;
+        let target = RoomPreset::Pub.target_rho();
+
+        // 1명 제거 후 2명 남음 → alpha 재계산, 안정 유지
+        session.remove_persona("cc");
+        assert_eq!(session.personas().len(), 2, "cc 제거 후 2명");
+        assert!(
+            !session.config.alpha.values.is_empty(),
+            "2명 남았으므로 alpha.values가 비어있으면 안 된다"
+        );
+        let radius = HawkesEngine::branching_spectral_radius(
+            &session.config.alpha,
+            session.personas(),
+            beta,
+        );
+        assert!(
+            (radius - target).abs() < 1e-6,
+            "remove 후 spectral radius({radius})가 target_rho({target})와 1e-6 이내이어야 한다"
+        );
+
+        // 1명 더 제거: 1명 남음 → alpha 빈 행렬
+        session.remove_persona("bb");
+        assert_eq!(session.personas().len(), 1, "bb 제거 후 1명");
+        assert!(
+            session.config.alpha.values.is_empty(),
+            "1명이면 alpha는 빈 행렬이어야 한다"
+        );
+    }
+
+    /// (alpha-recompute-3) with_target_rho 없는 세션(기본 0.0)은 add_persona 후에도 alpha 빈 행렬
+    /// → 기존 동작 보존.
+    #[test]
+    fn add_persona_without_target_rho_keeps_empty_alpha() {
+        let pool = offline_pool();
+        // with_target_rho 호출 없음 → target_rho = 0.0
+        let mut session = LiveSession::with_store(
+            config(),
+            vec![],
+            42,
+            pool,
+            "you",
+            crate::memory::MemoryStore::new(),
+        );
+
+        let p_a = Persona { id: "x".to_string(), name: "X".to_string(), base_rate: 0.70 };
+        let p_b = Persona { id: "y".to_string(), name: "Y".to_string(), base_rate: 0.60 };
+        session.add_persona(p_a, make_persona_meta("cloud"));
+        session.add_persona(p_b, make_persona_meta("cloud"));
+
+        // target_rho=0.0 → coupling_from_modifiers가 빈 행렬 반환
+        assert!(
+            session.config.alpha.values.is_empty(),
+            "with_target_rho 없으면 alpha는 빈 행렬이어야 한다(기존 동작 보존)"
+        );
     }
 
     /// (task-B-d) persona_meta 빈 세션의 tick/poll_generation이 기존과 동일하게 동작(회귀 없음).

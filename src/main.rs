@@ -144,6 +144,7 @@ fn main() {
 
             let session = if let Some(snap) = snap_opt.filter(|s| !s.participants.is_empty()) {
                 // 복원 세션: 빈 personas로 시작하고 add_persona로 순서 복원.
+                // with_target_rho를 add_persona 루프 전에 설정해야 각 add 시 alpha가 정규화된다.
                 let n_personas = snap.participants.len();
                 let n_messages = snap.messages.len();
                 let mut sess = LiveSession::with_store(
@@ -153,7 +154,8 @@ fn main() {
                     pool,
                     "나",
                     salon::memory::live_store(),
-                );
+                )
+                .with_target_rho(RoomPreset::Pub.target_rho());
                 for (p, m) in snap.participants {
                     sess.add_persona(p, m);
                 }
@@ -173,6 +175,7 @@ fn main() {
                     "나",
                     salon::memory::live_store(),
                 )
+                .with_target_rho(RoomPreset::Pub.target_rho())
                 .with_persona_meta(build_demo_persona_meta())
             };
 
@@ -214,6 +217,7 @@ fn main() {
             "나",
             salon::memory::live_store(),
         )
+        .with_target_rho(RoomPreset::Pub.target_rho())
         .with_persona_meta(build_demo_persona_meta());
         match ChatApp::new(session, names, theta) {
             Ok(mut app) => {
