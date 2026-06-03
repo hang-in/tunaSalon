@@ -4,7 +4,7 @@
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
 ![status](https://img.shields.io/badge/status-v0.10-blue)
-![tests](https://img.shields.io/badge/tests-226%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-271%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
@@ -251,6 +251,7 @@ All you need is [Rust](https://rustup.rs). The default run needs no LLM and no n
 ```bash
 cargo run                                         # watch the meter live (TUI). q to quit, space to pause
 cargo run -- --chat                               # join the room: interactive chat (needs a real terminal)
+cargo run --features web -- --web                 # web app in the browser (dynamic persona invite + single-room persistence)
 cargo run -- --headless --ticks 200               # deterministic NDJSON, one line per tick
 cargo run -- --sweep                              # θ × k grid + preset comparison
 cargo run -- --room argument                      # room mood preset (calm/pub/argument/chaos)
@@ -262,7 +263,7 @@ cargo run --features friend-engine-semantic -- --chat  # + semantic recall (load
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
 cargo run --example chat_demo                     # non-interactive chat loop with flow readout per line
-cargo test                                        # 226 tests (235 with friend-engine, 263 with friend-engine-semantic)
+cargo test                                        # 271 tests (277 with friend-engine, 295 with web)
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -271,7 +272,9 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.10 (now):** semantic recall — BGE-M3 embeddings (ONNX, in-process) + HNSW (usearch) + hybrid BM25/vector RRF fusion, on top of the v0.9 store and behind a `friend-engine-semantic` feature (default build still ML-free and golden-clean). The real embedder loads in `--chat` when the model is present (Mock fallback), with per-DB embedder consistency. Rust, 226 tests (235 / 263 with the features), smoke gates green.
+**v0.10 (now):** semantic recall — BGE-M3 embeddings (ONNX, in-process) + HNSW (usearch) + hybrid BM25/vector RRF fusion, on top of the v0.9 store and behind a `friend-engine-semantic` feature (default build still ML-free and golden-clean). The real embedder loads in `--chat` when the model is present (Mock fallback), with per-DB embedder consistency. Rust, 271 tests (277 / 295 with the features), smoke gates green.
+
+A web product track is now live: browser chat over WebSocket with dynamic persona invite, single-room persistence, and morphology-based flow.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
@@ -287,7 +290,7 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 **What's next (separate tracks, no fixed order):**
 - **friend engine, further:** forgetting, subjective per-persona storage, cross-room impressions of people, on top of the v0.10 store.
-- **Web frontend:** moving the chat UI to the browser for a production-grade, shareable app (Rust engine kept as-is, served over WebSocket; the TUI stays as a debug tool). Planned — see `docs/plans/salon-web-frontend.md`.
+- **Web app (live):** axum WebSocket + React, dynamic persona invite (blood-type / MBTI / zodiac / role assembly + auto Indian-style names), single-room persistence (rooms.db), runtime pace control, morphology-based flow for Korean, 4-axis persona badges. Next here: pixel-art avatars, multi-room, profiles/presets.
 - **Persona synthesis + characters:** building personas from MBTI / blood-type / zodiac / role presets, with pixel-art (Cyworld-minimi-style) avatars for the web — see `docs/temp/salon-persona-ui.md`.
 
 ---
