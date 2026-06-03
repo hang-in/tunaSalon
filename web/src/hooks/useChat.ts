@@ -43,6 +43,15 @@ const PERSONA_CONFIGS: PersonaConfig[] = [
   },
 ];
 
+// 동적 초대 persona(하드코딩 목록에 없음)에 id 해시로 배정하는 색 팔레트.
+const FALLBACK_PALETTE = [
+  { color: "#7BA7D9", glowColor: "rgba(123, 167, 217, 0.5)", bgColor: "rgba(123, 167, 217, 0.12)" },
+  { color: "#D99A5B", glowColor: "rgba(217, 154, 91, 0.5)", bgColor: "rgba(217, 154, 91, 0.12)" },
+  { color: "#9FCC8A", glowColor: "rgba(159, 204, 138, 0.5)", bgColor: "rgba(159, 204, 138, 0.12)" },
+  { color: "#CC8AB8", glowColor: "rgba(204, 138, 184, 0.5)", bgColor: "rgba(204, 138, 184, 0.12)" },
+  { color: "#5BC0BE", glowColor: "rgba(91, 192, 190, 0.5)", bgColor: "rgba(91, 192, 190, 0.12)" },
+];
+
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [engineState, setEngineState] = useState<EngineState>({
@@ -165,7 +174,15 @@ export function useChat() {
   }, []);
 
   const getPersonaConfig = useCallback((id: string): PersonaConfig => {
-    return PERSONA_CONFIGS.find((p) => p.id === id) || PERSONA_CONFIGS[0];
+    const found = PERSONA_CONFIGS.find((p) => p.id === id);
+    if (found) return found;
+    // 동적 초대 persona(id가 한글 slug)는 하드코딩 목록에 없다.
+    // PERSONA_CONFIGS[0]로 폴백하면 모두 같은 이름/색이 되므로(전부 "Friendly Regular"),
+    // id 해시로 결정적 색을 배정한다. 이름은 호출처가 message.name/participant.name을 쓴다.
+    let hash = 0;
+    for (const ch of id) hash = (hash + ch.charCodeAt(0)) % FALLBACK_PALETTE.length;
+    const pal = FALLBACK_PALETTE[hash];
+    return { id, name: id, ...pal, description: "" };
   }, []);
 
   return {

@@ -111,6 +111,9 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
 
           const isHuman = group.messages[0]?.isHuman ?? false;
           const config = getPersonaConfig(group.speaker);
+          // 화자 표시 이름: 서버가 보낸 message.name(동적 persona 실제 이름) 우선.
+          // config.name은 하드코딩 3명만 정확하고 동적 persona는 폴백이라 쓰지 않는다.
+          const displayName = group.messages[0]?.name || config.name;
 
           return (
             <div
@@ -131,7 +134,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
                       : "none",
                 }}
               >
-                {isHuman ? "나" : config.name.charAt(0)}
+                {isHuman ? "나" : displayName.charAt(0)}
               </div>
 
               {/* Bubble(s) */}
@@ -139,7 +142,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
                 {/* Name label */}
                 {!isHuman && (
                   <span className="text-[11px] font-medium text-[var(--text-secondary)] mb-1 ml-1">
-                    {config.name}
+                    {displayName}
                   </span>
                 )}
 
