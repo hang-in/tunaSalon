@@ -546,6 +546,17 @@ impl LiveSession {
         self.tick_count
     }
 
+    /// 현재 speak 임계값 theta (web/디버그 표시용).
+    pub fn theta(&self) -> f64 {
+        self.config.theta
+    }
+
+    /// 현재 생성 중(pending)인 화자 id. 없으면 None.
+    pub fn pending_speaker(&self) -> Option<PersonaId> {
+        self.pending
+            .and_then(|idx| self.state.history.get(idx).map(|e| e.speaker.clone()))
+    }
+
     // -------------------------------------------------------------------------
     // 토픽 관리 (topic-tags)
     // -------------------------------------------------------------------------

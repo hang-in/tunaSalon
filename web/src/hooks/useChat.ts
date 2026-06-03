@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { ServerFrame, ChatMessage, EngineState, PersonaConfig } from "@/types";
-import { connect } from "@/lib/mockEngine";
+import { connect as connectReal } from "@/lib/realEngine";
+import { connect as connectMock } from "@/lib/mockEngine";
+
+// VITE_MOCK=1 이면 mock 데모, 기본은 실 WebSocket 서버
+const connect = import.meta.env.VITE_MOCK === "1" ? connectMock : connectReal;
 
 const PERSONA_CONFIGS: PersonaConfig[] = [
   {
@@ -12,7 +16,7 @@ const PERSONA_CONFIGS: PersonaConfig[] = [
     description: "따뜻하고 친근한",
   },
   {
-    id: "realist",
+    id: "chaos",
     name: "Grounded Realist",
     color: "#8ABF9F",
     glowColor: "rgba(138, 191, 159, 0.5)",
@@ -40,14 +44,14 @@ const PERSONA_CONFIGS: PersonaConfig[] = [
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [engineState, setEngineState] = useState<EngineState>({
-    intensities: { friend: 0.1, realist: 0.15, summarizer: 0.05 },
+    intensities: { friend: 0.1, chaos: 0.15, summarizer: 0.05 },
     theta: 0.6,
     flow: 0.2,
     mu_scale: 1.0,
     pending: null,
     participants: [
       { id: "friend", name: "Friendly Regular" },
-      { id: "realist", name: "Grounded Realist" },
+      { id: "chaos", name: "Grounded Realist" },
       { id: "summarizer", name: "Quiet Summarizer" },
       { id: "나", name: "나" },
     ],

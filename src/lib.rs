@@ -27,3 +27,5 @@ pub mod sink;
 pub mod sweep;
 pub mod tui;
 pub mod utterance;
+#[cfg(feature = "web")]
+pub mod web;

@@ -44,6 +44,10 @@ struct Cli {
     ollama_host: Option<String>,
     // 인터랙티브 채팅 TUI 모드 (기본 false; 실제 터미널 필요)
     chat: bool,
+    // web 프런트엔드 모드 (axum WebSocket 서버)
+    web: bool,
+    port: u16,
+    host: String,
 }
 
 fn main() {
@@ -103,6 +107,40 @@ fn main() {
 
     if cli.sweep {
         sweep::run(cli.seed, cli.ticks);
+        return;
+    }
+
+    // --web: axum WebSocket 서버(엔진 이벤트 push + 사람 입력 수신).
+    // web feature off 빌드에서도 main.rs가 컴파일되도록 cfg 분기 필수.
+    if cli.web {
+        #[cfg(feature = "web")]
+        {
+            let chat_personas = chat_personas();
+            let mut chat_config = RoomPreset::Pub
+                .build_config_with_modifiers(&chat_personas, &demo_persona_modifiers());
+            chat_config.theta = cli.theta.unwrap_or(0.60);
+            if let Some(beta) = cli.beta {
+                chat_config.beta = beta;
+            }
+            chat_config.forbid_self_repeat = true;
+            let pool = std::sync::Arc::new(build_demo_room_pool());
+            let session = LiveSession::with_store(
+                chat_config,
+                chat_personas,
+                cli.seed,
+                pool,
+                "나",
+                salon::memory::live_store(),
+            );
+            salon::web::serve(&cli.host, cli.port, session, "나".to_string());
+        }
+        #[cfg(not(feature = "web"))]
+        {
+            eprintln!("--web은 `cargo run --features web -- --web`로 빌드/실행해야 합니다.");
+            eprintln!(
+                "(web 프런트는 먼저 `cd web && npm install && npm run build`로 web/dist 생성)"
+            );
+        }
         return;
     }
 
@@ -258,6 +296,9 @@ where
         model: "gemma4:31b-cloud".to_string(),
         ollama_host: None,
         chat: false,
+        web: false,
+        port: 8080,
+        host: "0.0.0.0".to_string(),
     };
     let mut args = args.into_iter();
 
@@ -278,6 +319,13 @@ where
             }
             "--llm" => cli.llm = true,
             "--chat" => cli.chat = true,
+            "--web" => cli.web = true,
+            "--port" => cli.port = parse_u64_arg("--port", args.next())? as u16,
+            "--host" => {
+                let raw =
+                    args.next().ok_or_else(|| "missing value for --host".to_string())?;
+                cli.host = raw;
+            }
             "--model" => {
                 let raw = args.next().ok_or_else(|| "missing value for --model".to_string())?;
                 cli.model = raw;
@@ -467,7 +515,7 @@ fn persona_names(personas: &[Persona]) -> BTreeMap<PersonaId, String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>] [--llm] [--model <name>] [--ollama-host <url>] [--chat]"
+    "Usage: salon [--headless] [--sweep] [--fsm] [--seed <u64>] [--ticks <u64>] [--theta <f64>] [--k <f64>] [--beta <f64>] [--delay-ms <u64>] [--room <calm|pub|argument|chaos>] [--llm] [--model <name>] [--ollama-host <url>] [--chat] [--web] [--port <u16>] [--host <addr>]"
 }
 
 #[cfg(test)]
@@ -495,6 +543,9 @@ mod tests {
                 model: "gemma4:31b-cloud".to_string(),
                 ollama_host: None,
                 chat: false,
+                web: false,
+                port: 8080,
+                host: "0.0.0.0".to_string(),
             })
         );
     }
@@ -526,6 +577,9 @@ mod tests {
                 model: "gemma4:31b-cloud".to_string(),
                 ollama_host: None,
                 chat: false,
+                web: false,
+                port: 8080,
+                host: "0.0.0.0".to_string(),
             })
         );
     }

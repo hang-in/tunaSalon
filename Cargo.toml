@@ -7,8 +7,13 @@ edition = "2021"
 friend-engine = ["dep:lindera", "dep:rusqlite"]
 friend-engine-semantic = ["friend-engine", "dep:ort", "dep:ndarray", "dep:tokenizers", "dep:usearch"]
 coreml = ["ort/coreml"]
+web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:futures-util"]
 
 [dependencies]
+axum = { version = "0.8", features = ["ws"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"], optional = true }
+tower-http = { version = "0.6", features = ["fs"], optional = true }
+futures-util = { version = "0.3", optional = true }
 crossterm = "0.29.0"
 dotenvy = "0.15.7"
 lindera = { version = "2.3.4", features = ["embed-ko-dic"], optional = true }

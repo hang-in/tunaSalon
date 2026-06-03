@@ -14,7 +14,7 @@ import type { ServerFrame, ClientFrame, Participant } from "@/types";
 
 const PARTICIPANTS: Participant[] = [
   { id: "friend", name: "Friendly Regular" },
-  { id: "realist", name: "Grounded Realist" },
+  { id: "chaos", name: "Grounded Realist" },
   { id: "summarizer", name: "Quiet Summarizer" },
   { id: "나", name: "나" },
 ];
@@ -45,7 +45,7 @@ const UTTERANCES: Record<string, string[][]> = {
     ["너도 등산 좋아한다고 했었잖아.", "이번 주말에 같이 가면 어떨까?"],
     ["봄향기가 참 좋은 것 같아.", "매년 이맘때면 기분이 설레."],
   ],
-  realist: [
+  chaos: [
     ["그건 좋은 관점이지만, 현실적으로 볼 때 좀 더 복잡하지 않을까?"],
     ["감정적으로 판단하기보다는 데이터를 보는 게 중요해.", "실제 수치가 말해주는 게 있거든."],
     ["좋은 생각이긴 한데 실행 가능성부터 따져봐야 해.", "자원과 시간이 충분한지 확인해야지."],
@@ -66,7 +66,7 @@ const RECALL_NOTES: Record<string, string[]> = {
     "지난 대화에서: 새로운 카페를 찾고 있었어",
     "기억나? 봄에 벚꽃 구경 가자고 했잖아",
   ],
-  realist: [
+  chaos: [
     "이전에: 데이터 기반 의사결정을 중요하게 여긴다고 했어",
     "과거 대화에서: 시간 관리가 고민이었지",
   ],
@@ -82,7 +82,7 @@ function pickRandom<T>(arr: T[]): T {
 
 // ═─ Conversation simulation ─═══════════════════════════════════════
 class ConversationEngine {
-  intensities: Record<string, number> = { friend: 0.1, realist: 0.15, summarizer: 0.05 };
+  intensities: Record<string, number> = { friend: 0.1, chaos: 0.15, summarizer: 0.05 };
   flow = 0.2;
   mu_scale = 1.0;
   pending: string | null = null;
