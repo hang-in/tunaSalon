@@ -550,12 +550,18 @@ pub fn assemble(role: Role, mbti: Mbti, blood: Blood, zodiac: Zodiac, name: &str
         + mbti.ei_mu_delta()
         + blood_mu_delta
         + zodiac_mu_delta;
-    let base_rate = raw_mu.clamp(0.05, 0.98);
+    // base_rate를 theta(보통 0.6) 근처로 선형 압축한다(0.55 + raw*0.30, 대략 0.55~0.88).
+    // 역할/MBTI 편차가 크면 한 persona만 theta를 넘고 나머지는 영영 못 넘어 대화가 끊긴다
+    // (한 명만 발화). 선형이라 순서/편차는 유지하되 전체를 theta 근처로 끌어올려, 초대된
+    // persona가 모두 자발 발화하게 한다. 라이브 체감 보고 조정 여지(계수 0.55/0.30).
+    let base_rate = (0.55 + raw_mu * 0.30).clamp(0.55, 0.90);
 
     let base_mod = role.base_modifier();
     let modifier = PersonaModifier {
-        reactivity: (base_mod.reactivity + tf_react_delta + blood_reactivity_delta).max(0.1),
-        provocativeness: (base_mod.provocativeness + tf_prov_delta + zodiac_prov_delta).max(0.1),
+        // 반응성/도발성 하한을 0.4로(케미가 너무 약하면 남 발화에 자극을 거의 안 받아
+        // base_rate가 낮은 persona가 영영 침묵한다). 모든 persona가 어느 정도 주고받게.
+        reactivity: (base_mod.reactivity + tf_react_delta + blood_reactivity_delta).max(0.4),
+        provocativeness: (base_mod.provocativeness + tf_prov_delta + zodiac_prov_delta).max(0.4),
     };
 
     // --- 내용층(system_prompt 합성) ---
@@ -665,15 +671,16 @@ mod tests {
         );
     }
 
-    // E/I delta가 정확히 0.30 차이여야 함(+0.15 vs -0.15, 다른 조건 동일)
+    // E(외향)가 I(내향)보다 base_rate가 높아야 함(ei_mu_delta +0.15 vs -0.15).
+    // base_rate는 theta 근처로 선형 압축되므로 정확한 0.30 편차는 보존되지 않고 순서만 유지된다.
     #[test]
-    fn ei_delta_is_exactly_0_30() {
+    fn extrovert_higher_base_rate_same_else() {
         let e = assemble(Role::Teacher, Mbti::Estp, Blood::A, Zodiac::Libra, "e");
         let i = assemble(Role::Teacher, Mbti::Istp, Blood::A, Zodiac::Libra, "i");
-        let diff = e.persona.base_rate - i.persona.base_rate;
         assert!(
-            (diff - 0.30).abs() < 1e-10,
-            "E/I diff should be 0.30, got {diff}"
+            e.persona.base_rate > i.persona.base_rate,
+            "E({}) should be > I({})",
+            e.persona.base_rate, i.persona.base_rate
         );
     }
 
