@@ -2,6 +2,7 @@ import { useRef, useEffect, useMemo } from "react";
 import { MessageCircle, Sparkles, UserPlus, UserMinus } from "lucide-react";
 import type { ChatMessage, EngineState, PersonaConfig } from "@/types";
 import { bloodLabel, zodiacLabel, roleLabel } from "@/lib/personaLabels";
+import { RichText } from "@/components/RichText";
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -30,6 +31,15 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
     if (!engineState.pending) return null;
     return engineState.participants.find((p) => p.id === engineState.pending)?.name ?? engineState.pending;
   }, [engineState.participants, engineState.pending]);
+
+  // 메시지 본문에서 강조할 참가자 닉네임 + 색상(사람 "나"는 제외 — 흔한 토큰 오탐 방지).
+  const mentions = useMemo(
+    () =>
+      engineState.participants
+        .filter((p) => p.id !== "나")
+        .map((p) => ({ name: p.name, color: getPersonaConfig(p.id).color })),
+    [engineState.participants, getPersonaConfig]
+  );
 
   // Group consecutive messages from same speaker
   const grouped = useMemo(() => {
@@ -205,7 +215,11 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
                       animationDelay: `${mi * 0.05}s`,
                     }}
                   >
-                    {msg.content}
+                    {isHuman ? (
+                      msg.content
+                    ) : (
+                      <RichText content={msg.content} mentions={mentions} />
+                    )}
                   </div>
                 ))}
                 {/* 생각중(...) 표시는 사이드바 "대화 엔진 상태" 카드로 이동(PersonaPresence). */}
