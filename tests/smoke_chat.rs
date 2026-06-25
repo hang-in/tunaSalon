@@ -25,18 +25,48 @@ const TICKS: u64 = 300;
 /// `main.rs::chat_personas`와 동일(μ 0.70/0.62/0.55). 드리프트 방지를 위해 값 일치 유지.
 fn chat_personas() -> Vec<Persona> {
     vec![
-        Persona { id: "friend".to_string(), name: "Friendly Regular".to_string(), base_rate: 0.70 },
-        Persona { id: "chaos".to_string(), name: "Grounded Realist".to_string(), base_rate: 0.62 },
-        Persona { id: "summarizer".to_string(), name: "Quiet Summarizer".to_string(), base_rate: 0.55 },
+        Persona {
+            id: "friend".to_string(),
+            name: "Friendly Regular".to_string(),
+            base_rate: 0.70,
+        },
+        Persona {
+            id: "chaos".to_string(),
+            name: "Grounded Realist".to_string(),
+            base_rate: 0.62,
+        },
+        Persona {
+            id: "summarizer".to_string(),
+            name: "Quiet Summarizer".to_string(),
+            base_rate: 0.55,
+        },
     ]
 }
 
 /// `main.rs::demo_persona_modifiers`와 동일.
 fn chat_modifiers() -> BTreeMap<PersonaId, PersonaModifier> {
     BTreeMap::from([
-        ("friend".to_string(), PersonaModifier { reactivity: 2.0, provocativeness: 1.0 }),
-        ("chaos".to_string(), PersonaModifier { reactivity: 1.0, provocativeness: 0.8 }),
-        ("summarizer".to_string(), PersonaModifier { reactivity: 1.0, provocativeness: 0.5 }),
+        (
+            "friend".to_string(),
+            PersonaModifier {
+                reactivity: 2.0,
+                provocativeness: 1.0,
+            },
+        ),
+        (
+            "chaos".to_string(),
+            PersonaModifier {
+                reactivity: 1.0,
+                provocativeness: 0.8,
+            },
+        ),
+        (
+            "summarizer".to_string(),
+            PersonaModifier {
+                reactivity: 1.0,
+                provocativeness: 0.5,
+            },
+        ),
     ])
 }
 
@@ -58,7 +88,10 @@ fn run() -> VecSink {
 
 /// 발화한 화자 시퀀스(침묵 제외).
 fn spoken(sink: &VecSink) -> Vec<&PersonaId> {
-    sink.records.iter().filter_map(|r| r.chosen.as_ref()).collect()
+    sink.records
+        .iter()
+        .filter_map(|r| r.chosen.as_ref())
+        .collect()
 }
 
 // ── (1) 자기연속 0: 같은 화자가 연속으로 선택되지 않는다 ──────────────────────────
@@ -86,11 +119,15 @@ fn chat_config_gives_three_way_participation() {
     let summarizer = *counts.get("summarizer").unwrap_or(&0);
 
     // 세 명 모두 참여
-    assert!(friend > 0 && realist > 0 && summarizer > 0,
-        "세 페르소나 모두 발화해야 한다. friend={friend} realist={realist} summarizer={summarizer}");
+    assert!(
+        friend > 0 && realist > 0 && summarizer > 0,
+        "세 페르소나 모두 발화해야 한다. friend={friend} realist={realist} summarizer={summarizer}"
+    );
     // summarizer가 "quiet하지만 분명히" 참여(측정상 ~59/300, 보수적으로 ≥30)
-    assert!(summarizer >= 30,
-        "summarizer가 충분히 참여해야 한다(독점 방지). 실제={summarizer} (기대 ≥30)");
+    assert!(
+        summarizer >= 30,
+        "summarizer가 충분히 참여해야 한다(독점 방지). 실제={summarizer} (기대 ≥30)"
+    );
     // 순서: friend ≥ realist ≥ summarizer (friend가 가장 활발, summarizer가 가장 조용)
     assert!(friend >= realist && realist >= summarizer,
         "참여 순서 friend ≥ realist ≥ summarizer 기대. friend={friend} realist={realist} summarizer={summarizer}");

@@ -139,9 +139,7 @@ fn rank_by_interest(
     candidates: &[PersonaId],
     recent_content: Option<&str>,
 ) -> BTreeMap<PersonaId, usize> {
-    let text_lower = recent_content
-        .map(|t| t.to_lowercase())
-        .unwrap_or_default();
+    let text_lower = recent_content.map(|t| t.to_lowercase()).unwrap_or_default();
 
     rank_by(candidates, |left, right| {
         let left_addressed = is_addressed(left, &text_lower);
@@ -179,10 +177,7 @@ fn rank_by_echo(
 
 /// Returns the text of the most recent Event whose content is Some.
 fn most_recent_content(history: &[Event]) -> Option<&str> {
-    history
-        .iter()
-        .rev()
-        .find_map(|e| e.content.as_deref())
+    history.iter().rev().find_map(|e| e.content.as_deref())
 }
 
 /// True if the candidate id appears as a case-insensitive substring of `text_lower`.
@@ -197,11 +192,7 @@ fn is_addressed(candidate: &PersonaId, text_lower: &str) -> bool {
 
 /// Returns true if the candidate's most recent own content shares at least one
 /// word of length >= 3 (case-insensitive) with `recent_words`.
-fn candidate_echoes(
-    candidate: &PersonaId,
-    history: &[Event],
-    recent_words: &[String],
-) -> bool {
+fn candidate_echoes(candidate: &PersonaId, history: &[Event], recent_words: &[String]) -> bool {
     if recent_words.is_empty() {
         return false;
     }
@@ -269,12 +260,14 @@ fn best_signal_dynamic(ranks: &[(Signal, usize)]) -> Signal {
     ranks
         .iter()
         .enumerate()
-        .min_by(|(left_idx, (left_signal, left_rank)), (right_idx, (right_signal, right_rank))| {
-            left_rank
-                .cmp(right_rank)
-                .then_with(|| signal_order(*left_signal).cmp(&signal_order(*right_signal)))
-                .then_with(|| left_idx.cmp(right_idx))
-        })
+        .min_by(
+            |(left_idx, (left_signal, left_rank)), (right_idx, (right_signal, right_rank))| {
+                left_rank
+                    .cmp(right_rank)
+                    .then_with(|| signal_order(*left_signal).cmp(&signal_order(*right_signal)))
+                    .then_with(|| left_idx.cmp(right_idx))
+            },
+        )
         .map(|(_, (signal, _))| *signal)
         .unwrap_or(Signal::Intensity)
 }
@@ -290,10 +283,7 @@ fn signal_order(signal: Signal) -> usize {
 }
 
 fn rrf_score_dynamic(k: f64, ranks: &[(Signal, usize)]) -> f64 {
-    ranks
-        .iter()
-        .map(|(_, rank)| 1.0 / (k + *rank as f64))
-        .sum()
+    ranks.iter().map(|(_, rank)| 1.0 / (k + *rank as f64)).sum()
 }
 
 fn compare_f64(left: f64, right: f64) -> Ordering {
@@ -449,8 +439,14 @@ mod tests {
                 .iter()
                 .map(|c| {
                     let ranks: Vec<(Signal, usize)> = vec![
-                        (Signal::Intensity, *intensity_ranks.get(c).unwrap_or(&usize::MAX)),
-                        (Signal::Balance, *balance_ranks.get(c).unwrap_or(&usize::MAX)),
+                        (
+                            Signal::Intensity,
+                            *intensity_ranks.get(c).unwrap_or(&usize::MAX),
+                        ),
+                        (
+                            Signal::Balance,
+                            *balance_ranks.get(c).unwrap_or(&usize::MAX),
+                        ),
                         (Signal::Random, *random_ranks.get(c).unwrap_or(&usize::MAX)),
                     ];
                     let score = rrf_score_dynamic(60.0, &ranks);
@@ -486,8 +482,14 @@ mod tests {
         let ranks = rank_by_interest(&candidates, recent);
 
         assert_eq!(ranks["bob"], 1, "addressed bob should have rank 1");
-        assert!(ranks["alice"] > ranks["bob"], "alice should rank worse than bob");
-        assert!(ranks["carol"] > ranks["bob"], "carol should rank worse than bob");
+        assert!(
+            ranks["alice"] > ranks["bob"],
+            "alice should rank worse than bob"
+        );
+        assert!(
+            ranks["carol"] > ranks["bob"],
+            "carol should rank worse than bob"
+        );
     }
 
     /// INTEREST (select-level): when content names "bob", bob wins more seeds
@@ -514,9 +516,7 @@ mod tests {
         let candidates = ids(&["bob", "pam"]);
         let intensities_map = intensities(&[("bob", 0.4), ("pam", 0.9)]);
         // No-content: bob spoke once, pam zero times.
-        let history_no_content = vec![
-            event("bob", 1.0),
-        ];
+        let history_no_content = vec![event("bob", 1.0)];
         // With-content: bob spoke once (no overlap with narrator's text),
         // narrator's most recent content names "bob".
         let history_with_content = vec![
@@ -527,13 +527,29 @@ mod tests {
         let bob_no: usize = (0..200)
             .filter(|seed| {
                 let mut rng = ChaCha8Rng::seed_from_u64(*seed);
-                select(&candidates, &intensities_map, &history_no_content, 60.0, &mut rng).chosen == "bob"
+                select(
+                    &candidates,
+                    &intensities_map,
+                    &history_no_content,
+                    60.0,
+                    &mut rng,
+                )
+                .chosen
+                    == "bob"
             })
             .count();
         let bob_with: usize = (0..200)
             .filter(|seed| {
                 let mut rng = ChaCha8Rng::seed_from_u64(*seed);
-                select(&candidates, &intensities_map, &history_with_content, 60.0, &mut rng).chosen == "bob"
+                select(
+                    &candidates,
+                    &intensities_map,
+                    &history_with_content,
+                    60.0,
+                    &mut rng,
+                )
+                .chosen
+                    == "bob"
             })
             .count();
 
@@ -545,8 +561,14 @@ mod tests {
         // Confirm interest mechanism directly: bob is rank 1 in rank_by_interest.
         let recent = most_recent_content(&history_with_content);
         let int_ranks = rank_by_interest(&candidates, recent);
-        assert_eq!(int_ranks["bob"], 1, "bob should be rank 1 in interest (named in content)");
-        assert!(int_ranks["pam"] > int_ranks["bob"], "pam not named → lower rank");
+        assert_eq!(
+            int_ranks["bob"], 1,
+            "bob should be rank 1 in interest (named in content)"
+        );
+        assert!(
+            int_ranks["pam"] > int_ranks["bob"],
+            "pam not named → lower rank"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -570,7 +592,10 @@ mod tests {
         let ranks = rank_by_echo(&candidates, &history, recent);
 
         assert_eq!(ranks["bob"], 1, "echoing bob (quasar) should have rank 1");
-        assert!(ranks["alice"] > ranks["bob"], "non-echoing alice should rank worse");
+        assert!(
+            ranks["alice"] > ranks["bob"],
+            "non-echoing alice should rank worse"
+        );
     }
 
     /// ECHO (select-level): adding content where bob's prior utterance shares
@@ -605,9 +630,7 @@ mod tests {
         let candidates = ids(&["bob", "pam"]);
         let intensities_map = intensities(&[("bob", 0.4), ("pam", 0.9)]);
         // No-content: bob spoke once, pam zero times.
-        let history_no_content = vec![
-            event("bob", 1.0),
-        ];
+        let history_no_content = vec![event("bob", 1.0)];
         // With-content: bob's last utterance contains "quasar"; narrator's
         // most recent content also has "quasar".  Narrator does not name "bob" or "pam".
         let history_with_content = vec![
@@ -618,13 +641,29 @@ mod tests {
         let bob_no: usize = (0..200)
             .filter(|seed| {
                 let mut rng = ChaCha8Rng::seed_from_u64(*seed);
-                select(&candidates, &intensities_map, &history_no_content, 60.0, &mut rng).chosen == "bob"
+                select(
+                    &candidates,
+                    &intensities_map,
+                    &history_no_content,
+                    60.0,
+                    &mut rng,
+                )
+                .chosen
+                    == "bob"
             })
             .count();
         let bob_with: usize = (0..200)
             .filter(|seed| {
                 let mut rng = ChaCha8Rng::seed_from_u64(*seed);
-                select(&candidates, &intensities_map, &history_with_content, 60.0, &mut rng).chosen == "bob"
+                select(
+                    &candidates,
+                    &intensities_map,
+                    &history_with_content,
+                    60.0,
+                    &mut rng,
+                )
+                .chosen
+                    == "bob"
             })
             .count();
 
@@ -636,7 +675,13 @@ mod tests {
         // Confirm the echo mechanism directly: bob rank 1 in rank_by_echo.
         let recent = most_recent_content(&history_with_content);
         let echo_ranks = rank_by_echo(&candidates, &history_with_content, recent);
-        assert_eq!(echo_ranks["bob"], 1, "bob should have echo rank 1 (quasar overlap)");
-        assert!(echo_ranks["pam"] > echo_ranks["bob"], "pam has no echo overlap");
+        assert_eq!(
+            echo_ranks["bob"], 1,
+            "bob should have echo rank 1 (quasar overlap)"
+        );
+        assert!(
+            echo_ranks["pam"] > echo_ranks["bob"],
+            "pam has no echo overlap"
+        );
     }
 }

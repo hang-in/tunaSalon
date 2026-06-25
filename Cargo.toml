@@ -8,7 +8,8 @@ morphology = ["dep:lindera"]
 friend-engine = ["morphology", "dep:rusqlite"]
 friend-engine-semantic = ["friend-engine", "dep:ort", "dep:ndarray", "dep:tokenizers", "dep:usearch"]
 coreml = ["ort/coreml"]
-web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:futures-util", "dep:rusqlite", "morphology"]
+web = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:futures-util", "dep:rusqlite", "morphology", "friend-engine"]
+redis-bus = ["dep:redis", "dep:tokio", "dep:futures-util"]
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"], optional = true }
@@ -19,6 +20,7 @@ crossterm = "0.29.0"
 dotenvy = "0.15.7"
 lindera = { version = "2.3.4", features = ["embed-ko-dic"], optional = true }
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+redis = { version = "0.32", default-features = false, features = ["tokio-comp", "streams"], optional = true }
 ort = { version = "=2.0.0-rc.10", features = ["download-binaries", "ndarray"], optional = true }
 ndarray = { version = "0.16", optional = true }
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"], optional = true }

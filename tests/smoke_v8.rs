@@ -12,6 +12,7 @@
 // 전체 네트워크-프리: FakeBackend + 오프라인 BackendPool + 순수 MemoryStore
 
 use salon::driver;
+use salon::live::LiveSession;
 use salon::memory::{MemoryEvent, MemoryStore};
 use salon::model::{CouplingMatrix, EngineConfig, Persona};
 use salon::ollama::OllamaBackend;
@@ -19,7 +20,6 @@ use salon::openai::OpenAIBackend;
 use salon::pool::{BackendConfig, BackendPool};
 use salon::runtime::FakeBackend;
 use salon::sink::VecSink;
-use salon::live::LiveSession;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -109,8 +109,22 @@ fn inv1_fake_backend_determinism_no_recall_leakage() {
     // driver::run은 recall=None을 FakeBackend에 주입 — v0.8 이후에도 불변
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
-    driver::run(&config, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_a,
+        &mut FakeBackend,
+    );
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_b,
+        &mut FakeBackend,
+    );
 
     assert_eq!(
         sink_a.records, sink_b.records,
@@ -174,7 +188,8 @@ fn recall_determinism_and_participation_isolation() {
     let r2 = store.recall("aria", "안녕 세계", 5);
 
     assert_eq!(
-        r1.len(), r2.len(),
+        r1.len(),
+        r2.len(),
         "같은 쿼리 두 번 호출의 길이가 달라서는 안 됨(결정성 위반)"
     );
     for (a, b) in r1.iter().zip(r2.iter()) {
@@ -199,7 +214,10 @@ fn recall_determinism_and_participation_isolation() {
         !clio_has_room_a,
         "clio는 room-a에 참여하지 않았으므로 room-a 사건을 회상할 수 없어야 함(참여 격리). \
          결과: {:?}",
-        clio_recall.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
+        clio_recall
+            .iter()
+            .map(|e| (&e.room, &e.content))
+            .collect::<Vec<_>>()
     );
 
     // (c) 역방향 격리: aria는 room-b에 참여하지 않았으므로 room-b 사건 접근 불가.
@@ -210,7 +228,10 @@ fn recall_determinism_and_participation_isolation() {
         !aria_has_room_b,
         "aria는 room-b에 참여하지 않았으므로 room-b 사건을 회상할 수 없어야 함(참여 격리). \
          결과: {:?}",
-        aria_b_recall.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
+        aria_b_recall
+            .iter()
+            .map(|e| (&e.room, &e.content))
+            .collect::<Vec<_>>()
     );
 
     // (c) 자동 join: record()로만 화자가 방에 등록됨 — 명시적 join 없이도 회상 가능
@@ -219,7 +240,8 @@ fn recall_determinism_and_participation_isolation() {
     auto_store.record(mem_ev("auto-room", 1, "clio", "자동 참여 테스트"));
     let auto_recall = auto_store.recall("clio", "자동 참여", 5);
     assert_eq!(
-        auto_recall.len(), 1,
+        auto_recall.len(),
+        1,
         "record()로 화자가 자동 join → 회상 가능해야 함(자동 참여 격리)"
     );
 }
@@ -260,9 +282,12 @@ fn recall_slot_ollama_build_request_body() {
 
     // (a) recall=Some → body["prompt"]에 "[기억]" 포함
     let prompt_with = assemble_prompt(recent, Some(recall_text));
-    let body_with = OllamaBackend::build_request_body("gemma4:e4b", &prompt_with, None, None, false);
+    let body_with =
+        OllamaBackend::build_request_body("gemma4:e4b", &prompt_with, None, None, false);
 
-    let prompt_field = body_with["prompt"].as_str().expect("body에 prompt 필드가 있어야 함");
+    let prompt_field = body_with["prompt"]
+        .as_str()
+        .expect("body에 prompt 필드가 있어야 함");
     assert!(
         prompt_field.contains("[기억]"),
         "recall=Some → OllamaBackend body[\"prompt\"]에 [기억] 섹션이 있어야 함. 실제: {prompt_field:?}"
@@ -274,9 +299,12 @@ fn recall_slot_ollama_build_request_body() {
 
     // (b) recall=None → body["prompt"]에 "[기억]" 없음
     let prompt_none = assemble_prompt(recent, None);
-    let body_none = OllamaBackend::build_request_body("gemma4:e4b", &prompt_none, None, None, false);
+    let body_none =
+        OllamaBackend::build_request_body("gemma4:e4b", &prompt_none, None, None, false);
 
-    let prompt_field_none = body_none["prompt"].as_str().expect("body에 prompt 필드가 있어야 함");
+    let prompt_field_none = body_none["prompt"]
+        .as_str()
+        .expect("body에 prompt 필드가 있어야 함");
     assert!(
         !prompt_field_none.contains("[기억]"),
         "recall=None → OllamaBackend body[\"prompt\"]에 [기억] 섹션이 없어야 함. 실제: {prompt_field_none:?}"
@@ -300,15 +328,20 @@ fn recall_slot_openai_build_request_body() {
 
     // (c) recall=Some → messages[user].content에 "[기억]" 포함
     let prompt_with = assemble_prompt(recent, Some(recall_text));
-    let body_with = OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_with, None, None, false);
+    let body_with =
+        OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_with, None, None, false);
 
     // system=None이면 messages[0]이 user 메시지
-    let messages = body_with["messages"].as_array().expect("messages 배열이 있어야 함");
+    let messages = body_with["messages"]
+        .as_array()
+        .expect("messages 배열이 있어야 함");
     let user_msg = messages
         .iter()
         .find(|m| m["role"] == "user")
         .expect("user 메시지가 있어야 함");
-    let content_with = user_msg["content"].as_str().expect("user content가 있어야 함");
+    let content_with = user_msg["content"]
+        .as_str()
+        .expect("user content가 있어야 함");
 
     assert!(
         content_with.contains("[기억]"),
@@ -321,14 +354,19 @@ fn recall_slot_openai_build_request_body() {
 
     // (d) recall=None → messages[user].content에 "[기억]" 없음
     let prompt_none = assemble_prompt(recent, None);
-    let body_none = OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_none, None, None, false);
+    let body_none =
+        OpenAIBackend::build_request_body("qwen3.6-35b", &prompt_none, None, None, false);
 
-    let messages_none = body_none["messages"].as_array().expect("messages 배열이 있어야 함");
+    let messages_none = body_none["messages"]
+        .as_array()
+        .expect("messages 배열이 있어야 함");
     let user_msg_none = messages_none
         .iter()
         .find(|m| m["role"] == "user")
         .expect("user 메시지가 있어야 함");
-    let content_none = user_msg_none["content"].as_str().expect("user content가 있어야 함");
+    let content_none = user_msg_none["content"]
+        .as_str()
+        .expect("user content가 있어야 함");
 
     assert!(
         !content_none.contains("[기억]"),
@@ -337,7 +375,10 @@ fn recall_slot_openai_build_request_body() {
 
     // 공통: stream=false, model 존재
     assert_eq!(body_none["stream"], false, "stream은 항상 false여야 함");
-    assert_eq!(body_none["model"], "qwen3.6-35b", "model 필드가 올바르게 설정되어야 함");
+    assert_eq!(
+        body_none["model"], "qwen3.6-35b",
+        "model 필드가 올바르게 설정되어야 함"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -415,6 +456,12 @@ fn content_gate_offline_session_store_empty_recall_none() {
     // 빈 결과 → format_recall None 재확인
     let f1 = MemoryStore::format_recall(&recall_aria);
     let f2 = MemoryStore::format_recall(&recall_empty);
-    assert!(f1.is_none(), "참여만 하고 사건 없으면 format_recall None이어야 함");
-    assert!(f2.is_none(), "빈 스토어 recall → format_recall None이어야 함");
+    assert!(
+        f1.is_none(),
+        "참여만 하고 사건 없으면 format_recall None이어야 함"
+    );
+    assert!(
+        f2.is_none(),
+        "빈 스토어 recall → format_recall None이어야 함"
+    );
 }

@@ -140,9 +140,10 @@ pub fn render_chat(
             let bar: String = (0..FLOW_BAR_WIDTH)
                 .map(|i| if i < filled { '#' } else { '.' })
                 .collect();
-            gauge_lines.push(Line::from(vec![
-                Span::raw(format!("흐름 수렴 {bar} {:.2}", m.convergence)),
-            ]));
+            gauge_lines.push(Line::from(vec![Span::raw(format!(
+                "흐름 수렴 {bar} {:.2}",
+                m.convergence
+            ))]));
         }
         None => {
             gauge_lines.push(Line::from("흐름 -"));
@@ -452,9 +453,7 @@ mod tests {
     }
 
     fn intensities() -> BTreeMap<PersonaId, f64> {
-        BTreeMap::from([
-            ("aria".to_string(), 0.72),
-        ])
+        BTreeMap::from([("aria".to_string(), 0.72)])
     }
 
     // ── 테스트 1: 채팅 pane에 발화(사람 + 페르소나)가 렌더된다 ─────────
@@ -483,7 +482,20 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0, &[]))
+            .draw(|f| {
+                render_chat(
+                    f,
+                    &history,
+                    &intensities(),
+                    &names(),
+                    0.65,
+                    "",
+                    false,
+                    None,
+                    1.0,
+                    &[],
+                )
+            })
             .expect("render ok");
 
         let text = buffer_text(&terminal);
@@ -515,7 +527,20 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0, &[]))
+            .draw(|f| {
+                render_chat(
+                    f,
+                    &history,
+                    &intensities(),
+                    &names(),
+                    0.65,
+                    "",
+                    false,
+                    None,
+                    1.0,
+                    &[],
+                )
+            })
             .expect("render ok");
 
         let text = buffer_text(&terminal);
@@ -569,10 +594,7 @@ mod tests {
             "입력창에 버퍼 내용 'test-input-buffer'가 나타나야 한다. 실제: {text:?}"
         );
         // '>' 프롬프트가 있어야 한다
-        assert!(
-            text.contains('>'),
-            "입력창에 '>' 프롬프트가 있어야 한다"
-        );
+        assert!(text.contains('>'), "입력창에 '>' 프롬프트가 있어야 한다");
     }
 
     // ── 테스트 4: placeholder(content None) → panic 없이 "생각 중" 표시 ─
@@ -595,7 +617,20 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("test terminal");
         // panic이 없어야 한다
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", true, None, 1.0, &[]))
+            .draw(|f| {
+                render_chat(
+                    f,
+                    &history,
+                    &intensities(),
+                    &names(),
+                    0.65,
+                    "",
+                    true,
+                    None,
+                    1.0,
+                    &[],
+                )
+            })
             .expect("render ok (panic 없음)");
 
         let text = buffer_text(&terminal);
@@ -681,7 +716,20 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|f| render_chat(f, &history, &intensities(), &names(), 0.65, "", false, None, 1.0, &[]))
+            .draw(|f| {
+                render_chat(
+                    f,
+                    &history,
+                    &intensities(),
+                    &names(),
+                    0.65,
+                    "",
+                    false,
+                    None,
+                    1.0,
+                    &[],
+                )
+            })
             .expect("render ok");
 
         let text = buffer_text(&terminal);

@@ -192,13 +192,14 @@ fn participation_isolation_cara_cannot_recall_morning() {
         !has_morning,
         "참여 격리 실패: cara(morning 미참여)의 쿼리 결과에 morning 사건이 있다. \
          결과: {:?}",
-        results.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
+        results
+            .iter()
+            .map(|e| (&e.room, &e.content))
+            .collect::<Vec<_>>()
     );
 
     // 구체적으로 morning SSOT도 없어야 한다
-    let has_morning_ssot = results
-        .iter()
-        .any(|ev| ev.content.contains(MORNING_SSOT));
+    let has_morning_ssot = results.iter().any(|ev| ev.content.contains(MORNING_SSOT));
     assert!(
         !has_morning_ssot,
         "참여 격리 실패: cara 결과에 morning SSOT '{MORNING_SSOT}'이 있다"
@@ -246,7 +247,10 @@ fn participation_isolation_ada_cannot_recall_evening() {
         !has_evening,
         "참여 격리 실패: ada(evening 미참여)의 쿼리 결과에 evening 사건이 있다. \
          결과: {:?}",
-        results.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
+        results
+            .iter()
+            .map(|e| (&e.room, &e.content))
+            .collect::<Vec<_>>()
     );
 }
 

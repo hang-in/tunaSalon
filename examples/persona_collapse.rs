@@ -49,7 +49,11 @@ fn main() {
         .unwrap_or_else(|| "gemma4:31b-cloud".to_string());
 
     // cloud 모델은 num_ctx None(원격 auto-max), 로컬 모델만 RAM 상한 8192.
-    let num_ctx = if model.ends_with(":cloud") { None } else { Some(8192) };
+    let num_ctx = if model.ends_with(":cloud") {
+        None
+    } else {
+        Some(8192)
+    };
 
     // BackendPool: 단일 cloud 백엔드, cap=3으로 3 페르소나 동시 가능.
     let mut pool = BackendPool::new();
@@ -58,8 +62,8 @@ fn main() {
             "cloud",
             model.clone(),
             "http://localhost:11434",
-            None,          // api_key 없음
-            3,             // cloud cap: 동시 3
+            None, // api_key 없음
+            3,    // cloud cap: 동시 3
             num_ctx,
             Duration::from_secs(60),
         ),

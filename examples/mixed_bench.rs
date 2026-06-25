@@ -53,15 +53,19 @@ fn demo_prompts() -> BTreeMap<String, String> {
 
 fn main() {
     // 환경변수 또는 기본값으로 모델/엔드포인트 결정.
-    let cloud_model = std::env::var("SALON_CLOUD_MODEL")
-        .unwrap_or_else(|_| "gemma4:31b-cloud".to_string());
-    let friend_model = std::env::var("SALON_FRIEND_MODEL")
-        .unwrap_or_else(|_| "qwen3.6-35b-fast".to_string());
+    let cloud_model =
+        std::env::var("SALON_CLOUD_MODEL").unwrap_or_else(|_| "gemma4:31b-cloud".to_string());
+    let friend_model =
+        std::env::var("SALON_FRIEND_MODEL").unwrap_or_else(|_| "qwen3.6-35b-fast".to_string());
     let friend_endpoint = std::env::var("SALON_FRIEND_ENDPOINT")
         .unwrap_or_else(|_| "http://yongseek.iptime.org:8008".to_string());
 
     // cloud 모델은 num_ctx None(원격 auto-max), 로컬이면 8192.
-    let cloud_num_ctx = if cloud_model.ends_with(":cloud") { None } else { Some(8192) };
+    let cloud_num_ctx = if cloud_model.ends_with(":cloud") {
+        None
+    } else {
+        Some(8192)
+    };
 
     // -------------------------------------------------------------------------
     // BackendPool: cloud(Ollama) + friend(OpenAI/vLLM) 두 백엔드 등록.
@@ -78,8 +82,8 @@ fn main() {
         "cloud",
         cloud_model.clone(),
         "http://localhost:11434",
-        None,              // api_key 없음
-        3,                 // cloud cap
+        None, // api_key 없음
+        3,    // cloud cap
         cloud_num_ctx,
         Duration::from_secs(60),
     );
@@ -91,8 +95,8 @@ fn main() {
         "friend",
         friend_model.clone(),
         friend_endpoint.clone(),
-        None,              // api_key 없음(내부망 서버)
-        1,                 // cap=1(직렬)
+        None, // api_key 없음(내부망 서버)
+        1,    // cap=1(직렬)
         Some(if think { 4096 } else { 256 }),
         Duration::from_secs(if think { 120 } else { 60 }),
     );
@@ -131,7 +135,14 @@ fn main() {
     println!("cloud  : {cloud_model} @ localhost:11434 (cap=3)");
     println!("friend : {friend_model} @ {friend_endpoint} (cap=1)");
     println!("라우팅 : summarizer → friend, 나머지 → cloud");
-    println!("thinking: {}", if think { "ON (reasoning, max_tokens 1024)" } else { "off" });
+    println!(
+        "thinking: {}",
+        if think {
+            "ON (reasoning, max_tokens 1024)"
+        } else {
+            "off"
+        }
+    );
     println!("opening> {opening}\n");
 
     // -------------------------------------------------------------------------
@@ -142,7 +153,10 @@ fn main() {
     for (persona, text) in &results {
         // pool.resolve(persona)로 실제 사용 백엔드 이름 조회.
         let backend_name = pool.resolve(persona).unwrap_or("(unknown)");
-        let model_str = backend_model_map.get(backend_name).copied().unwrap_or("(unknown)");
+        let model_str = backend_model_map
+            .get(backend_name)
+            .copied()
+            .unwrap_or("(unknown)");
         let out = text
             .as_deref()
             .unwrap_or("(no response / 서버 미가동·모델 없음)");
@@ -187,7 +201,10 @@ fn main() {
         let warm: &[f64] = &latencies_ms[1..];
         let avg = warm.iter().sum::<f64>() / warm.len() as f64;
         let max = warm.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        println!("\n  warm avg: {avg:.0}ms  max: {max:.0}ms (n={})", warm.len());
+        println!(
+            "\n  warm avg: {avg:.0}ms  max: {max:.0}ms (n={})",
+            warm.len()
+        );
         println!("  → burst 필요성: 라이브 순차 틱이 1발화당 ~{avg:.0}ms 블록");
     } else {
         println!("  (K=1이므로 warm 통계 없음)");

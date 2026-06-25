@@ -11,10 +11,16 @@ import type { ServerFrame, ClientFrame } from "@/types";
  */
 export function connect(
   onFrame: (frame: ServerFrame) => void,
-  onStatus?: (connected: boolean) => void
+  onStatus?: (connected: boolean) => void,
+  roomId?: string,
+  topics?: string[]
 ): { send: (f: ClientFrame) => void; disconnect: () => void } {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const url = `${protocol}://${location.host}/ws`;
+  const params = new URLSearchParams();
+  if (roomId) params.set("room_id", roomId);
+  if (topics?.length) params.set("topic", topics.join(","));
+  const query = params.toString();
+  const url = `${protocol}://${location.host}/ws${query ? `?${query}` : ""}`;
 
   let ws: WebSocket | null = null;
   let retry = 0;

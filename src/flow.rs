@@ -229,11 +229,8 @@ mod tests {
     #[cfg(feature = "morphology")]
     #[test]
     fn korean_josa_difference_yields_higher_convergence_with_morphology() {
-        let result = measure(&[
-            "오늘 날씨가 정말 맑다",
-            "오늘 날씨를 다시 봤다",
-        ])
-        .expect("측정 가능해야 한다");
+        let result = measure(&["오늘 날씨가 정말 맑다", "오늘 날씨를 다시 봤다"])
+            .expect("측정 가능해야 한다");
 
         assert!(
             result.convergence > 0.1,

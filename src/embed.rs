@@ -91,12 +91,10 @@ impl Embedder for MockEmbedder {
 pub mod model_manager {
     use super::PathBuf;
 
-    const MODEL_URL: &str =
-        "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
+    const MODEL_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
     const MODEL_DATA_URL: &str =
         "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx_data";
-    const TOKENIZER_URL: &str =
-        "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json";
+    const TOKENIZER_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json";
 
     /// Preferred cache path: reuse seCall's cache if model files are already
     /// present (avoids a 1.2 GB re-download).  Otherwise return tunaSalon's
@@ -138,8 +136,7 @@ pub mod model_manager {
         if is_downloaded(dir) && !force {
             return Ok(());
         }
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("create model dir: {e}"))?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("create model dir: {e}"))?;
 
         download_file(MODEL_URL, &dir.join("model.onnx"))?;
         // model.onnx_data is the external-weights shard (~1.1 GB).
@@ -153,15 +150,13 @@ pub mod model_manager {
 
     fn download_file(url: &str, dest: &std::path::Path) -> Result<(), String> {
         let tmp = dest.with_extension("tmp");
-        let resp = reqwest::blocking::get(url)
-            .map_err(|e| format!("GET {url}: {e}"))?;
+        let resp = reqwest::blocking::get(url).map_err(|e| format!("GET {url}: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("download failed ({}) for {url}", resp.status()));
         }
         let bytes = resp.bytes().map_err(|e| format!("read bytes: {e}"))?;
         std::fs::write(&tmp, &bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, dest)
-            .map_err(|e| format!("rename to {}: {e}", dest.display()))?;
+        std::fs::rename(&tmp, dest).map_err(|e| format!("rename to {}: {e}", dest.display()))?;
         Ok(())
     }
 }
@@ -187,13 +182,12 @@ impl OrtEmbedder {
     pub fn new(model_dir: &Path) -> Result<Self, String> {
         use ort::session::builder::GraphOptimizationLevel;
 
-        let tokenizer =
-            tokenizers::Tokenizer::from_file(model_dir.join("tokenizer.json"))
-                .map_err(|e| format!("tokenizer load: {e}"))?;
+        let tokenizer = tokenizers::Tokenizer::from_file(model_dir.join("tokenizer.json"))
+            .map_err(|e| format!("tokenizer load: {e}"))?;
 
         #[allow(unused_mut)]
-        let mut builder = ort::session::Session::builder()
-            .map_err(|e| format!("ort builder: {e}"))?;
+        let mut builder =
+            ort::session::Session::builder().map_err(|e| format!("ort builder: {e}"))?;
 
         #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
         {
@@ -353,7 +347,9 @@ mod tests {
     #[test]
     fn mock_l2_norm() {
         let e = MockEmbedder::default();
-        let v = e.embed("the quick brown fox jumps over the lazy dog").unwrap();
+        let v = e
+            .embed("the quick brown fox jumps over the lazy dog")
+            .unwrap();
         let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!(
             (norm - 1.0).abs() < 1e-5,

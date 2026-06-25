@@ -26,6 +26,10 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
     const ids = Object.keys(engineState.intensities).filter((id) => id !== "나");
     return ids.every((id) => engineState.intensities[id] < engineState.theta);
   }, [engineState.intensities, engineState.theta]);
+  const pendingName = useMemo(() => {
+    if (!engineState.pending) return null;
+    return engineState.participants.find((p) => p.id === engineState.pending)?.name ?? engineState.pending;
+  }, [engineState.participants, engineState.pending]);
 
   // Group consecutive messages from same speaker
   const grouped = useMemo(() => {
@@ -85,19 +89,32 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
               className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
               style={{ background: "rgba(229, 164, 74, 0.1)" }}
             >
-              <MessageCircle size={28} style={{ color: "var(--accent-warm)" }} />
+              {engineState.pending ? (
+                <span
+                  className="w-8 h-8 rounded-full border-2 border-[var(--accent-warm)] border-t-transparent animate-spin"
+                  aria-hidden="true"
+                />
+              ) : (
+                <MessageCircle size={28} style={{ color: "var(--accent-warm)" }} />
+              )}
             </div>
             <h2 className="text-lg font-bold text-[var(--text-primary)] mb-2">
-              tunaSalon에 오신 걸 환영합니다
+              {engineState.pending ? "첫 발화 생성 중" : "토론방에 입장했습니다"}
             </h2>
-            <p className="text-sm text-[var(--text-secondary)] max-w-sm leading-relaxed">
-              세 명의 AI 페르소나가 당신을 기다리고 있어요.
+            <p className="text-sm text-[var(--text-secondary)] max-w-sm leading-relaxed break-keep">
+              {engineState.topics.length > 0
+                ? `주제: ${engineState.topics.join(", ")}`
+                : "아직 주제가 없습니다."}
               <br />
-              메시지를 보내면 대화가 시작됩니다.
+              {pendingName
+                ? `${pendingName}의 응답을 기다리는 중입니다.`
+                : "곧 첫 참가자가 입장을 밝힙니다."}
             </p>
             <div className="flex items-center gap-2 mt-6">
               <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: "#4ade80" }} />
-              <span className="text-xs text-[var(--text-secondary)]">엔진 가동 중 - 페르소나가 준비되었습니다</span>
+              <span className="text-xs text-[var(--text-secondary)]">
+                {engineState.pending ? "LLM 생성 중" : "토론 엔진 가동 중"}
+              </span>
             </div>
           </div>
         )}

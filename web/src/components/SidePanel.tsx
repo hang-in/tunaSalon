@@ -106,10 +106,15 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
                     bgColor: "rgba(168, 159, 204, 0.12)",
                     description: participant.model ?? "",
                   };
+                  const displayConfig = {
+                    ...config,
+                    name: participant.name,
+                    description: participant.model ?? config.description,
+                  };
                   return (
                     <div key={participant.id} className="relative group">
                       <PersonaPresence
-                        config={config}
+                        config={displayConfig}
                         lambda={engineState.intensities[participant.id] ?? 0}
                         theta={engineState.theta}
                         isPending={engineState.pending === participant.id}

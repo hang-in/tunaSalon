@@ -147,7 +147,10 @@ mod tests {
         let results = ann.search(&[1.0_f32, 0.0, 0.0, 0.0], 1).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, 1, "key 1이 nearest여야 한다");
-        assert!(results[0].1 < 0.01, "distance가 거의 0이어야 한다 (동일 벡터)");
+        assert!(
+            results[0].1 < 0.01,
+            "distance가 거의 0이어야 한다 (동일 벡터)"
+        );
     }
 
     /// in_memory: search 상위 k, distance 기준 오름차순.

@@ -71,8 +71,22 @@ fn inv1_fake_backend_determinism_and_flow_none() {
     // (a) 동일 seed 두 번 실행 → records 바이트 동일
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
-    driver::run(&config, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_a,
+        &mut FakeBackend,
+    );
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_b,
+        &mut FakeBackend,
+    );
 
     assert_eq!(
         sink_a.records, sink_b.records,
@@ -151,7 +165,10 @@ fn flow_measure_is_deterministic_and_content_gated() {
         r1.is_some(),
         "content 있는 발화 3개 → flow::measure는 Some이어야 한다"
     );
-    assert_eq!(r1, r2, "동일 입력에 대한 두 번의 measure 호출이 같아야 한다 (결정성)");
+    assert_eq!(
+        r1, r2,
+        "동일 입력에 대한 두 번의 measure 호출이 같아야 한다 (결정성)"
+    );
 
     // convergence [0, 1] 범위
     if let Some(m) = r1 {
@@ -195,11 +212,9 @@ fn render_chat_with_flow_some_no_panic() {
         mark: 0.0,
         content: Some("hello v6".to_string()),
     }];
-    let intensities: BTreeMap<String, f64> =
-        BTreeMap::from([("aria".to_string(), 0.72)]);
-    let names: BTreeMap<String, String> = BTreeMap::from([
-        ("aria".to_string(), "Aria".to_string()),
-    ]);
+    let intensities: BTreeMap<String, f64> = BTreeMap::from([("aria".to_string(), 0.72)]);
+    let names: BTreeMap<String, String> =
+        BTreeMap::from([("aria".to_string(), "Aria".to_string())]);
 
     let backend = TestBackend::new(100, 30);
     let mut terminal = Terminal::new(backend).expect("TestBackend terminal 생성 실패");
@@ -248,8 +263,7 @@ fn render_chat_with_flow_none_no_panic() {
     use ratatui::Terminal;
 
     let history: Vec<Event> = Vec::new();
-    let intensities: BTreeMap<String, f64> =
-        BTreeMap::from([("aria".to_string(), 0.30)]);
+    let intensities: BTreeMap<String, f64> = BTreeMap::from([("aria".to_string(), 0.30)]);
     let names: BTreeMap<String, String> =
         BTreeMap::from([("aria".to_string(), "Aria".to_string())]);
 

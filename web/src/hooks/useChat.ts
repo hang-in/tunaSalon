@@ -8,6 +8,25 @@ const HUMAN_PULSE_MS = 1200;
 // VITE_MOCK=1 이면 mock 데모, 기본은 실 WebSocket 서버
 const connect = import.meta.env.VITE_MOCK === "1" ? connectMock : connectReal;
 
+const DEFAULT_ENGINE_STATE: EngineState = {
+  room_id: "salon",
+  intensities: { friend: 0.1, chaos: 0.15, summarizer: 0.05 },
+  theta: 0.6,
+  flow: 0.2,
+  mu_scale: 1.0,
+  liveliness: 0,
+  pending: null,
+  participants: [
+    { id: "friend", name: "Friendly Regular" },
+    { id: "chaos", name: "Grounded Realist" },
+    { id: "summarizer", name: "Quiet Summarizer" },
+    { id: "나", name: "나" },
+  ],
+  topics: [],
+  paused: false,
+  tick_ms: 6000,
+};
+
 const PERSONA_CONFIGS: PersonaConfig[] = [
   {
     id: "friend",
@@ -52,36 +71,31 @@ const FALLBACK_PALETTE = [
   { color: "#5BC0BE", glowColor: "rgba(91, 192, 190, 0.5)", bgColor: "rgba(91, 192, 190, 0.12)" },
 ];
 
-export function useChat() {
+interface UseChatOptions {
+  enabled?: boolean;
+  roomId?: string;
+  topics?: string[];
+}
+
+export function useChat({ enabled = true, roomId, topics = [] }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [engineState, setEngineState] = useState<EngineState>({
-    intensities: { friend: 0.1, chaos: 0.15, summarizer: 0.05 },
-    theta: 0.6,
-    flow: 0.2,
-    mu_scale: 1.0,
-    liveliness: 0,
-    pending: null,
-    participants: [
-      { id: "friend", name: "Friendly Regular" },
-      { id: "chaos", name: "Grounded Realist" },
-      { id: "summarizer", name: "Quiet Summarizer" },
-      { id: "나", name: "나" },
-    ],
-    topics: ["부처님 오신날"],
-    paused: false,
-    tick_ms: 6000,
-  });
+  const [engineState, setEngineState] = useState<EngineState>(DEFAULT_ENGINE_STATE);
   const [connected, setConnected] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [humanPulse, setHumanPulse] = useState(false);
   const connRef = useRef<ReturnType<typeof connect> | null>(null);
   const msgIdRef = useRef(0);
   const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const topicKey = topics.join("\u0000");
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     const conn = connect((frame: ServerFrame) => {
       if (frame.type === "state") {
         setEngineState({
+          room_id: frame.room_id,
           intensities: frame.intensities,
           theta: frame.theta,
           flow: frame.flow,
@@ -92,6 +106,21 @@ export function useChat() {
           topics: frame.topics,
           paused: frame.paused ?? false,
           tick_ms: frame.tick_ms ?? 6000,
+        });
+        setMessages((prev) => {
+          const hasTranscript = prev.some((msg) => msg.type === "utterance");
+          if (hasTranscript || !frame.messages?.length) return prev;
+          const systemMessages = prev.filter((msg) => msg.type === "system");
+          const historyMessages: ChatMessage[] = frame.messages.map((msg, index) => ({
+            id: `history-${frame.room_id}-${index}`,
+            type: "utterance",
+            speaker: msg.speaker,
+            name: msg.name,
+            content: msg.content,
+            ts: msg.ts,
+            isHuman: msg.speaker === "나",
+          }));
+          return [...systemMessages, ...historyMessages];
         });
         setConnected(true);
       } else if (frame.type === "utterance") {
@@ -137,9 +166,20 @@ export function useChat() {
           },
         ]);
       }
-    }, (isConnected: boolean) => setConnected(isConnected));
+    }, (isConnected: boolean) => setConnected(isConnected), roomId, topics);
     connRef.current = conn;
-    return () => conn.disconnect();
+    return () => {
+      conn.disconnect();
+      connRef.current = null;
+      setConnected(false);
+    };
+  }, [enabled, roomId, topicKey, topics]);
+
+  const resetChat = useCallback(() => {
+    msgIdRef.current = 0;
+    setMessages([]);
+    setEngineState(DEFAULT_ENGINE_STATE);
+    setConnected(false);
   }, []);
 
   const triggerHumanPulse = useCallback(() => {
@@ -182,6 +222,13 @@ export function useChat() {
     connRef.current.send({ type: "pace", interval_ms: intervalMs });
   }, []);
 
+  const sendReset = useCallback((topics: string[]) => {
+    if (!connRef.current) return;
+    msgIdRef.current = 0;
+    setMessages([]);
+    connRef.current.send({ type: "reset", topics });
+  }, []);
+
   const getPersonaConfig = useCallback((id: string): PersonaConfig => {
     const found = PERSONA_CONFIGS.find((p) => p.id === id);
     if (found) return found;
@@ -204,10 +251,12 @@ export function useChat() {
     sendTopics,
     sendPause,
     sendPace,
+    sendReset,
     sendInvite,
     sendRemove,
     getPersonaConfig,
     personaConfigs: PERSONA_CONFIGS,
     humanPulse,
+    resetChat,
   };
 }

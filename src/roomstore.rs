@@ -6,9 +6,9 @@
 //!
 //! 저장 계층만 담당하며, web.rs 배선과 LiveSession 복원 주입은 task G에서 수행한다.
 
-use rusqlite::{Connection, params};
 use crate::live::PersonaMeta;
 use crate::model::{Event, Persona, PersonaModifier};
+use rusqlite::{params, Connection};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -68,11 +68,9 @@ impl RoomStore {
                 return Some(PathBuf::from(val));
             }
         }
-        if let Ok(home) = std::env::var("HOME") {
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
             if !home.is_empty() {
-                return Some(
-                    PathBuf::from(home).join(".local/share/tunaSalon/rooms.db"),
-                );
+                return Some(PathBuf::from(home).join(".local/share/tunaSalon/rooms.db"));
             }
         }
         None
@@ -108,10 +106,8 @@ impl RoomStore {
                 "DELETE FROM room_messages WHERE room_id = ?1",
                 params![room_id],
             )?;
-            self.conn.execute(
-                "DELETE FROM room_meta WHERE room_id = ?1",
-                params![room_id],
-            )?;
+            self.conn
+                .execute("DELETE FROM room_meta WHERE room_id = ?1", params![room_id])?;
 
             // participants 삽입
             for (ord, persona) in personas.iter().enumerate() {
@@ -145,28 +141,48 @@ impl RoomStore {
                     self.conn.execute(
                         "INSERT INTO room_messages(room_id, seq, ts, speaker, mark, content)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        params![
-                            room_id,
-                            seq,
-                            event.ts,
-                            event.speaker,
-                            event.mark,
-                            content,
-                        ],
+                        params![room_id, seq, event.ts, event.speaker, event.mark, content,],
                     )?;
                     seq += 1;
                 }
             }
 
             // room_meta 삽입
-            let topics_json = serde_json::to_string(topics)
-                .unwrap_or_else(|_| "[]".to_string());
+            let topics_json = serde_json::to_string(topics).unwrap_or_else(|_| "[]".to_string());
             self.conn.execute(
                 "INSERT INTO room_meta(room_id, topics_json, tick_count, updated_at)
                  VALUES (?1, ?2, ?3, 0)",
                 params![room_id, topics_json, tick_count as i64],
             )?;
 
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.conn.execute("COMMIT", [])?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.conn.execute("ROLLBACK", []);
+                Err(e)
+            }
+        }
+    }
+
+    pub fn delete_room(&self, room_id: &str) -> rusqlite::Result<()> {
+        self.conn.execute("BEGIN", [])?;
+        let result = (|| -> rusqlite::Result<()> {
+            self.conn.execute(
+                "DELETE FROM room_participants WHERE room_id = ?1",
+                params![room_id],
+            )?;
+            self.conn.execute(
+                "DELETE FROM room_messages WHERE room_id = ?1",
+                params![room_id],
+            )?;
+            self.conn
+                .execute("DELETE FROM room_meta WHERE room_id = ?1", params![room_id])?;
             Ok(())
         })();
 
@@ -190,9 +206,9 @@ impl RoomStore {
     pub fn load(&self, room_id: &str) -> rusqlite::Result<Option<RoomSnapshot>> {
         // room_meta 확인
         let meta_row: Option<(String, i64)> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT topics_json, tick_count FROM room_meta WHERE room_id = ?1",
-            )?;
+            let mut stmt = self
+                .conn
+                .prepare("SELECT topics_json, tick_count FROM room_meta WHERE room_id = ?1")?;
             let mut rows = stmt.query(params![room_id])?;
             match rows.next()? {
                 Some(row) => {
@@ -210,8 +226,7 @@ impl RoomStore {
         };
 
         // topics 역직렬화
-        let topics: Vec<String> = serde_json::from_str(&topics_json)
-            .unwrap_or_default();
+        let topics: Vec<String> = serde_json::from_str(&topics_json).unwrap_or_default();
 
         // participants (ord ASC)
         let participants: Vec<(Persona, PersonaMeta)> = {
@@ -309,8 +324,8 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Persona, PersonaModifier, Event};
     use crate::live::PersonaMeta;
+    use crate::model::{Event, Persona, PersonaModifier};
     use std::collections::BTreeMap;
 
     fn make_store() -> RoomStore {
@@ -325,11 +340,19 @@ mod tests {
         }
     }
 
-    fn make_meta(backend: &str, prompt: &str, reactivity: f64, provocativeness: f64) -> PersonaMeta {
+    fn make_meta(
+        backend: &str,
+        prompt: &str,
+        reactivity: f64,
+        provocativeness: f64,
+    ) -> PersonaMeta {
         PersonaMeta {
             backend: backend.to_string(),
             system_prompt: prompt.to_string(),
-            modifier: PersonaModifier { reactivity, provocativeness },
+            modifier: PersonaModifier {
+                reactivity,
+                provocativeness,
+            },
             axes: None,
         }
     }
@@ -376,7 +399,10 @@ mod tests {
             .save("room1", &personas, &persona_meta, &history, &topics, 42)
             .expect("save 성공");
 
-        let snap = store.load("room1").expect("load 성공").expect("Some이어야 함");
+        let snap = store
+            .load("room1")
+            .expect("load 성공")
+            .expect("Some이어야 함");
 
         // tick_count
         assert_eq!(snap.tick_count, 42);
@@ -430,7 +456,11 @@ mod tests {
             .expect("save");
 
         let snap = store.load("room2").expect("load").expect("Some");
-        assert_eq!(snap.messages.len(), 0, "placeholder만 있으면 messages는 비어야 함");
+        assert_eq!(
+            snap.messages.len(),
+            0,
+            "placeholder만 있으면 messages는 비어야 함"
+        );
     }
 
     /// (3) 없는 room_id load -> None.
@@ -480,10 +510,24 @@ mod tests {
         ];
 
         store
-            .save("room4", &personas, &persona_meta, &history1, &["topic1".to_string()], 10)
+            .save(
+                "room4",
+                &personas,
+                &persona_meta,
+                &history1,
+                &["topic1".to_string()],
+                10,
+            )
             .expect("save 1");
         store
-            .save("room4", &personas, &persona_meta, &history2, &["topic2".to_string()], 20)
+            .save(
+                "room4",
+                &personas,
+                &persona_meta,
+                &history2,
+                &["topic2".to_string()],
+                20,
+            )
             .expect("save 2");
 
         let snap = store.load("room4").expect("load").expect("Some");

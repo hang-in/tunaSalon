@@ -18,7 +18,11 @@ pub struct MetaController {
 impl MetaController {
     /// 직접 파라미터로 생성한다.
     pub fn new(gain: f64, threshold: f64, floor: f64) -> Self {
-        Self { gain, threshold, floor }
+        Self {
+            gain,
+            threshold,
+            floor,
+        }
     }
 
     /// 환경 변수에서 gain을 읽어 기본값을 덮어쓴다.
@@ -153,10 +157,7 @@ mod tests {
         let ctrl = MetaController::new(0.6, 0.5, 0.4);
         let scale = ctrl.cooling(fm(0.75));
         let expected = 0.7_f64;
-        assert!(
-            (scale - expected).abs() < 1e-9,
-            "scale({scale}) ≈ 0.7 기대"
-        );
+        assert!((scale - expected).abs() < 1e-9, "scale({scale}) ≈ 0.7 기대");
     }
 
     /// (7) threshold == 1.0 → 분모 0 방어 → 항상 1.0.

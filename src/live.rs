@@ -7,6 +7,11 @@
 //! - 모든 퍼블릭 메서드 즉시 반환(블록 없음).
 //! - crossterm·ratatui 없음 — 순수 세션 로직.
 
+use crate::debate::{
+    build_directive, cross_room_memory_is_topic_relevant, length_hint, mentioned_persona_id,
+    repetition_guard, sanitize_generated_text, significant_topic_tokens, strip_speaker_prefix,
+    summary_persona_id,
+};
 use crate::flow;
 use crate::gate::{self, GateResult};
 use crate::hawkes::HawkesEngine;
@@ -62,11 +67,19 @@ pub struct PersonaMeta {
     pub axes: Option<PersonaAxes>,
 }
 
-/// 워커로 보내는 job: (placeholder_idx, speaker, history_snapshot, tick, recall, route).
+/// 워커로 보내는 job: (epoch, placeholder_idx, speaker, history_snapshot, tick, recall, route).
 /// route: Some((backend, system_prompt)) = persona_meta가 있는 경우, None = 기존 generate_one 경로.
-type Job = (usize, PersonaId, Vec<Event>, u64, Option<String>, Option<(String, String)>);
-/// 워커가 돌려보내는 결과: (placeholder_idx, generated_text).
-type Result = (usize, Option<String>);
+type Job = (
+    u64,
+    usize,
+    PersonaId,
+    Vec<Event>,
+    u64,
+    Option<String>,
+    Option<(String, String)>,
+);
+/// 워커가 돌려보내는 결과: (epoch, placeholder_idx, generated_text).
+type Result = (u64, usize, Option<String>);
 
 /// 라이브 세션 코어.
 ///
@@ -94,12 +107,13 @@ pub struct LiveSession {
     /// 현재 in-flight 생성의 placeholder Event 인덱스.
     /// None이면 생성 대기 없음; Some(idx)이면 history[idx].content가 아직 None.
     pending: Option<usize>,
+    generation_epoch: u64,
     /// 이번 세션에서 진행된 틱 카운터.
     tick_count: u64,
     /// 회상 스토어 (task-41). 사람 발화 + 도착 발화를 기록하고 생성 전 recall.
     /// driver/headless 경로와 공유하지 않는다 — 라이브 전용.
     store: MemoryStore,
-    /// 방 이름. 참여 격리 기준 단위. "salon" 고정.
+    /// 방 이름. 참여 격리 기준 단위.
     room: String,
     /// 사람 화자 ID. submit_human 시 MemoryEvent 생성에 사용(HumanChannel 필드 직접 노출 회피).
     human_id: PersonaId,
@@ -115,65 +129,22 @@ pub struct LiveSession {
     last_human_msg: Option<String>,
     /// 사람 발화 후 그 메시지를 최우선으로 둘 남은 페르소나 턴 수.
     human_focus: u32,
+    /// 사용자가 특정 닉네임을 부른 경우 다음 발화자로 우선 배정할 persona.
+    forced_next_speaker: Option<PersonaId>,
+    /// 요약/쟁점정리 persona가 개입하지 않은 최근 persona 발화 수.
+    turns_since_summary: u32,
     /// 화자 라벨 집합(소문자). 생성 결과 앞 `이름:`/`나:` echo 제거용.
     speaker_labels: std::collections::BTreeSet<String>,
 }
 
 /// 사람 발화 후 그 메시지를 최우선으로 둘 페르소나 턴 수.
 const HUMAN_FOCUS_TURNS: u32 = 4;
+const SUMMARY_CADENCE_TURNS: u32 = 4;
 
-/// 생성 결과 앞에 모델이 echo한 화자 라벨(`이름:` / `나:`)을 1회 제거한다.
-/// `labels`에 매칭되는 짧은 라벨일 때만 제거한다(과잉 strip 방지).
-fn strip_speaker_prefix(text: &str, labels: &std::collections::BTreeSet<String>) -> String {
-    let trimmed = text.trim_start();
-    if let Some(colon) = trimmed.find(':') {
-        let label = trimmed[..colon].trim();
-        if !label.is_empty()
-            && label.chars().count() <= 20
-            && labels.contains(&label.to_lowercase())
-        {
-            return trimmed[colon + 1..].trim_start().to_string();
-        }
-    }
-    text.to_string()
-}
-
-/// 생성 워커에 주입할 "[진행 지시]" 텍스트(순수). 우선순위: 사람 우선 > 화제 > 없음.
-fn build_directive(
-    human_msg: Option<&str>,
-    human_focus_active: bool,
-    topics: &[String],
-) -> Option<String> {
-    if human_focus_active {
-        if let Some(h) = human_msg {
-            return Some(format!(
-                "[진행 지시] 사용자(나)가 \"{h}\"라고 했습니다. 지금은 이게 최우선 — 다른 화제로 절대 새지 말고 사용자의 말/질문에 직접·구체적으로 답하세요."
-            ));
-        }
-    }
-    if !topics.is_empty() {
-        return Some(format!(
-            "[진행 지시] 지금부터 '{}' 주제로만 구체적으로 이야기하세요. 멍때리기·쉬기·계획 같은 일반론으로 새지 말고 이 주제 자체를 깊게 파고드세요.",
-            topics.join("', '")
-        ));
-    }
-    None
-}
-
-/// 발화 길이 변주 힌트(생성 워커 프롬프트용).
-///
-/// tick + 화자 기반 결정적 선택이라 **rng를 소비하지 않는다**(골든·화자선택 결정성 무영향).
-/// history_snapshot(복제본)에만 주입되어 state.history는 불변(INV-2). 라이브 발화 길이를
-/// 일률적이지 않게 흩뜨리는 용도.
-fn length_hint(tick: u64, speaker: &str) -> &'static str {
-    let salt: usize = speaker.bytes().map(|b| b as usize).sum();
-    match (tick as usize).wrapping_add(salt) % 4 {
-        0 => "[길이] 한 문장으로 아주 짧게 답하세요.",
-        1 => "[길이] 2-3문장으로 답하세요.",
-        2 => "[길이] 3-4문장으로 조금 길게 풀어서 답하세요.",
-        _ => "[길이] 짧게 한두 마디로만 답하세요.",
-    }
-}
+// 발화/지시 생성(producer) 순수 로직은 `crate::debate`로 이관됨(Stage A, 2026-06-26).
+// strip_speaker_prefix / sanitize_generated_text / mentioned_persona_id / summary_persona_id /
+// repetition_guard / significant_topic_tokens / cross_room_memory_is_topic_relevant /
+// build_directive / length_hint — 상단 `use crate::debate::{...}` 참조.
 
 impl LiveSession {
     /// 새 LiveSession을 생성하고 워커 스레드를 스폰한다.
@@ -190,7 +161,14 @@ impl LiveSession {
         pool: Arc<BackendPool>,
         human_speaker_id: impl Into<String>,
     ) -> Self {
-        Self::with_store(config, personas, seed, pool, human_speaker_id, MemoryStore::new())
+        Self::with_store(
+            config,
+            personas,
+            seed,
+            pool,
+            human_speaker_id,
+            MemoryStore::new(),
+        )
     }
 
     /// 외부에서 주입한 `MemoryStore`를 사용해 LiveSession을 생성한다.
@@ -208,6 +186,30 @@ impl LiveSession {
         human_speaker_id: impl Into<String>,
         store: MemoryStore,
     ) -> Self {
+        Self::with_store_for_room(
+            config,
+            personas,
+            seed,
+            pool,
+            human_speaker_id,
+            store,
+            "salon",
+        )
+    }
+
+    /// 외부에서 주입한 `MemoryStore`와 room id를 사용해 LiveSession을 생성한다.
+    ///
+    /// Redis 멀티세션 트랙의 첫 경계다. 기존 `new`/`with_store`는 계속 기본 방
+    /// `"salon"`을 쓰므로 기존 테스트와 TUI 경로는 보존된다.
+    pub fn with_store_for_room(
+        config: EngineConfig,
+        personas: Vec<Persona>,
+        seed: u64,
+        pool: Arc<BackendPool>,
+        human_speaker_id: impl Into<String>,
+        store: MemoryStore,
+        room_id: impl Into<String>,
+    ) -> Self {
         let (job_tx, job_rx) = mpsc::channel::<Job>();
         let (result_tx, result_rx) = mpsc::channel::<Result>();
 
@@ -215,19 +217,28 @@ impl LiveSession {
         let pool_clone = Arc::clone(&pool);
         let worker = std::thread::spawn(move || {
             // job_rx.recv()가 Err를 반환하면(job_tx drop) 루프 종료.
-            while let Ok((idx, speaker, history, tick, recall, route)) = job_rx.recv() {
+            while let Ok((epoch, idx, speaker, history, tick, recall, route)) = job_rx.recv() {
                 // recall: Option<String> → as_deref()로 Option<&str> 변환.
                 let text = if let Some((backend, ref prompt)) = route {
                     // persona_meta 있는 경우: generate_on 우선, 실패 시 generate_one 폴백.
                     pool_clone
-                        .generate_on(&backend, &speaker, &history, tick, recall.as_deref(), Some(prompt))
-                        .or_else(|| pool_clone.generate_one(&speaker, &history, tick, recall.as_deref()))
+                        .generate_on(
+                            &backend,
+                            &speaker,
+                            &history,
+                            tick,
+                            recall.as_deref(),
+                            Some(prompt),
+                        )
+                        .or_else(|| {
+                            pool_clone.generate_one(&speaker, &history, tick, recall.as_deref())
+                        })
                 } else {
                     // persona_meta 없는 경우: 기존과 정확히 동일하게 generate_one.
                     pool_clone.generate_one(&speaker, &history, tick, recall.as_deref())
                 };
                 // result_tx 오류(수신단 닫힘)는 무시하고 종료.
-                if result_tx.send((idx, text)).is_err() {
+                if result_tx.send((epoch, idx, text)).is_err() {
                     break;
                 }
             }
@@ -255,7 +266,7 @@ impl LiveSession {
         let meta = MetaController::from_env();
 
         // 회상 스토어 초기화: 모든 페르소나 + 사람 화자를 방에 join(참여 격리 기준).
-        let room = "salon".to_string();
+        let room = room_id.into();
         let mut store = store;
         for p in &personas {
             store.join(&room, &p.id);
@@ -289,6 +300,7 @@ impl LiveSession {
             result_rx,
             worker: Some(worker),
             pending: None,
+            generation_epoch: 0,
             tick_count: 0,
             store,
             room,
@@ -298,6 +310,8 @@ impl LiveSession {
             target_rho: 0.0,
             last_human_msg: None,
             human_focus: 0,
+            forced_next_speaker: None,
+            turns_since_summary: 0,
             speaker_labels,
         }
     }
@@ -310,6 +324,57 @@ impl LiveSession {
     pub fn with_persona_meta(mut self, meta: BTreeMap<PersonaId, PersonaMeta>) -> Self {
         self.persona_meta = meta;
         self
+    }
+
+    fn speaker_label_for_generation(&self, speaker: &str, content: Option<&str>) -> String {
+        if speaker == self.human_id {
+            if content
+                .map(|text| text.trim_start().starts_with("토론을 시작합니다."))
+                .unwrap_or(false)
+            {
+                return "Moderator".to_string();
+            }
+            return self.human_id.clone();
+        }
+        if speaker == "(진행)" {
+            return "Moderator".to_string();
+        }
+        self.personas
+            .iter()
+            .find(|persona| persona.id == speaker)
+            .map(|persona| persona.name.clone())
+            .unwrap_or_else(|| speaker.to_string())
+    }
+
+    fn history_for_generation(&self) -> Vec<crate::model::Event> {
+        self.state
+            .history
+            .iter()
+            .map(|event| {
+                let mut event = event.clone();
+                event.speaker =
+                    self.speaker_label_for_generation(&event.speaker, event.content.as_deref());
+                event
+            })
+            .collect()
+    }
+
+    fn recall_for_generation(&self, events: &[MemoryEvent]) -> Option<String> {
+        let topic_tokens = significant_topic_tokens(&self.topics);
+        let display_events = events
+            .iter()
+            .filter(|event| {
+                event.room == self.room || cross_room_memory_is_topic_relevant(event, &topic_tokens)
+            })
+            .map(|event| MemoryEvent {
+                room: event.room.clone(),
+                ts: event.ts,
+                speaker: self
+                    .speaker_label_for_generation(&event.speaker, Some(event.content.as_str())),
+                content: event.content.clone(),
+            })
+            .collect::<Vec<_>>();
+        MemoryStore::format_recall(&display_events)
     }
 
     /// alpha 정규화 목표 spectral radius를 설정하는 빌더 메서드.
@@ -337,6 +402,7 @@ impl LiveSession {
         // (사람이 화제를 바꾸면 페르소나가 몇 턴 확실히 따라오게).
         self.last_human_msg = Some(text.clone());
         self.human_focus = HUMAN_FOCUS_TURNS;
+        self.forced_next_speaker = mentioned_persona_id(&text, &self.personas);
         // 회상 스토어에 사람 발화 기록(task-41). 페르소나가 사람 말을 회상할 수 있다.
         self.store.record(MemoryEvent {
             room: self.room.clone(),
@@ -367,8 +433,13 @@ impl LiveSession {
         // flow()는 content 있는 최근 발화 기반 수렴도. content 없으면 None → mu_scale=1.0(no-op).
         let flow_now = self.flow();
         let mu_scale = self.meta.cooling(flow_now);
-        self.state.intensities =
-            HawkesEngine::update_intensities(&self.state, 1, &self.config, &self.personas, mu_scale);
+        self.state.intensities = HawkesEngine::update_intensities(
+            &self.state,
+            1,
+            &self.config,
+            &self.personas,
+            mu_scale,
+        );
 
         // 2. excitation 감쇠
         self.state.excitations = HawkesEngine::decay_excitations(
@@ -414,19 +485,62 @@ impl LiveSession {
             return TickOutcome::Silent;
         }
 
-        // 6. rrf 화자 선택 (rng 소비: driver와 동일 순서)
-        let selection = rrf::select(
-            &filtered,
-            &combined_intensities,
-            &self.state.history,
-            self.config.k,
-            &mut self.rng,
-        );
+        // 6. 화자 선택.
+        // 사용자 직접 호출 > 주기적 요약자 개입 > 기존 RRF 순서.
+        let mut direct_call = false;
+        let chosen = if let Some(forced) = self.forced_next_speaker.take() {
+            if self.personas.iter().any(|p| p.id == forced) {
+                direct_call = true;
+                forced
+            } else {
+                rrf::select(
+                    &filtered,
+                    &combined_intensities,
+                    &self.state.history,
+                    self.config.k,
+                    &mut self.rng,
+                )
+                .chosen
+            }
+        } else if self.turns_since_summary >= SUMMARY_CADENCE_TURNS {
+            if let Some(summary_id) = summary_persona_id(&self.personas) {
+                if self.state.last_speaker.as_deref() != Some(summary_id.as_str()) {
+                    summary_id
+                } else {
+                    rrf::select(
+                        &filtered,
+                        &combined_intensities,
+                        &self.state.history,
+                        self.config.k,
+                        &mut self.rng,
+                    )
+                    .chosen
+                }
+            } else {
+                rrf::select(
+                    &filtered,
+                    &combined_intensities,
+                    &self.state.history,
+                    self.config.k,
+                    &mut self.rng,
+                )
+                .chosen
+            }
+        } else {
+            rrf::select(
+                &filtered,
+                &combined_intensities,
+                &self.state.history,
+                self.config.k,
+                &mut self.rng,
+            )
+            .chosen
+        };
 
         // make_utterance도 rng를 소비(driver와 동일 순서, rng 소비 여부 driver 참조).
         // with_topic_tag=false: driver와 동일.
         let utterance = utterance::make_utterance(
-            &selection.chosen,
+            &chosen,
             tick,
             self.config.tick_interval,
             false,
@@ -442,26 +556,25 @@ impl LiveSession {
         }
 
         // 생성 job 디스패치: 먼저 엔진측 speak 갱신(driver와 동일 순서).
-        let chosen = selection.chosen.clone();
-
         // 회상 계산 (task-41): 생성 전 최근 맥락 기반 query로 store.recall 호출.
         // recall은 생성 프롬프트에만 전달 — gate/rrf/hawkes 입력에 불사용(INV 준수).
-        // query: 최근 history의 content를 공백으로 합침(K=3).
-        const RECALL_K: usize = 3;
+        // query: 토론에서는 최근 맥락을 길게 잡아 반박/동조가 이어지게 한다.
+        const RECALL_K: usize = 5;
+        const RECALL_QUERY_LINES: usize = 8;
         let query: String = self
             .state
             .history
             .iter()
             .rev()
             .filter_map(|e| e.content.as_deref())
-            .take(4)
+            .take(RECALL_QUERY_LINES)
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
             .collect::<Vec<_>>()
             .join(" ");
         let recall_events = self.store.recall(&chosen, &query, RECALL_K);
-        let recall: Option<String> = MemoryStore::format_recall(&recall_events);
+        let recall: Option<String> = self.recall_for_generation(&recall_events);
 
         // placeholder Event(content=None)를 history에 push.
         let placeholder_event = utterance.event; // content는 이미 None
@@ -484,20 +597,24 @@ impl LiveSession {
         self.state.last_speaker = Some(chosen.clone());
 
         // history 스냅샷(워커로 전달; placeholder는 content=None으로 포함됨).
-        let mut history_snapshot = self.state.history.clone();
+        // 생성 프롬프트에는 내부 id("chaos") 대신 표시명("Grounded Realist")을 넣는다.
+        let mut history_snapshot = self.history_for_generation();
 
         // 진행 지시 주입 (INV-2): 생성 워커로 보내는 스냅샷에만. state.history/flow/recall 불변.
         // query/flow/recall은 이미 위에서 계산 완료됨 — 스냅샷 조작은 그 이후.
         //
         // 우선순위: submit_human 후 human_focus 턴 동안은 사람 메시지를 최우선 화제로
         // 둔다(사람이 화제를 바꾸면 페르소나가 몇 턴 확실히 따라오게). 그 외엔 표준 화제 지시.
+        let repetition = repetition_guard(&self.state.history, &chosen);
         let directive = build_directive(
             self.last_human_msg.as_deref(),
             self.human_focus > 0,
             &self.topics,
+            direct_call,
+            repetition,
         );
         // 발화 길이 변주(tick+화자 기반 결정적, rng 무소비). 진행 지시와 한 줄로 합쳐
-        // history 마지막 4줄(ollama::format_recent) 중 1줄만 차지하게 한다.
+        // 최근 로그 컨텍스트 중 1줄만 차지하게 한다.
         let len_hint = length_hint(tick, &chosen);
         let combined = match directive {
             Some(d) => {
@@ -515,7 +632,7 @@ impl LiveSession {
             mark: 0.0,
             content: Some(combined),
         };
-        // 맨 뒤(push): 생성은 history 마지막 4줄만 보므로 대화가 길어져도 지시가 컨텍스트에 들어간다.
+        // 맨 뒤(push): 생성은 최근 로그를 뒤에서 보므로 대화가 길어져도 지시가 컨텍스트에 들어간다.
         history_snapshot.push(topic_event);
 
         // persona_meta에서 라우팅 정보(backend, system_prompt) 추출.
@@ -528,6 +645,7 @@ impl LiveSession {
         // 워커로 job 전송. 채널이 닫혔으면(워커 비정상 종료) 조용히 무시.
         if let Some(ref tx) = self.job_tx {
             let _ = tx.send((
+                self.generation_epoch,
                 placeholder_idx,
                 chosen.clone(),
                 history_snapshot,
@@ -536,6 +654,12 @@ impl LiveSession {
                 route,
             ));
             self.pending = Some(placeholder_idx);
+        }
+
+        if summary_persona_id(&self.personas).as_deref() == Some(chosen.as_str()) {
+            self.turns_since_summary = 0;
+        } else {
+            self.turns_since_summary = self.turns_since_summary.saturating_add(1);
         }
 
         TickOutcome::Dispatched(chosen)
@@ -549,9 +673,14 @@ impl LiveSession {
     /// 결과가 아직 없으면 `None` 반환(즉시).
     pub fn poll_generation(&mut self) -> Option<Event> {
         match self.result_rx.try_recv() {
-            Ok((idx, text)) => {
+            Ok((epoch, idx, text)) => {
+                if epoch != self.generation_epoch {
+                    return None;
+                }
                 // 모델이 앞에 붙인 화자 라벨(`이름:`/`나:`) echo 제거.
-                let text = text.map(|t| strip_speaker_prefix(&t, &self.speaker_labels));
+                let text = text.map(|t| {
+                    sanitize_generated_text(&strip_speaker_prefix(&t, &self.speaker_labels))
+                });
                 // placeholder 채우기.
                 if idx < self.state.history.len() {
                     self.state.history[idx].content = text;
@@ -575,6 +704,31 @@ impl LiveSession {
             }
             Err(_) => None,
         }
+    }
+
+    /// 현재 진행 중인 생성 결과를 무효화하고 아직 비어 있는 placeholder를 제거한다.
+    ///
+    /// LLM HTTP 요청 자체는 워커 스레드에서 이미 진행 중일 수 있으므로 여기서 즉시
+    /// 중단할 수 없다. 대신 epoch를 올려 늦게 도착한 결과가 화면, DB, 장기기억에
+    /// 반영되지 않게 한다.
+    pub fn cancel_pending_generation(&mut self) -> bool {
+        let Some(idx) = self.pending.take() else {
+            return false;
+        };
+
+        self.generation_epoch = self.generation_epoch.wrapping_add(1);
+
+        if idx < self.state.history.len() && self.state.history[idx].content.is_none() {
+            self.state.history.remove(idx);
+        }
+        self.state.last_speaker = self
+            .state
+            .history
+            .iter()
+            .rev()
+            .find(|e| e.content.is_some())
+            .map(|e| e.speaker.clone());
+        true
     }
 
     /// 워커 스레드를 명시적으로 종료하고 join한다.
@@ -629,7 +783,9 @@ impl LiveSession {
             .iter()
             .filter_map(|e| e.content.as_deref())
             .collect();
-        let window_start = content_utterances.len().saturating_sub(crate::flow::FLOW_WINDOW);
+        let window_start = content_utterances
+            .len()
+            .saturating_sub(crate::flow::FLOW_WINDOW);
         flow::measure(&content_utterances[window_start..])
     }
 
@@ -709,9 +865,38 @@ impl LiveSession {
             .collect();
     }
 
+    pub fn reset_discussion(&mut self, topics: Vec<String>) {
+        self.generation_epoch = self.generation_epoch.wrapping_add(1);
+        self.pending = None;
+        self.tick_count = 0;
+        self.state.history.clear();
+        self.state.last_speaker = None;
+        self.state.excitations.clear();
+        self.state.intensities = self
+            .personas
+            .iter()
+            .map(|p| (p.id.clone(), p.base_rate))
+            .collect();
+        self.last_human_msg = None;
+        self.human_focus = 0;
+        self.forced_next_speaker = None;
+        self.turns_since_summary = 0;
+        self.set_topics(topics);
+        self.store.clear_room(&self.room);
+        for persona in &self.personas {
+            self.store.join(&self.room, &persona.id);
+        }
+        self.store.join(&self.room, &self.human_id);
+    }
+
     /// 현재 활성 화제 태그 참조.
     pub fn topics(&self) -> &[String] {
         &self.topics
+    }
+
+    /// 현재 세션의 room id.
+    pub fn room_id(&self) -> &str {
+        &self.room
     }
 
     /// persona_meta 맵 참조(task D web에서 backend->model 매핑에 사용).
@@ -788,8 +973,7 @@ impl LiveSession {
     /// remove_persona 후에 호출해 공유 단어 라벨이 잘못 제거되지 않게 한다.
     /// with_store의 초기 라벨 구성 코드와 동일 규칙을 따른다.
     fn rebuild_speaker_labels(&mut self) {
-        let mut labels: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+        let mut labels: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for p in &self.personas {
             labels.insert(p.name.to_lowercase());
             labels.insert(p.id.to_lowercase());
@@ -808,7 +992,10 @@ impl LiveSession {
     /// target_rho == 0.0이면 coupling_from_modifiers가 빈 행렬을 반환해 케미 없음(기존 동작).
     /// add_persona / remove_persona 후에 호출해 신규/제거 쌍의 alpha를 갱신한다.
     fn recompute_alpha(&mut self) {
-        let modifiers: std::collections::BTreeMap<crate::model::PersonaId, crate::model::PersonaModifier> = self
+        let modifiers: std::collections::BTreeMap<
+            crate::model::PersonaId,
+            crate::model::PersonaModifier,
+        > = self
             .persona_meta
             .iter()
             .map(|(id, m)| (id.clone(), m.modifier.clone()))
@@ -832,31 +1019,7 @@ impl Drop for LiveSession {
 mod tests {
     use super::*;
 
-    // ── 채팅 픽스 단위 테스트(순수 함수) ──────────────────────────────────
-    #[test]
-    fn strip_speaker_prefix_removes_echoed_label() {
-        let mut labels = std::collections::BTreeSet::new();
-        labels.insert("grounded realist".to_string());
-        labels.insert("realist".to_string());
-        labels.insert("나".to_string());
-        assert_eq!(strip_speaker_prefix("Realist: 집착을 버려", &labels), "집착을 버려");
-        assert_eq!(strip_speaker_prefix("나: 근데 말이야", &labels), "근데 말이야");
-        // 라벨 매칭 안 됨 → 그대로(과잉 strip 방지)
-        assert_eq!(strip_speaker_prefix("오늘 날씨 좋다", &labels), "오늘 날씨 좋다");
-        assert_eq!(strip_speaker_prefix("넷플릭스: 추천", &labels), "넷플릭스: 추천");
-    }
-
-    #[test]
-    fn build_directive_prioritizes_human() {
-        // 사람 우선 활성 → 사람 메시지 지시
-        let d = build_directive(Some("드라마 추천 좀"), true, &["부처님".to_string()]).unwrap();
-        assert!(d.contains("드라마 추천 좀") && d.contains("최우선"));
-        // 사람 우선 비활성 + 화제 → 화제 지시(사람 메시지 미포함)
-        let d = build_directive(Some("드라마 추천 좀"), false, &["부처님".to_string()]).unwrap();
-        assert!(d.contains("부처님") && !d.contains("드라마 추천 좀"));
-        // 둘 다 없음 → None
-        assert!(build_directive(None, false, &[]).is_none());
-    }
+    // 순수 producer 함수 단위 테스트는 `crate::debate`로 이관됨(Stage A): text.rs / directive.rs.
     use crate::model::CouplingMatrix;
     use crate::pool::{BackendConfig, BackendPool};
     use std::collections::BTreeMap;
@@ -930,7 +1093,11 @@ mod tests {
         let excitations = &session.state().excitations;
         for persona in session.personas() {
             let exc = excitations.get(&persona.id).copied().unwrap_or(0.0);
-            assert!(exc > 0.0, "페르소나 {} excitation이 상승해야 한다", persona.id);
+            assert!(
+                exc > 0.0,
+                "페르소나 {} excitation이 상승해야 한다",
+                persona.id
+            );
         }
     }
 
@@ -955,12 +1122,18 @@ mod tests {
 
         assert!(dispatched, "50틱 내에 화자가 선택돼야 한다");
         // pending이 설정돼야 한다.
-        assert!(session.is_pending(), "Dispatched 후 pending이 Some이어야 한다");
+        assert!(
+            session.is_pending(),
+            "Dispatched 후 pending이 Some이어야 한다"
+        );
         // history에 placeholder Event(content=None)가 있어야 한다.
         let history = &session.state().history;
         assert!(!history.is_empty());
         let placeholder = history.last().unwrap();
-        assert_eq!(placeholder.content, None, "placeholder content는 None이어야 한다");
+        assert_eq!(
+            placeholder.content, None,
+            "placeholder content는 None이어야 한다"
+        );
 
         // pending 중 추가 tick은 AwaitingGeneration.
         let outcome = session.tick();
@@ -1007,6 +1180,88 @@ mod tests {
         assert!(!session.is_pending(), "poll 후 pending이 해제돼야 한다");
     }
 
+    #[test]
+    fn cancel_pending_generation_removes_placeholder_and_ignores_late_result() {
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+
+        for _ in 0..50 {
+            if let TickOutcome::Dispatched(_) = session.tick() {
+                break;
+            }
+        }
+        assert!(session.is_pending(), "생성 취소 전 pending이 있어야 한다");
+        assert!(
+            session
+                .state()
+                .history
+                .last()
+                .is_some_and(|event| event.content.is_none()),
+            "생성 취소 전 placeholder가 있어야 한다"
+        );
+
+        assert!(
+            session.cancel_pending_generation(),
+            "진행 중 생성이 취소되어야 한다"
+        );
+        assert!(!session.is_pending(), "생성 취소 후 pending 해제");
+        assert!(
+            session
+                .state()
+                .history
+                .iter()
+                .all(|event| event.content.is_some()),
+            "생성 취소 후 비어 있는 placeholder가 남으면 안 된다"
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if session.poll_generation().is_some() {
+                panic!("취소된 epoch의 늦은 결과가 반영되면 안 된다");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn recall_for_generation_filters_weak_cross_room_topic_overlap() {
+        let pool = offline_pool();
+        let mut session = LiveSession::with_store_for_room(
+            config(),
+            personas(),
+            42,
+            pool,
+            "you",
+            MemoryStore::new(),
+            "judge-room",
+        );
+        session.set_topics(vec!["AI 판사가 인간 판사보다 공정할 수 있을까?".to_string()]);
+
+        let events = vec![
+            MemoryEvent {
+                room: "old-open-source-room".to_string(),
+                ts: 1,
+                speaker: "aria".to_string(),
+                content: "AI 규제와 오픈소스 책임은 투명한 거버넌스가 중요하다".to_string(),
+            },
+            MemoryEvent {
+                room: "judge-room".to_string(),
+                ts: 2,
+                speaker: "bjorn".to_string(),
+                content: "AI 판사의 항소 절차를 따져봐야 한다".to_string(),
+            },
+        ];
+
+        let recall = session
+            .recall_for_generation(&events)
+            .expect("현재 방 기억은 남아야 한다");
+        assert!(recall.contains("항소 절차"));
+        assert!(
+            !recall.contains("오픈소스 책임"),
+            "넓은 AI 토큰만 겹친 다른 방 기억은 제외되어야 한다: {recall}"
+        );
+    }
+
     /// (4) 엔진 선택 결정성: 같은 seed + 같은 호출 순서 → 같은 화자 선택 시퀀스.
     #[test]
     fn engine_selection_is_deterministic_with_same_seed() {
@@ -1024,8 +1279,8 @@ mod tests {
                     speakers.push(spk);
                     // pending 즉시 해소(결정성 비교 목적): poll로 flush.
                     // 오프라인이라 워커가 빠르게 반환하므로 짧게 대기.
-                    let deadline = std::time::Instant::now()
-                        + std::time::Duration::from_millis(200);
+                    let deadline =
+                        std::time::Instant::now() + std::time::Duration::from_millis(200);
                     while std::time::Instant::now() < deadline {
                         if session.poll_generation().is_some() {
                             break;
@@ -1058,7 +1313,7 @@ mod tests {
                 let _ = session.tick();
             }
         } // Drop here — shutdown() 호출 → job_tx drop → 워커 종료 → join.
-        // hang이나 panic이 없으면 통과.
+          // hang이나 panic이 없으면 통과.
     }
 
     /// (task-34) content 없는 history(오프라인/FakeBackend) → flow()는 None.
@@ -1354,7 +1609,10 @@ mod tests {
         // store join 확인: submit_human 이후 nova가 recall 가능해야 함.
         session.submit_human("nova join test".to_string());
         let recall = session.store.recall("nova", "nova join test", 5);
-        assert!(!recall.is_empty(), "join 후 nova가 사람 발화를 회상할 수 있어야 함");
+        assert!(
+            !recall.is_empty(),
+            "join 후 nova가 사람 발화를 회상할 수 있어야 함"
+        );
     }
 
     /// (task-B-b) remove_persona 후:
@@ -1365,8 +1623,12 @@ mod tests {
         let pool = offline_pool();
         // config에 alpha 쌍을 명시적으로 추가해 제거를 검증한다.
         let mut cfg = config();
-        cfg.alpha.values.insert(("aria".to_string(), "bjorn".to_string()), 0.3);
-        cfg.alpha.values.insert(("bjorn".to_string(), "aria".to_string()), 0.2);
+        cfg.alpha
+            .values
+            .insert(("aria".to_string(), "bjorn".to_string()), 0.3);
+        cfg.alpha
+            .values
+            .insert(("bjorn".to_string(), "aria".to_string()), 0.2);
         let mut session = LiveSession::new(cfg, personas(), 42, Arc::clone(&pool), "you");
 
         // excitation을 수동으로 추가(remove 후 사라지는지 검증용).
@@ -1404,7 +1666,11 @@ mod tests {
             .keys()
             .filter(|(a, b)| a == "aria" || b == "aria")
             .collect();
-        assert_eq!(aria_pairs.len(), 0, "remove 후 alpha에 aria 포함 쌍 없어야 함");
+        assert_eq!(
+            aria_pairs.len(),
+            0,
+            "remove 후 alpha에 aria 포함 쌍 없어야 함"
+        );
         // last_speaker 정리
         assert_eq!(
             session.state().last_speaker,
@@ -1547,9 +1813,21 @@ mod tests {
         let meta_b = make_persona_meta("cloud");
         let meta_c = make_persona_meta("friend");
 
-        let p_a = Persona { id: "alpha".to_string(), name: "Alpha".to_string(), base_rate: 0.70 };
-        let p_b = Persona { id: "beta".to_string(), name: "Beta".to_string(), base_rate: 0.60 };
-        let p_c = Persona { id: "gamma".to_string(), name: "Gamma".to_string(), base_rate: 0.55 };
+        let p_a = Persona {
+            id: "alpha".to_string(),
+            name: "Alpha".to_string(),
+            base_rate: 0.70,
+        };
+        let p_b = Persona {
+            id: "beta".to_string(),
+            name: "Beta".to_string(),
+            base_rate: 0.60,
+        };
+        let p_c = Persona {
+            id: "gamma".to_string(),
+            name: "Gamma".to_string(),
+            base_rate: 0.55,
+        };
 
         // 1명 추가: n<=1이므로 alpha는 빈 행렬
         session.add_persona(p_a, meta_a);
@@ -1590,10 +1868,7 @@ mod tests {
             session.personas(),
             beta,
         );
-        assert!(
-            radius3 < 1.0,
-            "3명 후에도 안정이어야 한다, 실제: {radius3}"
-        );
+        assert!(radius3 < 1.0, "3명 후에도 안정이어야 한다, 실제: {radius3}");
         assert!(
             (radius3 - target).abs() < 1e-6,
             "3명 후 spectral radius({radius3})가 target_rho({target})와 1e-6 이내이어야 한다"
@@ -1619,7 +1894,11 @@ mod tests {
 
         // 3명 추가
         for (id, name) in [("aa", "AA"), ("bb", "BB"), ("cc", "CC")] {
-            let p = Persona { id: id.to_string(), name: name.to_string(), base_rate: 0.60 };
+            let p = Persona {
+                id: id.to_string(),
+                name: name.to_string(),
+                base_rate: 0.60,
+            };
             session.add_persona(p, make_persona_meta("cloud"));
         }
         let beta = session.config.beta;
@@ -1666,8 +1945,16 @@ mod tests {
             crate::memory::MemoryStore::new(),
         );
 
-        let p_a = Persona { id: "x".to_string(), name: "X".to_string(), base_rate: 0.70 };
-        let p_b = Persona { id: "y".to_string(), name: "Y".to_string(), base_rate: 0.60 };
+        let p_a = Persona {
+            id: "x".to_string(),
+            name: "X".to_string(),
+            base_rate: 0.70,
+        };
+        let p_b = Persona {
+            id: "y".to_string(),
+            name: "Y".to_string(),
+            base_rate: 0.60,
+        };
         session.add_persona(p_a, make_persona_meta("cloud"));
         session.add_persona(p_b, make_persona_meta("cloud"));
 
@@ -1687,7 +1974,10 @@ mod tests {
         let pool = offline_pool();
         // new()로 생성 = persona_meta 빈 맵.
         let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
-        assert!(session.persona_meta().is_empty(), "new()는 persona_meta가 빈 맵이어야 함");
+        assert!(
+            session.persona_meta().is_empty(),
+            "new()는 persona_meta가 빈 맵이어야 함"
+        );
 
         // 화자가 선택될 때까지 틱.
         let mut dispatched = false;
@@ -1697,8 +1987,14 @@ mod tests {
                 break;
             }
         }
-        assert!(dispatched, "50틱 내에 화자가 선택돼야 한다(persona_meta 빈 세션)");
-        assert!(session.is_pending(), "Dispatched 후 pending이 Some이어야 한다");
+        assert!(
+            dispatched,
+            "50틱 내에 화자가 선택돼야 한다(persona_meta 빈 세션)"
+        );
+        assert!(
+            session.is_pending(),
+            "Dispatched 후 pending이 Some이어야 한다"
+        );
 
         // bounded 폴링: 오프라인 → content=None으로 즉시 반환.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -1710,7 +2006,10 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(filled, "2s 내에 poll_generation이 Event를 반환해야 한다(persona_meta 빈 세션)");
+        assert!(
+            filled,
+            "2s 내에 poll_generation이 Event를 반환해야 한다(persona_meta 빈 세션)"
+        );
         assert!(!session.is_pending(), "poll 후 pending이 해제돼야 한다");
     }
 }

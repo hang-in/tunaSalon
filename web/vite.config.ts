@@ -8,11 +8,16 @@ export default defineConfig({
   base: '/',
   plugins: [inspectAttr(), react()],
   server: {
-    port: 3000,
+    host: "0.0.0.0",
+    port: 6173,
+    strictPort: true,
     proxy: {
       "/ws": {
         target: "ws://localhost:8080",
         ws: true,
+      },
+      "/api": {
+        target: "http://localhost:8080",
       },
     },
   },

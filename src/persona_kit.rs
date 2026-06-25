@@ -57,21 +57,45 @@ impl Role {
     pub fn base_modifier(self) -> PersonaModifier {
         match self {
             // friend: 전반·감정/긴장에 반응(높은 반응성), 자연스럽게 자극(중간 도발).
-            Role::Friend => PersonaModifier { reactivity: 1.8, provocativeness: 1.2 },
+            Role::Friend => PersonaModifier {
+                reactivity: 1.8,
+                provocativeness: 1.2,
+            },
             // chaos: 무작위·지루함에 반응(중간), 높은 도발성(엉뚱함이 자극).
-            Role::Chaos => PersonaModifier { reactivity: 1.2, provocativeness: 1.8 },
+            Role::Chaos => PersonaModifier {
+                reactivity: 1.2,
+                provocativeness: 1.8,
+            },
             // critic: 주장·단정에 반응(높은 반응), 날카로운 도발(중간-높음).
-            Role::Critic => PersonaModifier { reactivity: 1.6, provocativeness: 1.4 },
+            Role::Critic => PersonaModifier {
+                reactivity: 1.6,
+                provocativeness: 1.4,
+            },
             // realist: 과장·비현실에 반응(중간), 낮은 도발(점검 톤).
-            Role::Realist => PersonaModifier { reactivity: 1.2, provocativeness: 0.9 },
+            Role::Realist => PersonaModifier {
+                reactivity: 1.2,
+                provocativeness: 0.9,
+            },
             // teacher: 질문·혼란에 반응(중간-높음), 낮은 도발(설명 위주).
-            Role::Teacher => PersonaModifier { reactivity: 1.3, provocativeness: 0.8 },
+            Role::Teacher => PersonaModifier {
+                reactivity: 1.3,
+                provocativeness: 0.8,
+            },
             // poet: 감정·이미지에 반응(중간), 낮은 도발(비유).
-            Role::Poet => PersonaModifier { reactivity: 1.0, provocativeness: 0.7 },
+            Role::Poet => PersonaModifier {
+                reactivity: 1.0,
+                provocativeness: 0.7,
+            },
             // strategist: 방향 부재·교착에 반응(낮음), 낮은 도발(조용히 정리).
-            Role::Strategist => PersonaModifier { reactivity: 0.8, provocativeness: 0.8 },
+            Role::Strategist => PersonaModifier {
+                reactivity: 0.8,
+                provocativeness: 0.8,
+            },
             // summarizer: 화제 누적 후 반응(매우 낮음), 매우 낮은 도발.
-            Role::Summarizer => PersonaModifier { reactivity: 0.6, provocativeness: 0.5 },
+            Role::Summarizer => PersonaModifier {
+                reactivity: 0.6,
+                provocativeness: 0.5,
+            },
         }
     }
 
@@ -144,18 +168,36 @@ impl FromStr for Role {
 /// MBTI 16종.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mbti {
-    Entp, Entj, Enfp, Enfj,
-    Estp, Estj, Esfp, Esfj,
-    Intp, Intj, Infp, Infj,
-    Istp, Istj, Isfp, Isfj,
+    Entp,
+    Entj,
+    Enfp,
+    Enfj,
+    Estp,
+    Estj,
+    Esfp,
+    Esfj,
+    Intp,
+    Intj,
+    Infp,
+    Infj,
+    Istp,
+    Istj,
+    Isfp,
+    Isfj,
 }
 
 impl Mbti {
     /// E/I 축 mu 보정. E +0.15, I -0.15 (§6 표).
     pub fn ei_mu_delta(self) -> f64 {
         match self {
-            Mbti::Entp | Mbti::Entj | Mbti::Enfp | Mbti::Enfj |
-            Mbti::Estp | Mbti::Estj | Mbti::Esfp | Mbti::Esfj => 0.15,
+            Mbti::Entp
+            | Mbti::Entj
+            | Mbti::Enfp
+            | Mbti::Enfj
+            | Mbti::Estp
+            | Mbti::Estj
+            | Mbti::Esfp
+            | Mbti::Esfj => 0.15,
             _ => -0.15,
         }
     }
@@ -164,8 +206,14 @@ impl Mbti {
     /// F: 감정 반응 가중(reactivity+0.1, provocativeness+0.2).
     pub fn tf_modifier_delta(self) -> (f64, f64) {
         match self {
-            Mbti::Entp | Mbti::Entj | Mbti::Estp | Mbti::Estj |
-            Mbti::Intp | Mbti::Intj | Mbti::Istp | Mbti::Istj => (0.2, 0.1),
+            Mbti::Entp
+            | Mbti::Entj
+            | Mbti::Estp
+            | Mbti::Estj
+            | Mbti::Intp
+            | Mbti::Intj
+            | Mbti::Istp
+            | Mbti::Istj => (0.2, 0.1),
             _ => (0.1, 0.2),
         }
     }
@@ -197,24 +245,44 @@ impl Mbti {
     /// MBTI 4글자 문자열.
     pub fn code(self) -> &'static str {
         match self {
-            Mbti::Entp => "ENTP", Mbti::Entj => "ENTJ",
-            Mbti::Enfp => "ENFP", Mbti::Enfj => "ENFJ",
-            Mbti::Estp => "ESTP", Mbti::Estj => "ESTJ",
-            Mbti::Esfp => "ESFP", Mbti::Esfj => "ESFJ",
-            Mbti::Intp => "INTP", Mbti::Intj => "INTJ",
-            Mbti::Infp => "INFP", Mbti::Infj => "INFJ",
-            Mbti::Istp => "ISTP", Mbti::Istj => "ISTJ",
-            Mbti::Isfp => "ISFP", Mbti::Isfj => "ISFJ",
+            Mbti::Entp => "ENTP",
+            Mbti::Entj => "ENTJ",
+            Mbti::Enfp => "ENFP",
+            Mbti::Enfj => "ENFJ",
+            Mbti::Estp => "ESTP",
+            Mbti::Estj => "ESTJ",
+            Mbti::Esfp => "ESFP",
+            Mbti::Esfj => "ESFJ",
+            Mbti::Intp => "INTP",
+            Mbti::Intj => "INTJ",
+            Mbti::Infp => "INFP",
+            Mbti::Infj => "INFJ",
+            Mbti::Istp => "ISTP",
+            Mbti::Istj => "ISTJ",
+            Mbti::Isfp => "ISFP",
+            Mbti::Isfj => "ISFJ",
         }
     }
 
     /// 모든 MBTI 목록(전수 테스트용).
     pub fn all() -> &'static [Mbti] {
         &[
-            Mbti::Entp, Mbti::Entj, Mbti::Enfp, Mbti::Enfj,
-            Mbti::Estp, Mbti::Estj, Mbti::Esfp, Mbti::Esfj,
-            Mbti::Intp, Mbti::Intj, Mbti::Infp, Mbti::Infj,
-            Mbti::Istp, Mbti::Istj, Mbti::Isfp, Mbti::Isfj,
+            Mbti::Entp,
+            Mbti::Entj,
+            Mbti::Enfp,
+            Mbti::Enfj,
+            Mbti::Estp,
+            Mbti::Estj,
+            Mbti::Esfp,
+            Mbti::Esfj,
+            Mbti::Intp,
+            Mbti::Intj,
+            Mbti::Infp,
+            Mbti::Infj,
+            Mbti::Istp,
+            Mbti::Istj,
+            Mbti::Isfp,
+            Mbti::Isfj,
         ]
     }
 }
@@ -223,15 +291,25 @@ impl FromStr for Mbti {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_uppercase().as_str() {
-            "ENTP" => Ok(Mbti::Entp), "ENTJ" => Ok(Mbti::Entj),
-            "ENFP" => Ok(Mbti::Enfp), "ENFJ" => Ok(Mbti::Enfj),
-            "ESTP" => Ok(Mbti::Estp), "ESTJ" => Ok(Mbti::Estj),
-            "ESFP" => Ok(Mbti::Esfp), "ESFJ" => Ok(Mbti::Esfj),
-            "INTP" => Ok(Mbti::Intp), "INTJ" => Ok(Mbti::Intj),
-            "INFP" => Ok(Mbti::Infp), "INFJ" => Ok(Mbti::Infj),
-            "ISTP" => Ok(Mbti::Istp), "ISTJ" => Ok(Mbti::Istj),
-            "ISFP" => Ok(Mbti::Isfp), "ISFJ" => Ok(Mbti::Isfj),
-            other => Err(format!("unknown MBTI: \"{other}\". Use 4-letter code, e.g. ENTP")),
+            "ENTP" => Ok(Mbti::Entp),
+            "ENTJ" => Ok(Mbti::Entj),
+            "ENFP" => Ok(Mbti::Enfp),
+            "ENFJ" => Ok(Mbti::Enfj),
+            "ESTP" => Ok(Mbti::Estp),
+            "ESTJ" => Ok(Mbti::Estj),
+            "ESFP" => Ok(Mbti::Esfp),
+            "ESFJ" => Ok(Mbti::Esfj),
+            "INTP" => Ok(Mbti::Intp),
+            "INTJ" => Ok(Mbti::Intj),
+            "INFP" => Ok(Mbti::Infp),
+            "INFJ" => Ok(Mbti::Infj),
+            "ISTP" => Ok(Mbti::Istp),
+            "ISTJ" => Ok(Mbti::Istj),
+            "ISFP" => Ok(Mbti::Isfp),
+            "ISFJ" => Ok(Mbti::Isfj),
+            other => Err(format!(
+                "unknown MBTI: \"{other}\". Use 4-letter code, e.g. ENTP"
+            )),
         }
     }
 }
@@ -263,27 +341,30 @@ impl Blood {
     /// 행동층 미세 보정 (mu_delta, reactivity_delta). 모두 ±0.05 이내.
     pub fn behavior_delta(self) -> (f64, f64) {
         match self {
-            Blood::A  => (-0.02, -0.03),  // 신중 -> 약간 낮은 mu, 낮은 반응
-            Blood::B  => ( 0.03,  0.04),  // 자유분방 -> 약간 높은 mu, 높은 반응
-            Blood::O  => ( 0.04,  0.05),  // 외향·열정 -> 약간 높은 mu, 높은 반응
-            Blood::Ab => (-0.01,  0.00),  // 이중성 -> 중립
+            Blood::A => (-0.02, -0.03), // 신중 -> 약간 낮은 mu, 낮은 반응
+            Blood::B => (0.03, 0.04),   // 자유분방 -> 약간 높은 mu, 높은 반응
+            Blood::O => (0.04, 0.05),   // 외향·열정 -> 약간 높은 mu, 높은 반응
+            Blood::Ab => (-0.01, 0.00), // 이중성 -> 중립
         }
     }
 
     /// 비주얼 팔레트 주색(hex). 비주얼층 에셋 도착 시 사용.
     pub fn palette_hex(self) -> &'static str {
         match self {
-            Blood::A  => "#6B8FD4",  // 차분한 블루
-            Blood::B  => "#E0784A",  // 활기찬 오렌지
-            Blood::O  => "#D44F4F",  // 열정적인 레드
-            Blood::Ab => "#8C6BAE",  // 신비로운 퍼플
+            Blood::A => "#6B8FD4",  // 차분한 블루
+            Blood::B => "#E0784A",  // 활기찬 오렌지
+            Blood::O => "#D44F4F",  // 열정적인 레드
+            Blood::Ab => "#8C6BAE", // 신비로운 퍼플
         }
     }
 
     /// 혈액형 코드 문자열.
     pub fn code(self) -> &'static str {
         match self {
-            Blood::A => "A", Blood::B => "B", Blood::O => "O", Blood::Ab => "AB",
+            Blood::A => "A",
+            Blood::B => "B",
+            Blood::O => "O",
+            Blood::Ab => "AB",
         }
     }
 
@@ -297,11 +378,13 @@ impl FromStr for Blood {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_uppercase().as_str() {
-            "A"  => Ok(Blood::A),
-            "B"  => Ok(Blood::B),
-            "O"  => Ok(Blood::O),
+            "A" => Ok(Blood::A),
+            "B" => Ok(Blood::B),
+            "O" => Ok(Blood::O),
             "AB" => Ok(Blood::Ab),
-            other => Err(format!("unknown blood type: \"{other}\". Valid: a, b, o, ab")),
+            other => Err(format!(
+                "unknown blood type: \"{other}\". Valid: a, b, o, ab"
+            )),
         }
     }
 }
@@ -313,9 +396,18 @@ impl FromStr for Blood {
 /// 별자리 12종. 분위기 조각 + 비주얼 소품.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Zodiac {
-    Aries, Taurus, Gemini, Cancer,
-    Leo, Virgo, Libra, Scorpio,
-    Sagittarius, Capricorn, Aquarius, Pisces,
+    Aries,
+    Taurus,
+    Gemini,
+    Cancer,
+    Leo,
+    Virgo,
+    Libra,
+    Scorpio,
+    Sagittarius,
+    Capricorn,
+    Aquarius,
+    Pisces,
 }
 
 impl Zodiac {
@@ -340,63 +432,72 @@ impl Zodiac {
     /// 행동층 미세 보정 (mu_delta, provocativeness_delta). 모두 ±0.05 이내.
     pub fn behavior_delta(self) -> (f64, f64) {
         match self {
-            Zodiac::Aries       => ( 0.04,  0.05),
-            Zodiac::Taurus      => (-0.03, -0.04),
-            Zodiac::Gemini      => ( 0.03,  0.03),
-            Zodiac::Cancer      => (-0.01,  0.01),
-            Zodiac::Leo         => ( 0.04,  0.04),
-            Zodiac::Virgo       => (-0.02, -0.02),
-            Zodiac::Libra       => ( 0.00,  0.00),
-            Zodiac::Scorpio     => ( 0.01,  0.05),
-            Zodiac::Sagittarius => ( 0.03,  0.03),
-            Zodiac::Capricorn   => (-0.03, -0.01),
-            Zodiac::Aquarius    => ( 0.01,  0.02),
-            Zodiac::Pisces      => (-0.02, -0.01),
+            Zodiac::Aries => (0.04, 0.05),
+            Zodiac::Taurus => (-0.03, -0.04),
+            Zodiac::Gemini => (0.03, 0.03),
+            Zodiac::Cancer => (-0.01, 0.01),
+            Zodiac::Leo => (0.04, 0.04),
+            Zodiac::Virgo => (-0.02, -0.02),
+            Zodiac::Libra => (0.00, 0.00),
+            Zodiac::Scorpio => (0.01, 0.05),
+            Zodiac::Sagittarius => (0.03, 0.03),
+            Zodiac::Capricorn => (-0.03, -0.01),
+            Zodiac::Aquarius => (0.01, 0.02),
+            Zodiac::Pisces => (-0.02, -0.01),
         }
     }
 
     /// 비주얼 소품/심볼 이름. 비주얼층 에셋 슬롯용 데이터.
     pub fn prop_name(self) -> &'static str {
         match self {
-            Zodiac::Aries       => "ram_horns",
-            Zodiac::Taurus      => "bull_horns",
-            Zodiac::Gemini      => "twin_stars",
-            Zodiac::Cancer      => "crab_shell",
-            Zodiac::Leo         => "lion_mane",
-            Zodiac::Virgo       => "wheat_sprig",
-            Zodiac::Libra       => "scales",
-            Zodiac::Scorpio     => "scorpion_tail",
+            Zodiac::Aries => "ram_horns",
+            Zodiac::Taurus => "bull_horns",
+            Zodiac::Gemini => "twin_stars",
+            Zodiac::Cancer => "crab_shell",
+            Zodiac::Leo => "lion_mane",
+            Zodiac::Virgo => "wheat_sprig",
+            Zodiac::Libra => "scales",
+            Zodiac::Scorpio => "scorpion_tail",
             Zodiac::Sagittarius => "arrow",
-            Zodiac::Capricorn   => "goat_horn",
-            Zodiac::Aquarius    => "water_wave",
-            Zodiac::Pisces      => "fish_pair",
+            Zodiac::Capricorn => "goat_horn",
+            Zodiac::Aquarius => "water_wave",
+            Zodiac::Pisces => "fish_pair",
         }
     }
 
     /// 3글자 약어(parse_invite용). 영문 소문자.
     pub fn abbreviation(self) -> &'static str {
         match self {
-            Zodiac::Aries       => "ari",
-            Zodiac::Taurus      => "tau",
-            Zodiac::Gemini      => "gem",
-            Zodiac::Cancer      => "can",
-            Zodiac::Leo         => "leo",
-            Zodiac::Virgo       => "vir",
-            Zodiac::Libra       => "lib",
-            Zodiac::Scorpio     => "sco",
+            Zodiac::Aries => "ari",
+            Zodiac::Taurus => "tau",
+            Zodiac::Gemini => "gem",
+            Zodiac::Cancer => "can",
+            Zodiac::Leo => "leo",
+            Zodiac::Virgo => "vir",
+            Zodiac::Libra => "lib",
+            Zodiac::Scorpio => "sco",
             Zodiac::Sagittarius => "sag",
-            Zodiac::Capricorn   => "cap",
-            Zodiac::Aquarius    => "aqu",
-            Zodiac::Pisces      => "pis",
+            Zodiac::Capricorn => "cap",
+            Zodiac::Aquarius => "aqu",
+            Zodiac::Pisces => "pis",
         }
     }
 
     /// 모든 별자리 목록(전수 테스트용).
     pub fn all() -> &'static [Zodiac] {
         &[
-            Zodiac::Aries, Zodiac::Taurus, Zodiac::Gemini, Zodiac::Cancer,
-            Zodiac::Leo, Zodiac::Virgo, Zodiac::Libra, Zodiac::Scorpio,
-            Zodiac::Sagittarius, Zodiac::Capricorn, Zodiac::Aquarius, Zodiac::Pisces,
+            Zodiac::Aries,
+            Zodiac::Taurus,
+            Zodiac::Gemini,
+            Zodiac::Cancer,
+            Zodiac::Leo,
+            Zodiac::Virgo,
+            Zodiac::Libra,
+            Zodiac::Scorpio,
+            Zodiac::Sagittarius,
+            Zodiac::Capricorn,
+            Zodiac::Aquarius,
+            Zodiac::Pisces,
         ]
     }
 }
@@ -485,10 +586,21 @@ pub fn indian_name(mbti: Mbti, blood: Blood, zodiac: Zodiac) -> String {
         _ => "날카로운", // AB
     };
     let noun = match mbti.code() {
-        "ENTP" => "늑대", "ENTJ" => "태양", "ENFP" => "바람", "ENFJ" => "강",
-        "ESTP" => "불꽃", "ESTJ" => "황소", "ESFP" => "나비", "ESFJ" => "하늘",
-        "INTP" => "여우", "INTJ" => "매", "INFP" => "안개", "INFJ" => "달",
-        "ISTP" => "곰", "ISTJ" => "산", "ISFP" => "사슴",
+        "ENTP" => "늑대",
+        "ENTJ" => "태양",
+        "ENFP" => "바람",
+        "ENFJ" => "강",
+        "ESTP" => "불꽃",
+        "ESTJ" => "황소",
+        "ESFP" => "나비",
+        "ESFJ" => "하늘",
+        "INTP" => "여우",
+        "INTJ" => "매",
+        "INFP" => "안개",
+        "INFJ" => "달",
+        "ISTP" => "곰",
+        "ISTJ" => "산",
+        "ISFP" => "사슴",
         _ => "별", // ISFJ
     };
     let bat = has_batchim(noun);
@@ -517,7 +629,13 @@ pub fn indian_name(mbti: Mbti, blood: Blood, zodiac: Zodiac) -> String {
 fn make_id(name: &str, role: Role) -> String {
     let slug: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
     let slug = slug.trim_matches('_').to_string();
     if slug.is_empty() {
@@ -532,7 +650,13 @@ fn make_id(name: &str, role: Role) -> String {
 /// base_rate = 역할 mu + MBTI E/I 보정 + 혈액형 mu_delta + 별자리 mu_delta, clamp [0.05, 0.98].
 /// modifier  = 역할 기본 + MBTI T/F delta + 별자리 provocativeness_delta + 혈액형 reactivity_delta.
 /// system_prompt 합성 순서: 역할 -> MBTI 말투 -> 별자리 분위기 -> 혈액형 캐릭터성 -> 발화 제약.
-pub fn assemble(role: Role, mbti: Mbti, blood: Blood, zodiac: Zodiac, name: &str) -> AssembledPersona {
+pub fn assemble(
+    role: Role,
+    mbti: Mbti,
+    blood: Blood,
+    zodiac: Zodiac,
+    name: &str,
+) -> AssembledPersona {
     // 이름이 비어 있으면 인디언식으로 자동 생성(임의 입력 없을 때; 이름은 축에서 결정).
     let name_owned = if name.trim().is_empty() {
         indian_name(mbti, blood, zodiac)
@@ -546,10 +670,7 @@ pub fn assemble(role: Role, mbti: Mbti, blood: Blood, zodiac: Zodiac, name: &str
     let (zodiac_mu_delta, zodiac_prov_delta) = zodiac.behavior_delta();
     let (tf_react_delta, tf_prov_delta) = mbti.tf_modifier_delta();
 
-    let raw_mu = role.base_mu()
-        + mbti.ei_mu_delta()
-        + blood_mu_delta
-        + zodiac_mu_delta;
+    let raw_mu = role.base_mu() + mbti.ei_mu_delta() + blood_mu_delta + zodiac_mu_delta;
     // base_rate를 theta(보통 0.6) 근처로 선형 압축한다(0.55 + raw*0.30, 대략 0.55~0.88).
     // 역할/MBTI 편차가 크면 한 persona만 theta를 넘고 나머지는 영영 못 넘어 대화가 끊긴다
     // (한 명만 발화). 선형이라 순서/편차는 유지하되 전체를 theta 근처로 끌어올려, 초대된
@@ -590,7 +711,11 @@ pub fn assemble(role: Role, mbti: Mbti, blood: Blood, zodiac: Zodiac, name: &str
     };
 
     AssembledPersona {
-        persona: Persona { id, name: name.to_string(), base_rate },
+        persona: Persona {
+            id,
+            name: name.to_string(),
+            base_rate,
+        },
         system_prompt,
         modifier,
         visual,
@@ -625,13 +750,13 @@ pub fn parse_invite(args: &str) -> Result<InviteSpec, String> {
         ));
     }
 
-    let model  = parts[0].to_string();
-    let mbti   = Mbti::from_str(parts[1])?;
-    let blood  = Blood::from_str(parts[2])?;
+    let model = parts[0].to_string();
+    let mbti = Mbti::from_str(parts[1])?;
+    let blood = Blood::from_str(parts[2])?;
     let zodiac = Zodiac::from_str(parts[3])?;
-    let role   = Role::from_str(parts[4])?;
+    let role = Role::from_str(parts[4])?;
     // 이름은 나머지 토큰 전부 합침(공백 포함 이름 허용).
-    let name   = parts[5..].join(" ");
+    let name = parts[5..].join(" ");
 
     let assembled = assemble(role, mbti, blood, zodiac, &name);
     Ok(InviteSpec { model, assembled })
@@ -648,14 +773,26 @@ mod tests {
     // --- 결정성 ---
     #[test]
     fn assemble_is_deterministic() {
-        let a1 = assemble(Role::Critic, Mbti::Entp, Blood::B, Zodiac::Scorpio, "입털이");
-        let a2 = assemble(Role::Critic, Mbti::Entp, Blood::B, Zodiac::Scorpio, "입털이");
-        assert_eq!(a1.persona.id,     a2.persona.id);
-        assert_eq!(a1.persona.name,   a2.persona.name);
+        let a1 = assemble(
+            Role::Critic,
+            Mbti::Entp,
+            Blood::B,
+            Zodiac::Scorpio,
+            "입털이",
+        );
+        let a2 = assemble(
+            Role::Critic,
+            Mbti::Entp,
+            Blood::B,
+            Zodiac::Scorpio,
+            "입털이",
+        );
+        assert_eq!(a1.persona.id, a2.persona.id);
+        assert_eq!(a1.persona.name, a2.persona.name);
         assert_eq!(a1.persona.base_rate, a2.persona.base_rate);
-        assert_eq!(a1.system_prompt,  a2.system_prompt);
-        assert_eq!(a1.modifier,       a2.modifier);
-        assert_eq!(a1.visual,         a2.visual);
+        assert_eq!(a1.system_prompt, a2.system_prompt);
+        assert_eq!(a1.modifier, a2.modifier);
+        assert_eq!(a1.visual, a2.visual);
     }
 
     // --- MBTI E/I 보정 ---
@@ -667,7 +804,8 @@ mod tests {
         assert!(
             e.persona.base_rate > i.persona.base_rate,
             "ENTJ base_rate({}) should be > INTJ base_rate({})",
-            e.persona.base_rate, i.persona.base_rate
+            e.persona.base_rate,
+            i.persona.base_rate
         );
     }
 
@@ -680,19 +818,21 @@ mod tests {
         assert!(
             e.persona.base_rate > i.persona.base_rate,
             "E({}) should be > I({})",
-            e.persona.base_rate, i.persona.base_rate
+            e.persona.base_rate,
+            i.persona.base_rate
         );
     }
 
     // --- 역할 mu 반영 ---
     #[test]
     fn friend_has_higher_base_rate_than_summarizer_same_mbti() {
-        let f = assemble(Role::Friend,    Mbti::Infp, Blood::A, Zodiac::Pisces, "f");
+        let f = assemble(Role::Friend, Mbti::Infp, Blood::A, Zodiac::Pisces, "f");
         let s = assemble(Role::Summarizer, Mbti::Infp, Blood::A, Zodiac::Pisces, "s");
         assert!(
             f.persona.base_rate > s.persona.base_rate,
             "friend({}) should be > summarizer({})",
-            f.persona.base_rate, s.persona.base_rate
+            f.persona.base_rate,
+            s.persona.base_rate
         );
     }
 
@@ -708,7 +848,11 @@ mod tests {
                         assert!(
                             a.persona.base_rate >= 0.05 && a.persona.base_rate <= 0.98,
                             "base_rate out of bounds: {} for {:?}/{:?}/{:?}/{:?}",
-                            a.persona.base_rate, role, mbti, blood, zodiac
+                            a.persona.base_rate,
+                            role,
+                            mbti,
+                            blood,
+                            zodiac
                         );
                     }
                 }
@@ -719,16 +863,24 @@ mod tests {
     // --- system_prompt 합성: 역할 핵심어 + 발화 제약 포함 ---
     #[test]
     fn system_prompt_contains_role_keyword_and_constraint() {
-        let a = assemble(Role::Critic, Mbti::Intj, Blood::Ab, Zodiac::Scorpio, "날카론이");
+        let a = assemble(
+            Role::Critic,
+            Mbti::Intj,
+            Blood::Ab,
+            Zodiac::Scorpio,
+            "날카론이",
+        );
         // 역할 프롬프트 핵심어 확인
         assert!(
             a.system_prompt.contains("critic"),
-            "prompt should contain 'critic': {}", a.system_prompt
+            "prompt should contain 'critic': {}",
+            a.system_prompt
         );
         // 발화 제약 핵심어 확인
         assert!(
             a.system_prompt.contains("sharp"),
-            "prompt should contain constraint keyword 'sharp': {}", a.system_prompt
+            "prompt should contain constraint keyword 'sharp': {}",
+            a.system_prompt
         );
     }
 
@@ -737,11 +889,13 @@ mod tests {
         let a = assemble(Role::Friend, Mbti::Esfj, Blood::O, Zodiac::Leo, "따뜻이");
         assert!(
             a.system_prompt.contains("warm"),
-            "friend prompt should contain 'warm': {}", a.system_prompt
+            "friend prompt should contain 'warm': {}",
+            a.system_prompt
         );
         assert!(
             a.system_prompt.contains("1-3 sentences"),
-            "friend constraint should appear: {}", a.system_prompt
+            "friend constraint should appear: {}",
+            a.system_prompt
         );
     }
 
@@ -751,7 +905,10 @@ mod tests {
         let spec = parse_invite("gemma4:e4b entp b sag critic 입털이").unwrap();
         assert_eq!(spec.model, "gemma4:e4b");
         assert_eq!(spec.assembled.persona.name, "입털이");
-        assert_eq!(spec.assembled.persona.base_rate.clamp(0.05, 0.98), spec.assembled.persona.base_rate);
+        assert_eq!(
+            spec.assembled.persona.base_rate.clamp(0.05, 0.98),
+            spec.assembled.persona.base_rate
+        );
     }
 
     #[test]
@@ -831,7 +988,13 @@ mod tests {
     #[test]
     fn sample_combinations_check() {
         // 역할 마지막 - 별자리 마지막 - 혈액형 마지막 - MBTI 마지막
-        let a = assemble(Role::Summarizer, Mbti::Isfj, Blood::Ab, Zodiac::Pisces, "샘플");
+        let a = assemble(
+            Role::Summarizer,
+            Mbti::Isfj,
+            Blood::Ab,
+            Zodiac::Pisces,
+            "샘플",
+        );
         assert!(a.persona.base_rate >= 0.05 && a.persona.base_rate <= 0.98);
         assert!(a.system_prompt.contains("Summarizer") || a.system_prompt.contains("observer"));
 
@@ -840,8 +1003,18 @@ mod tests {
         assert!(b.system_prompt.contains("warm"));
 
         // Strategist + INTJ
-        let c = assemble(Role::Strategist, Mbti::Intj, Blood::B, Zodiac::Capricorn, "참모");
-        assert!(c.system_prompt.contains("strategist") || c.system_prompt.contains("Strategist") || c.system_prompt.contains("direction"));
+        let c = assemble(
+            Role::Strategist,
+            Mbti::Intj,
+            Blood::B,
+            Zodiac::Capricorn,
+            "참모",
+        );
+        assert!(
+            c.system_prompt.contains("strategist")
+                || c.system_prompt.contains("Strategist")
+                || c.system_prompt.contains("direction")
+        );
     }
 
     // --- role FromStr ---
@@ -887,12 +1060,13 @@ mod tests {
     // --- modifier 합리성 검증: friend > summarizer reactivity ---
     #[test]
     fn friend_has_higher_reactivity_than_summarizer() {
-        let f = assemble(Role::Friend,    Mbti::Estp, Blood::O, Zodiac::Leo, "f");
+        let f = assemble(Role::Friend, Mbti::Estp, Blood::O, Zodiac::Leo, "f");
         let s = assemble(Role::Summarizer, Mbti::Estp, Blood::O, Zodiac::Leo, "s");
         assert!(
             f.modifier.reactivity > s.modifier.reactivity,
             "friend reactivity({}) should be > summarizer({})",
-            f.modifier.reactivity, s.modifier.reactivity
+            f.modifier.reactivity,
+            s.modifier.reactivity
         );
     }
 
@@ -946,7 +1120,10 @@ mod tests {
         let z: Zodiac = "leo".parse().unwrap();
         let r: Role = "friend".parse().unwrap();
         let p = assemble(r, m, b, z, "");
-        assert!(!p.persona.name.trim().is_empty(), "빈 이름이면 자동 생성되어야 한다");
+        assert!(
+            !p.persona.name.trim().is_empty(),
+            "빈 이름이면 자동 생성되어야 한다"
+        );
         assert_eq!(p.persona.name, "지혜로운바람처럼"); // B(지혜로운)+ENFP(바람)+leo(처럼)
     }
 }

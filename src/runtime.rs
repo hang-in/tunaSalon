@@ -62,8 +62,18 @@ mod tests {
 
         let speaker = "chaos".to_string();
         let history = vec![
-            Event { ts: 0.0, speaker: "friend".to_string(), mark: 1.0, content: None },
-            Event { ts: 1.0, speaker: "chaos".to_string(), mark: 1.0, content: None },
+            Event {
+                ts: 0.0,
+                speaker: "friend".to_string(),
+                mark: 1.0,
+                content: None,
+            },
+            Event {
+                ts: 1.0,
+                speaker: "chaos".to_string(),
+                mark: 1.0,
+                content: None,
+            },
         ];
         let mut rng = ChaCha8Rng::seed_from_u64(99);
 

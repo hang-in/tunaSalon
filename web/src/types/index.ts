@@ -14,6 +14,7 @@ export interface Participant {
 
 export interface StateFrame {
   type: "state";
+  room_id: string;
   intensities: Record<string, number>;
   theta: number;
   flow: number;
@@ -21,6 +22,12 @@ export interface StateFrame {
   liveliness: number;
   pending: string | null;
   participants: Participant[];
+  messages?: {
+    speaker: string;
+    name: string;
+    content: string;
+    ts: number;
+  }[];
   topics: string[];
   paused: boolean;
   tick_ms: number;
@@ -82,7 +89,12 @@ export interface ClientPaceFrame {
   interval_ms: number;
 }
 
-export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame | ClientPaceFrame | ClientInviteFrame | ClientRemoveFrame;
+export interface ClientResetFrame {
+  type: "reset";
+  topics: string[];
+}
+
+export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame | ClientPaceFrame | ClientInviteFrame | ClientRemoveFrame | ClientResetFrame;
 
 // ── UI-local types ──────────────────────────────────────────────
 
@@ -106,6 +118,7 @@ export interface ChatMessage {
 }
 
 export interface EngineState {
+  room_id: string;
   intensities: Record<string, number>;
   theta: number;
   flow: number;

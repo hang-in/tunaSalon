@@ -11,6 +11,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+const RECENT_CONTEXT_LINES: usize = 10;
+
 /// OpenAI `/v1/chat/completions` 호환 백엔드.
 ///
 /// vLLM, OpenAI, 기타 호환 서버 모두 사용 가능.
@@ -67,7 +69,15 @@ impl OpenAIBackend {
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-        Self { client, model, endpoint, api_key, system_prompts, max_tokens, thinking }
+        Self {
+            client,
+            model,
+            endpoint,
+            api_key,
+            system_prompts,
+            max_tokens,
+            thinking,
+        }
     }
 
     /// `/v1/chat/completions` 요청 body JSON을 조립한다.
@@ -142,12 +152,12 @@ impl OpenAIBackend {
         }
     }
 
-    /// history 마지막 4개 항목으로 최근 대화 문자열을 만든다(OllamaBackend와 동일 로직).
+    /// history 최근 항목으로 최근 대화 문자열을 만든다(OllamaBackend와 동일 로직).
     fn format_recent(history: &[Event]) -> String {
         history
             .iter()
             .rev()
-            .take(4)
+            .take(RECENT_CONTEXT_LINES)
             .rev()
             .map(|e| {
                 let body = e.content.as_deref().unwrap_or("").trim().to_string();
@@ -175,7 +185,10 @@ impl OpenAIBackend {
         if let Some(r) = recall {
             parts.push(format!("[기억]\n{r}"));
         }
-        parts.push("Reply with ONE short, in-character line. No preamble.".to_string());
+        parts.push(
+            "Reply as a debate participant in 3-6 substantial sentences. State your position clearly on the current topic only, use the recent lines and directly relevant memory, and explicitly name a real participant when agreeing, rebutting, or refining their point. Do not write \"나님\"; use \"사용자님\" only when direct address is necessary. Do not address Moderator, system-like progress lines, or 나 unless you are answering a fresh user message from 나; if no real participant has spoken yet, open with your own position without a name prefix. Do not import old topic terms just because a broad word overlaps. Do not repeat an earlier argument without adding a concrete example, metric, legal threshold, implementation mechanism, or compromise test. Use real-world cases or standards only when genuinely relevant to the current topic. Do not reveal chain-of-thought or hidden reasoning; provide only the final argument. No preamble."
+                .to_string(),
+        );
         parts.join("\n")
     }
 
@@ -197,10 +210,16 @@ impl OpenAIBackend {
         let recent = Self::format_recent(history);
         let user_prompt = Self::assemble_user_prompt(&recent, recall);
 
-        let system = system_prompt_override
-            .or_else(|| self.system_prompts.get(speaker).map(String::as_str));
+        let system =
+            system_prompt_override.or_else(|| self.system_prompts.get(speaker).map(String::as_str));
         let url = format!("{}/v1/chat/completions", self.endpoint);
-        let body = Self::build_request_body(&self.model, &user_prompt, system, self.max_tokens, self.thinking);
+        let body = Self::build_request_body(
+            &self.model,
+            &user_prompt,
+            system,
+            self.max_tokens,
+            self.thinking,
+        );
 
         let mut req = self.client.post(&url).json(&body);
 
@@ -252,9 +271,12 @@ mod tests {
     /// system=Some이면 messages 배열에 system 메시지가 먼저, user 메시지가 뒤에 온다.
     #[test]
     fn build_request_body_with_system_has_correct_messages() {
-        let body = OpenAIBackend::build_request_body("qwen3.6-35b", "Hi", Some("You are X"), None, false);
+        let body =
+            OpenAIBackend::build_request_body("qwen3.6-35b", "Hi", Some("You are X"), None, false);
 
-        let messages = body["messages"].as_array().expect("messages는 배열이어야 함");
+        let messages = body["messages"]
+            .as_array()
+            .expect("messages는 배열이어야 함");
         assert_eq!(messages.len(), 2, "system+user 메시지 2개여야 함");
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[0]["content"], "You are X");
@@ -267,7 +289,9 @@ mod tests {
     fn build_request_body_without_system_has_only_user_message() {
         let body = OpenAIBackend::build_request_body("m", "prompt", None, None, false);
 
-        let messages = body["messages"].as_array().expect("messages는 배열이어야 함");
+        let messages = body["messages"]
+            .as_array()
+            .expect("messages는 배열이어야 함");
         assert_eq!(messages.len(), 1, "user 메시지만 있어야 함");
         assert_eq!(messages[0]["role"], "user");
     }
@@ -389,7 +413,8 @@ mod tests {
     /// 공백을 trim한다.
     #[test]
     fn parse_response_trims_whitespace() {
-        let json = r#"{"choices": [{"message": {"role": "assistant", "content": "  hi there  "}}]}"#;
+        let json =
+            r#"{"choices": [{"message": {"role": "assistant", "content": "  hi there  "}}]}"#;
         let result = OpenAIBackend::parse_response(json);
         assert_eq!(result, Some("hi there".to_string()));
     }
@@ -440,14 +465,11 @@ mod tests {
             prompt.contains("[기억]"),
             "recall=Some이면 [기억] 섹션이 포함되어야 함"
         );
-        assert!(
-            prompt.contains(recall_text),
-            "회상 텍스트가 포함되어야 함"
-        );
+        assert!(prompt.contains(recall_text), "회상 텍스트가 포함되어야 함");
         // 순서: 로그 < [기억] < 지시문
         let pos_log = prompt.find("Recent lines:").unwrap();
         let pos_mem = prompt.find("[기억]").unwrap();
-        let pos_inst = prompt.find("Reply with ONE short").unwrap();
+        let pos_inst = prompt.find("Reply as a debate participant").unwrap();
         assert!(pos_log < pos_mem, "로그가 [기억] 앞에 있어야 함");
         assert!(pos_mem < pos_inst, "[기억]이 지시문 앞에 있어야 함");
     }
@@ -468,7 +490,7 @@ mod tests {
             "최근 로그가 포함되어야 함"
         );
         assert!(
-            prompt.contains("Reply with ONE short"),
+            prompt.contains("Reply as a debate participant"),
             "지시문이 포함되어야 함"
         );
     }
@@ -504,8 +526,8 @@ mod tests {
             .unwrap_or_else(|_| "http://yongseek.iptime.org:8008".to_string());
         // 기본은 reasoning이 꺼진 -fast 변형(친구 안내). 일반 qwen3.6-35b도
         // build_request_body의 enable_thinking=false로 안전하게 동작한다.
-        let model = std::env::var("SALON_FRIEND_MODEL")
-            .unwrap_or_else(|_| "qwen3.6-35b-fast".to_string());
+        let model =
+            std::env::var("SALON_FRIEND_MODEL").unwrap_or_else(|_| "qwen3.6-35b-fast".to_string());
 
         let backend = OpenAIBackend::new(
             model.clone(),
@@ -518,14 +540,12 @@ mod tests {
         );
 
         let speaker = "friend".to_string();
-        let history = vec![
-            crate::model::Event {
-                ts: 0.0,
-                speaker: "chaos".to_string(),
-                mark: 1.0,
-                content: Some("The salon is getting lively tonight.".to_string()),
-            },
-        ];
+        let history = vec![crate::model::Event {
+            ts: 0.0,
+            speaker: "chaos".to_string(),
+            mark: 1.0,
+            content: Some("The salon is getting lively tonight.".to_string()),
+        }];
 
         let result = backend.generate(&speaker, &history, 0, None, None);
         println!("live friend-server result (model={model}, endpoint={endpoint}): {result:?}");

@@ -5,6 +5,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+const RECENT_CONTEXT_LINES: usize = 10;
+
 /// Ollama HTTP 백엔드. 실제 LLM에 generate 요청을 POST한다.
 ///
 /// SECURITY: `#[derive(Debug)]`를 쓰면 api_key가 노출되므로 수동 구현.
@@ -31,10 +33,7 @@ impl std::fmt::Debug for OllamaBackend {
         f.debug_struct("OllamaBackend")
             .field("model", &self.model)
             .field("endpoint", &self.endpoint)
-            .field(
-                "api_key",
-                &self.api_key.as_ref().map(|_| "<redacted>"),
-            )
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("system_prompts", &self.system_prompts)
             .finish()
     }
@@ -66,7 +65,15 @@ impl OllamaBackend {
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-        Self { client, model, endpoint, api_key, system_prompts, num_ctx, think }
+        Self {
+            client,
+            model,
+            endpoint,
+            api_key,
+            system_prompts,
+            num_ctx,
+            think,
+        }
     }
 
     /// user 프롬프트를 섹션 순서대로 조립한다.
@@ -83,7 +90,10 @@ impl OllamaBackend {
         if let Some(r) = recall {
             parts.push(format!("[기억]\n{r}"));
         }
-        parts.push("Reply with ONE short, in-character line. No preamble.".to_string());
+        parts.push(
+            "Reply as a debate participant in 3-6 substantial sentences. State your position clearly on the current topic only, use the recent lines and directly relevant memory, and explicitly name a real participant when agreeing, rebutting, or refining their point. Do not write \"나님\"; use \"사용자님\" only when direct address is necessary. Do not address Moderator, system-like progress lines, or 나 unless you are answering a fresh user message from 나; if no real participant has spoken yet, open with your own position without a name prefix. Do not import old topic terms just because a broad word overlaps. Do not repeat an earlier argument without adding a concrete example, metric, legal threshold, implementation mechanism, or compromise test. Use real-world cases or standards only when genuinely relevant to the current topic. Do not reveal chain-of-thought or hidden reasoning; provide only the final argument. No preamble."
+                .to_string(),
+        );
         parts.join("\n")
     }
 
@@ -136,20 +146,15 @@ impl OllamaBackend {
         }
     }
 
-    /// history 마지막 4개 항목으로 최근 대화 문자열을 만든다.
+    /// history 최근 항목으로 최근 대화 문자열을 만든다.
     fn format_recent(history: &[Event]) -> String {
         history
             .iter()
             .rev()
-            .take(4)
+            .take(RECENT_CONTEXT_LINES)
             .rev()
             .map(|e| {
-                let body = e
-                    .content
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
+                let body = e.content.as_deref().unwrap_or("").trim().to_string();
                 if body.is_empty() {
                     e.speaker.clone()
                 } else {
@@ -181,11 +186,12 @@ impl OllamaBackend {
         let recent = Self::format_recent(history);
         let user_prompt = Self::assemble_user_prompt(&recent, recall);
 
-        let system = system_prompt_override
-            .or_else(|| self.system_prompts.get(speaker).map(String::as_str));
+        let system =
+            system_prompt_override.or_else(|| self.system_prompts.get(speaker).map(String::as_str));
 
         let url = format!("{}/api/generate", self.endpoint);
-        let body = Self::build_request_body(&self.model, &user_prompt, system, self.num_ctx, self.think);
+        let body =
+            Self::build_request_body(&self.model, &user_prompt, system, self.num_ctx, self.think);
 
         let mut req = self.client.post(&url).json(&body);
 
@@ -248,8 +254,13 @@ mod tests {
 
     #[test]
     fn build_request_body_has_required_fields() {
-        let body =
-            OllamaBackend::build_request_body("gemma4:e4b", "Hello, who are you?", None, None, false);
+        let body = OllamaBackend::build_request_body(
+            "gemma4:e4b",
+            "Hello, who are you?",
+            None,
+            None,
+            false,
+        );
 
         assert_eq!(body["model"], "gemma4:e4b");
         assert_eq!(body["prompt"], "Hello, who are you?");
@@ -359,7 +370,7 @@ mod tests {
             "로그가 포함되어야 함"
         );
         assert!(
-            without_recall.contains("Reply with ONE short"),
+            without_recall.contains("Reply as a debate participant"),
             "지시문이 포함되어야 함"
         );
         assert!(
@@ -376,7 +387,7 @@ mod tests {
         );
         let pos_log = with_recall.find("Recent lines:").unwrap();
         let pos_recall = with_recall.find(recall_text).unwrap();
-        let pos_instruction = with_recall.find("Reply with ONE short").unwrap();
+        let pos_instruction = with_recall.find("Reply as a debate participant").unwrap();
         assert!(
             pos_log < pos_recall,
             "로그(pos={pos_log})가 회상(pos={pos_recall}) 앞에 있어야 함"
@@ -407,10 +418,7 @@ mod tests {
     #[test]
     fn build_request_body_omits_num_ctx_when_none() {
         let body = OllamaBackend::build_request_body("m", "p", None, None, false);
-        let has_num_ctx = body
-            .get("options")
-            .and_then(|o| o.get("num_ctx"))
-            .is_some();
+        let has_num_ctx = body.get("options").and_then(|o| o.get("num_ctx")).is_some();
         assert!(
             !has_num_ctx,
             "num_ctx=None이면 options.num_ctx가 body에 포함되어서는 안 됨"

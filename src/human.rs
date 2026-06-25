@@ -41,11 +41,7 @@ impl HumanChannel {
 
     /// attention과 reset_factor를 명시적으로 지정해 생성한다.
     /// 라이브 튜닝(task-31) 또는 테스트에서 사용.
-    pub fn with_params(
-        speaker_id: impl Into<String>,
-        attention: f64,
-        reset_factor: f64,
-    ) -> Self {
+    pub fn with_params(speaker_id: impl Into<String>, attention: f64, reset_factor: f64) -> Self {
         Self {
             speaker_id: speaker_id.into(),
             attention,
@@ -64,13 +60,7 @@ impl HumanChannel {
     /// mark(HUMAN_MARK)는 observability·설계 충실도를 위해 큰 값으로 기록하지만
     /// 실제 동역학은 flat attention 자극에서 나온다. α 행렬과 무관하므로
     /// Hawkes 스펙트럼 반경(안정성 조건)에 영향을 주지 않는다.
-    pub fn speak(
-        &self,
-        state: &mut EngineState,
-        personas: &[Persona],
-        text: String,
-        ts: f64,
-    ) {
+    pub fn speak(&self, state: &mut EngineState, personas: &[Persona], text: String, ts: f64) {
         // 1. 일부 리셋: 페르소나 간 누적 excitation 감쇠 (주목 집중 효과)
         for excitation in state.excitations.values_mut() {
             *excitation *= self.reset_factor;
@@ -114,10 +104,7 @@ mod tests {
 
     fn empty_state() -> EngineState {
         EngineState {
-            intensities: BTreeMap::from([
-                ("aria".to_string(), 0.4),
-                ("bjorn".to_string(), 0.7),
-            ]),
+            intensities: BTreeMap::from([("aria".to_string(), 0.4), ("bjorn".to_string(), 0.7)]),
             excitations: BTreeMap::new(),
             history: Vec::new(),
             last_speaker: None,
@@ -135,7 +122,10 @@ mod tests {
 
         channel.speak(&mut state, &personas, "안녕하세요".to_string(), 10.0);
 
-        let last = state.history.last().expect("history가 비어있지 않아야 한다");
+        let last = state
+            .history
+            .last()
+            .expect("history가 비어있지 않아야 한다");
         assert_eq!(last.speaker, "you");
         assert_eq!(last.mark, HUMAN_MARK);
         assert_eq!(last.content, Some("안녕하세요".to_string()));
@@ -151,30 +141,32 @@ mod tests {
         let mut state = empty_state();
 
         // 발화 전 combined_intensities (excitation 없으므로 base와 동일)
-        let before = HawkesEngine::combined_intensities(
-            &state.intensities,
-            &state.excitations,
-            &personas,
-        );
+        let before =
+            HawkesEngine::combined_intensities(&state.intensities, &state.excitations, &personas);
 
         channel.speak(&mut state, &personas, "반가워요".to_string(), 5.0);
 
         // 발화 후 excitation이 모든 페르소나에 대해 양수여야 한다
         for persona in &personas {
             let exc = state.excitations.get(&persona.id).copied().unwrap_or(0.0);
-            assert!(exc > 0.0, "페르소나 {} excitation이 증가해야 한다", persona.id);
+            assert!(
+                exc > 0.0,
+                "페르소나 {} excitation이 증가해야 한다",
+                persona.id
+            );
         }
 
         // combined_intensities도 모두 상승해야 한다
-        let after = HawkesEngine::combined_intensities(
-            &state.intensities,
-            &state.excitations,
-            &personas,
-        );
+        let after =
+            HawkesEngine::combined_intensities(&state.intensities, &state.excitations, &personas);
         for persona in &personas {
             let b = before.get(&persona.id).copied().unwrap_or(0.0);
             let a = after.get(&persona.id).copied().unwrap_or(0.0);
-            assert!(a > b, "페르소나 {} combined intensity가 상승해야 한다", persona.id);
+            assert!(
+                a > b,
+                "페르소나 {} combined intensity가 상승해야 한다",
+                persona.id
+            );
         }
     }
 

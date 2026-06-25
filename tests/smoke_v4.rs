@@ -87,8 +87,22 @@ fn inv1_fake_backend_determinism_preserved_with_v04_code() {
     // (a) 동일 seed 두 번 실행 → records 바이트 동일
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
-    driver::run(&config, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_a,
+        &mut FakeBackend,
+    );
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_b,
+        &mut FakeBackend,
+    );
 
     assert_eq!(
         sink_a.records, sink_b.records,
@@ -108,7 +122,8 @@ fn inv1_fake_backend_determinism_preserved_with_v04_code() {
 
     // records가 실제로 존재해야 단언이 의미 있음
     assert_eq!(
-        sink_a.records.len(), ticks as usize,
+        sink_a.records.len(),
+        ticks as usize,
         "tick 수({ticks})와 records 수({}) 불일치",
         sink_a.records.len()
     );
@@ -124,8 +139,22 @@ fn inv1_determinism_multiple_seeds() {
     for seed in [7u64, 99u64] {
         let mut sink_x = VecSink::default();
         let mut sink_y = VecSink::default();
-        driver::run(&config, &personas, seed, ticks, &mut sink_x, &mut FakeBackend);
-        driver::run(&config, &personas, seed, ticks, &mut sink_y, &mut FakeBackend);
+        driver::run(
+            &config,
+            &personas,
+            seed,
+            ticks,
+            &mut sink_x,
+            &mut FakeBackend,
+        );
+        driver::run(
+            &config,
+            &personas,
+            seed,
+            ticks,
+            &mut sink_y,
+            &mut FakeBackend,
+        );
 
         assert_eq!(
             sink_x.records, sink_y.records,
@@ -227,7 +256,12 @@ fn fallback_chain_order_and_cycle_safety() {
         pool.set_fallback("b", "a"); // 사이클
 
         let chain = pool.fallback_chain("any-speaker");
-        assert_eq!(chain.len(), 2, "사이클 a→b→a에서 체인 길이는 2여야 함: {:?}", chain);
+        assert_eq!(
+            chain.len(),
+            2,
+            "사이클 a→b→a에서 체인 길이는 2여야 함: {:?}",
+            chain
+        );
         assert_eq!(chain[0], "a");
         assert_eq!(chain[1], "b");
     }
@@ -391,11 +425,10 @@ fn live_pool_cloud_generate() {
     use rand::SeedableRng;
     use salon::runtime::PersonaRuntime;
 
-    let cloud_endpoint =
-        std::env::var("OLLAMA_CLOUD_ENDPOINT").unwrap_or_else(|_| "https://api.ollama.ai".to_string());
+    let cloud_endpoint = std::env::var("OLLAMA_CLOUD_ENDPOINT")
+        .unwrap_or_else(|_| "https://api.ollama.ai".to_string());
     let cloud_key = std::env::var("OLLAMA_CLOUD_API_KEY").ok();
-    let model =
-        std::env::var("SALON_CLOUD_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
+    let model = std::env::var("SALON_CLOUD_MODEL").unwrap_or_else(|_| "gemma4:e4b".to_string());
 
     let mut pool = BackendPool::new();
     let cfg = BackendConfig::new(

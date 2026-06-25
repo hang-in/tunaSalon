@@ -5,11 +5,17 @@
 use crate::live::{LiveSession, PersonaAxes, PersonaMeta};
 use crate::persona_kit::{assemble, Blood, Mbti, Role, Zodiac};
 use crate::roomstore::RoomStore;
+#[cfg(feature = "redis-bus")]
+use crate::session_bus::{RedisBus, RedisBusHandle, SessionBus};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, mpsc};
+#[cfg(feature = "redis-bus")]
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 // ── 프레임 스키마 ──────────────────────────────────────────────
 
@@ -32,11 +38,20 @@ struct Participant {
     axes: Option<ParticipantAxes>,
 }
 
+#[derive(Serialize, Clone)]
+struct HistoryMessage {
+    speaker: String,
+    name: String,
+    content: String,
+    ts: f64,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 enum ServerFrame {
     #[serde(rename = "state")]
     State {
+        room_id: String,
         intensities: BTreeMap<String, f64>,
         theta: f64,
         flow: f64,
@@ -44,6 +59,7 @@ enum ServerFrame {
         liveliness: f64,
         pending: Option<String>,
         participants: Vec<Participant>,
+        messages: Vec<HistoryMessage>,
         topics: Vec<String>,
         paused: bool,
         tick_ms: u64,
@@ -80,6 +96,10 @@ enum ClientFrame {
     },
     #[serde(rename = "remove")]
     Remove { id: String },
+    #[serde(rename = "presence")]
+    Presence { clients: usize },
+    #[serde(rename = "reset")]
+    Reset { topics: Vec<String> },
 }
 
 #[allow(dead_code)]
@@ -95,6 +115,9 @@ enum EngineCmd {
         role: Option<String>,
     },
     Remove(String),
+    SetClientCount(usize),
+    Reset(Vec<String>),
+    DeleteAndShutdown,
     Shutdown,
 }
 
@@ -102,12 +125,127 @@ const STATE_PERIOD: Duration = Duration::from_millis(700);
 const DEFAULT_TICK_MS: u64 = 6000;
 const POLL_PERIOD: Duration = Duration::from_millis(80);
 const SAVE_PERIOD: Duration = Duration::from_secs(5);
+#[cfg(feature = "redis-bus")]
+const OWNER_TTL_SECS: u64 = 15;
+#[cfg(feature = "redis-bus")]
+const OWNER_REFRESH_SECS: u64 = 5;
+
+#[derive(Debug, Clone, Default)]
+pub struct WebStartup {
+    topics: Vec<String>,
+}
+
+impl WebStartup {
+    pub fn debate(topics: Vec<String>) -> Self {
+        Self {
+            topics: normalize_topics(topics),
+        }
+    }
+
+    fn topics(&self) -> &[String] {
+        &self.topics
+    }
+
+    fn opening_prompt(&self) -> Option<String> {
+        if self.topics.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "토론을 시작합니다. 주제는 '{}'입니다. 첫 발화자는 자기 입장과 근거를 3-5문장으로 분명히 밝히고, 다른 참가자들은 닉네임을 부르며 반박하거나 보완하세요.",
+            self.topics.join("', '")
+        ))
+    }
+}
+
+fn normalize_topics(topics: Vec<String>) -> Vec<String> {
+    topics
+        .into_iter()
+        .flat_map(|topic| {
+            topic
+                .split(',')
+                .map(|part| part.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .filter(|topic| !topic.is_empty())
+        .take(5)
+        .collect()
+}
+
+fn normalize_room_id(room_id: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in room_id.trim().chars() {
+        let normalized = if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            Some(ch.to_ascii_lowercase())
+        } else if ch.is_whitespace() || ch == '/' || ch == '\\' || ch == ':' {
+            Some('-')
+        } else {
+            None
+        };
+        if let Some(ch) = normalized {
+            if ch == '-' {
+                if last_dash {
+                    continue;
+                }
+                last_dash = true;
+            } else {
+                last_dash = false;
+            }
+            out.push(ch);
+            if out.len() >= 80 {
+                break;
+            }
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        fallback.to_string()
+    } else {
+        out
+    }
+}
+
+fn client_frame_to_cmd(frame: ClientFrame) -> EngineCmd {
+    match frame {
+        ClientFrame::Message { text } => EngineCmd::Human(text),
+        ClientFrame::Topic { topics } => EngineCmd::Topic(topics),
+        ClientFrame::Pause { paused } => EngineCmd::SetPaused(paused),
+        ClientFrame::Pace { interval_ms } => EngineCmd::SetPace(interval_ms),
+        ClientFrame::Invite {
+            blood,
+            mbti,
+            zodiac,
+            role,
+        } => EngineCmd::Invite {
+            blood,
+            mbti,
+            zodiac,
+            role,
+        },
+        ClientFrame::Remove { id } => EngineCmd::Remove(id),
+        ClientFrame::Presence { clients } => EngineCmd::SetClientCount(clients),
+        ClientFrame::Reset { topics } => EngineCmd::Reset(topics),
+    }
+}
+
+fn effective_paused(manual_paused: bool, client_count: usize, backend_paused: bool) -> bool {
+    manual_paused || client_count == 0 || backend_paused
+}
+
+#[cfg(feature = "redis-bus")]
+fn make_worker_id(room_id: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{room_id}:{}:{nanos}", std::process::id())
+}
 
 /// 방 상태를 RoomStore에 저장한다. 실패는 경고만(비밀 비노출, 크래시 금지).
 fn save_room(store: &Option<RoomStore>, session: &LiveSession) {
     if let Some(ref s) = *store {
         if let Err(e) = s.save(
-            "salon",
+            session.room_id(),
             session.personas(),
             session.persona_meta(),
             &session.state().history,
@@ -117,6 +255,17 @@ fn save_room(store: &Option<RoomStore>, session: &LiveSession) {
             eprintln!("[tunaSalon] rooms.db 저장 실패(비치명): {e}");
         }
     }
+}
+
+fn delete_room_storage(room_id: &str) {
+    if let Some(path) = RoomStore::default_rooms_db_path() {
+        match RoomStore::open(&path).and_then(|store| store.delete_room(room_id)) {
+            Ok(()) => {}
+            Err(e) => eprintln!("[tunaSalon] rooms.db 방 삭제 실패(비치명): {e}"),
+        }
+    }
+    let mut memory = crate::memory::live_store();
+    memory.clear_room(room_id);
 }
 
 /// backend 문자열을 모델 이름으로 변환한다.
@@ -133,82 +282,153 @@ fn backend_to_model(backend: &str) -> String {
 fn run_engine(
     mut session: LiveSession,
     human_id: String,
+    startup: WebStartup,
     frame_tx: broadcast::Sender<String>,
     mut cmd_rx: mpsc::UnboundedReceiver<EngineCmd>,
     store: Option<RoomStore>,
+    #[cfg(feature = "redis-bus")] redis_bus: Option<RedisBusHandle>,
 ) {
+    #[cfg(feature = "redis-bus")]
+    let room_id = session.room_id().to_string();
     let emit = |tx: &broadcast::Sender<String>, frame: &ServerFrame| {
         if let Ok(json) = serde_json::to_string(frame) {
+            #[cfg(feature = "redis-bus")]
+            if let Some(ref bus) = redis_bus {
+                bus.publish_event_json(&room_id, &json);
+            }
             let _ = tx.send(json); // 구독자 없어도 무시(broadcast)
         }
     };
 
-    let build_state = |session: &LiveSession, human_id: &str, paused: bool, tick_ms: u64| -> ServerFrame {
-        let intensities: BTreeMap<String, f64> =
-            session.combined_intensities().into_iter().collect();
-        let mut participants: Vec<Participant> = session
-            .personas()
-            .iter()
-            .map(|p| {
-                let meta = session.persona_meta().get(&p.id);
-                let model = meta.map(|m| backend_to_model(&m.backend));
-                let axes = meta
-                    .and_then(|m| m.axes.as_ref())
-                    .map(|a| ParticipantAxes {
+    let build_state =
+        |session: &LiveSession, human_id: &str, paused: bool, tick_ms: u64| -> ServerFrame {
+            let intensities: BTreeMap<String, f64> =
+                session.combined_intensities().into_iter().collect();
+            let mut participants: Vec<Participant> = session
+                .personas()
+                .iter()
+                .map(|p| {
+                    let meta = session.persona_meta().get(&p.id);
+                    let model = meta.map(|m| backend_to_model(&m.backend));
+                    let axes = meta.and_then(|m| m.axes.as_ref()).map(|a| ParticipantAxes {
                         blood: a.blood.clone(),
                         mbti: a.mbti.clone(),
                         zodiac: a.zodiac.clone(),
                         role: a.role.clone(),
                     });
-                Participant {
-                    id: p.id.clone(),
-                    name: p.name.clone(),
-                    model,
-                    axes,
+                    Participant {
+                        id: p.id.clone(),
+                        name: p.name.clone(),
+                        model,
+                        axes,
+                    }
+                })
+                .collect();
+            participants.push(Participant {
+                id: human_id.to_string(),
+                name: human_id.to_string(),
+                model: None,
+                axes: None,
+            });
+            let speaker_name = |speaker: &str| -> String {
+                if speaker == human_id {
+                    return human_id.to_string();
                 }
-            })
-            .collect();
-        participants.push(Participant {
-            id: human_id.to_string(),
-            name: human_id.to_string(),
-            model: None,
-            axes: None,
-        });
-        ServerFrame::State {
-            intensities,
-            theta: session.theta(),
-            flow: session.flow().map(|f| f.convergence).unwrap_or(0.0),
-            mu_scale: session.mu_scale(),
-            liveliness: session.liveliness(),
-            pending: session.pending_speaker(),
-            participants,
-            topics: session.topics().to_vec(),
-            paused,
-            tick_ms,
-        }
-    };
+                if speaker == "(진행)" {
+                    return "Moderator".to_string();
+                }
+                session
+                    .personas()
+                    .iter()
+                    .find(|p| p.id == speaker)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| speaker.to_string())
+            };
+            let messages = session
+                .state()
+                .history
+                .iter()
+                .filter_map(|event| {
+                    let content = event.content.as_deref()?.trim();
+                    if content.is_empty() || event.speaker == "(진행)" {
+                        return None;
+                    }
+                    if event.speaker == human_id
+                        && content.trim_start().starts_with("토론을 시작합니다.")
+                    {
+                        return None;
+                    }
+                    Some(HistoryMessage {
+                        speaker: event.speaker.clone(),
+                        name: speaker_name(&event.speaker),
+                        content: content.to_string(),
+                        ts: event.ts,
+                    })
+                })
+                .collect::<Vec<_>>();
+            ServerFrame::State {
+                room_id: session.room_id().to_string(),
+                intensities,
+                theta: session.theta(),
+                flow: session.flow().map(|f| f.convergence).unwrap_or(0.0),
+                mu_scale: session.mu_scale(),
+                liveliness: session.liveliness(),
+                pending: session.pending_speaker(),
+                participants,
+                messages,
+                topics: session.topics().to_vec(),
+                paused,
+                tick_ms,
+            }
+        };
 
-    let mut last_state = Instant::now();
-    let mut last_tick = Instant::now();
-    let mut last_save = Instant::now();
     let mut dirty = false;
-    let mut paused = false;
+    let mut manual_paused = false;
+    let mut backend_paused = false;
+    let mut client_count = 0usize;
+    let mut generation_failures = 0usize;
     let mut tick_period = Duration::from_millis(DEFAULT_TICK_MS);
+    let mut last_state = Instant::now();
+    let mut last_tick = Instant::now()
+        .checked_sub(tick_period)
+        .unwrap_or_else(Instant::now);
+    let mut last_save = Instant::now();
+
+    if !startup.topics().is_empty() {
+        session.set_topics(startup.topics().to_vec());
+        emit(
+            &frame_tx,
+            &ServerFrame::System {
+                text: format!("토론 주제: {}", startup.topics().join(", ")),
+            },
+        );
+        if session.state().history.is_empty() {
+            if let Some(text) = startup.opening_prompt() {
+                emit(&frame_tx, &ServerFrame::System { text });
+            }
+        }
+        dirty = true;
+    }
+
     // 초기 state 1회
-    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
+    emit(
+        &frame_tx,
+        &build_state(
+            &session,
+            &human_id,
+            effective_paused(manual_paused, client_count, backend_paused),
+            tick_period.as_millis() as u64,
+        ),
+    );
 
     loop {
         // 1. 명령 처리(즉시 반응)
         while let Ok(cmd) = cmd_rx.try_recv() {
+            let paused = effective_paused(manual_paused, client_count, backend_paused);
             match cmd {
                 EngineCmd::Human(text) => {
                     session.submit_human(text.clone());
-                    let ts = session
-                        .state()
-                        .history
-                        .last()
-                        .map(|e| e.ts)
-                        .unwrap_or(0.0);
+                    let ts = session.state().history.last().map(|e| e.ts).unwrap_or(0.0);
                     emit(
                         &frame_tx,
                         &ServerFrame::Utterance {
@@ -218,7 +438,10 @@ fn run_engine(
                             ts,
                         },
                     );
-                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64)); // λ 스파이크 즉시 반영
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    ); // λ 스파이크 즉시 반영
                     dirty = true;
                 }
                 EngineCmd::Topic(topics) => {
@@ -231,16 +454,82 @@ fn run_engine(
                             },
                         );
                     }
-                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    );
                     dirty = true;
                 }
+                EngineCmd::Reset(topics) => {
+                    let normalized = normalize_topics(topics);
+                    let room_id = session.room_id().to_string();
+                    session.reset_discussion(normalized.clone());
+                    if let Some(ref store) = store {
+                        if let Err(e) = store.delete_room(&room_id) {
+                            eprintln!("[tunaSalon] rooms.db 방 초기화 실패(비치명): {e}");
+                        }
+                    }
+                    emit(
+                        &frame_tx,
+                        &ServerFrame::System {
+                            text: "토론을 초기화했습니다".to_string(),
+                        },
+                    );
+                    if !normalized.is_empty() {
+                        emit(
+                            &frame_tx,
+                            &ServerFrame::System {
+                                text: format!("토론 주제: {}", normalized.join(", ")),
+                            },
+                        );
+                        let startup = WebStartup::debate(normalized);
+                        if let Some(text) = startup.opening_prompt() {
+                            emit(&frame_tx, &ServerFrame::System { text });
+                        }
+                    }
+                    generation_failures = 0;
+                    backend_paused = false;
+                    dirty = true;
+                    let paused = effective_paused(manual_paused, client_count, backend_paused);
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    );
+                }
                 EngineCmd::SetPaused(p) => {
-                    paused = p;
-                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64)); // 즉시 paused 상태 반영
+                    let was_paused = effective_paused(manual_paused, client_count, backend_paused);
+                    manual_paused = p;
+                    let paused = effective_paused(manual_paused, client_count, backend_paused);
+                    if paused && !was_paused {
+                        if session.cancel_pending_generation() {
+                            dirty = true;
+                        }
+                    }
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    ); // 즉시 paused 상태 반영
+                }
+                EngineCmd::SetClientCount(count) => {
+                    let was_paused = effective_paused(manual_paused, client_count, backend_paused);
+                    client_count = count;
+                    let paused = effective_paused(manual_paused, client_count, backend_paused);
+                    if paused && !was_paused {
+                        if session.cancel_pending_generation() {
+                            dirty = true;
+                        }
+                    }
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    );
                 }
                 EngineCmd::SetPace(ms) => {
                     tick_period = Duration::from_millis(ms.clamp(1500, 12000));
-                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64)); // 즉시 반영
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    ); // 즉시 반영
                 }
                 EngineCmd::Remove(id) => {
                     let name = session
@@ -256,10 +545,18 @@ fn run_engine(
                             text: format!("{name}님이 나갔습니다"),
                         },
                     );
-                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    );
                     dirty = true;
                 }
-                EngineCmd::Invite { blood, mbti, zodiac, role } => {
+                EngineCmd::Invite {
+                    blood,
+                    mbti,
+                    zodiac,
+                    role,
+                } => {
                     // 인원 제한: 최대 3명
                     if session.personas().len() >= 3 {
                         emit(
@@ -274,27 +571,36 @@ fn run_engine(
                     let parsed_blood = match Blood::from_str(&blood) {
                         Ok(v) => v,
                         Err(_) => {
-                            emit(&frame_tx, &ServerFrame::System {
-                                text: format!("초대 실패: 잘못된 혈액형 '{blood}'"),
-                            });
+                            emit(
+                                &frame_tx,
+                                &ServerFrame::System {
+                                    text: format!("초대 실패: 잘못된 혈액형 '{blood}'"),
+                                },
+                            );
                             continue;
                         }
                     };
                     let parsed_mbti = match Mbti::from_str(&mbti) {
                         Ok(v) => v,
                         Err(_) => {
-                            emit(&frame_tx, &ServerFrame::System {
-                                text: format!("초대 실패: 잘못된 MBTI '{mbti}'"),
-                            });
+                            emit(
+                                &frame_tx,
+                                &ServerFrame::System {
+                                    text: format!("초대 실패: 잘못된 MBTI '{mbti}'"),
+                                },
+                            );
                             continue;
                         }
                     };
                     let parsed_zodiac = match Zodiac::from_str(&zodiac) {
                         Ok(v) => v,
                         Err(_) => {
-                            emit(&frame_tx, &ServerFrame::System {
-                                text: format!("초대 실패: 잘못된 별자리 '{zodiac}'"),
-                            });
+                            emit(
+                                &frame_tx,
+                                &ServerFrame::System {
+                                    text: format!("초대 실패: 잘못된 별자리 '{zodiac}'"),
+                                },
+                            );
                             continue;
                         }
                     };
@@ -302,23 +608,33 @@ fn run_engine(
                         Some(ref r) => match Role::from_str(r) {
                             Ok(v) => v,
                             Err(_) => {
-                                emit(&frame_tx, &ServerFrame::System {
-                                    text: format!("초대 실패: 잘못된 역할 '{r}'"),
-                                });
+                                emit(
+                                    &frame_tx,
+                                    &ServerFrame::System {
+                                        text: format!("초대 실패: 잘못된 역할 '{r}'"),
+                                    },
+                                );
                                 continue;
                             }
                         },
                         None => Role::all()[0],
                     };
                     // 조립
-                    let assembled = assemble(parsed_role, parsed_mbti, parsed_blood, parsed_zodiac, "");
+                    let assembled =
+                        assemble(parsed_role, parsed_mbti, parsed_blood, parsed_zodiac, "");
                     // id 충돌 확인
                     if session.persona_meta().contains_key(&assembled.persona.id)
-                        || session.personas().iter().any(|p| p.id == assembled.persona.id)
+                        || session
+                            .personas()
+                            .iter()
+                            .any(|p| p.id == assembled.persona.id)
                     {
-                        emit(&frame_tx, &ServerFrame::System {
-                            text: "이미 같은 조합의 참가자가 있습니다".to_string(),
-                        });
+                        emit(
+                            &frame_tx,
+                            &ServerFrame::System {
+                                text: "이미 같은 조합의 참가자가 있습니다".to_string(),
+                            },
+                        );
                         continue;
                     }
                     // 자동 backend 배분: cloud 1명 우선, 나머지 friend
@@ -353,8 +669,22 @@ fn run_engine(
                             text: format!("{name}님이 입장했습니다"),
                         },
                     );
-                    emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    );
                     dirty = true;
+                }
+                EngineCmd::DeleteAndShutdown => {
+                    let room_id = session.room_id().to_string();
+                    session.reset_discussion(vec![]);
+                    if let Some(ref store) = store {
+                        if let Err(e) = store.delete_room(&room_id) {
+                            eprintln!("[tunaSalon] rooms.db 방 삭제 실패(비치명): {e}");
+                        }
+                    }
+                    session.shutdown();
+                    return;
                 }
                 EngineCmd::Shutdown => {
                     save_room(&store, &session);
@@ -365,6 +695,7 @@ fn run_engine(
         }
 
         // 2. tick (주기) - paused면 skip
+        let paused = effective_paused(manual_paused, client_count, backend_paused);
         if !paused && last_tick.elapsed() >= tick_period {
             session.tick();
             last_tick = Instant::now();
@@ -373,6 +704,7 @@ fn run_engine(
         // 3. 완성 발화 drain -> utterance frame
         while let Some(ev) = session.poll_generation() {
             if let Some(content) = ev.content {
+                generation_failures = 0;
                 let name = session
                     .personas()
                     .iter()
@@ -389,12 +721,40 @@ fn run_engine(
                     },
                 );
                 dirty = true;
+            } else {
+                generation_failures += 1;
+                let name = session
+                    .personas()
+                    .iter()
+                    .find(|p| p.id == ev.speaker)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| ev.speaker.clone());
+                let text = if generation_failures >= 3 {
+                    backend_paused = true;
+                    format!(
+                        "{name} 발화 생성 실패: LLM 백엔드가 응답하지 않아 방을 일시정지했습니다. Ollama(localhost:11434) 또는 friend 서버 상태를 확인하세요."
+                    )
+                } else {
+                    format!(
+                        "{name} 발화 생성 실패: LLM 백엔드가 응답하지 않았습니다. 다음 발화를 다시 시도합니다."
+                    )
+                };
+                emit(&frame_tx, &ServerFrame::System { text });
+                let paused = effective_paused(manual_paused, client_count, backend_paused);
+                emit(
+                    &frame_tx,
+                    &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                );
             }
         }
 
         // 4. state frame (주기)
         if last_state.elapsed() >= STATE_PERIOD {
-            emit(&frame_tx, &build_state(&session, &human_id, paused, tick_period.as_millis() as u64));
+            let paused = effective_paused(manual_paused, client_count, backend_paused);
+            emit(
+                &frame_tx,
+                &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+            );
             last_state = Instant::now();
         }
 
@@ -409,8 +769,313 @@ fn run_engine(
     }
 }
 
-// axum 라우터 + serve. main에서 호출(blocking, 내부에서 tokio runtime).
-pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, store: Option<RoomStore>) {
+#[cfg(feature = "redis-bus")]
+fn spawn_redis_command_reader(
+    bus: RedisBus,
+    room_id: String,
+    cmd_tx: mpsc::UnboundedSender<EngineCmd>,
+) {
+    tokio::spawn(async move {
+        let mut last_id = match bus.command_cursor(&room_id).await {
+            Ok(Some(id)) => id,
+            Ok(None) => "$".to_string(),
+            Err(e) => {
+                eprintln!("[tunaSalon] Redis command cursor read failed; starting at '$': {e}");
+                "$".to_string()
+            }
+        };
+        eprintln!("[tunaSalon] Redis command reader started at id '{last_id}'");
+        loop {
+            match bus.read_commands(&room_id, &last_id, 5_000, 100).await {
+                Ok(messages) => {
+                    for message in messages {
+                        last_id = message.id;
+                        match serde_json::from_str::<ClientFrame>(&message.payload) {
+                            Ok(frame) => {
+                                if cmd_tx.send(client_frame_to_cmd(frame)).is_err() {
+                                    return;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[tunaSalon] Redis command decode failed: {e}");
+                            }
+                        }
+                        if let Err(e) = bus.mark_command_consumed(&room_id, &last_id).await {
+                            eprintln!("[tunaSalon] Redis command cursor write failed: {e}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[tunaSalon] Redis command read failed: {e}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    });
+}
+
+#[cfg(feature = "redis-bus")]
+fn spawn_redis_event_subscriber(
+    bus: RedisBus,
+    room_id: String,
+    frame_tx: broadcast::Sender<String>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = bus.subscribe_events(&room_id, frame_tx).await {
+            eprintln!("[tunaSalon] Redis event subscribe stopped: {e}");
+        }
+    });
+}
+
+#[cfg(feature = "redis-bus")]
+fn spawn_owner_refresher(
+    bus: RedisBus,
+    room_id: String,
+    worker_id: String,
+    cmd_tx: mpsc::UnboundedSender<EngineCmd>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(OWNER_REFRESH_SECS)).await;
+            match bus
+                .refresh_owner(&room_id, &worker_id, OWNER_TTL_SECS)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    eprintln!("[tunaSalon] Redis owner lease lost for room '{room_id}'");
+                    let _ = cmd_tx.send(EngineCmd::Shutdown);
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("[tunaSalon] Redis owner refresh failed: {e}");
+                }
+            }
+        }
+    });
+}
+
+pub type WebSessionFactory =
+    Arc<dyn Fn(String) -> (LiveSession, Option<RoomStore>) + Send + Sync + 'static>;
+
+struct RoomRuntime {
+    room_id: String,
+    frame_tx: broadcast::Sender<String>,
+    cmd_tx: mpsc::UnboundedSender<EngineCmd>,
+    client_count: Arc<AtomicUsize>,
+    #[cfg(feature = "redis-bus")]
+    redis_bus: Option<RedisBusHandle>,
+}
+
+#[derive(Clone)]
+struct MultiAppState {
+    default_room_id: String,
+    default_startup: WebStartup,
+    rooms: Arc<Mutex<HashMap<String, Arc<RoomRuntime>>>>,
+    factory: WebSessionFactory,
+    #[cfg(feature = "redis-bus")]
+    redis_bus: Option<RedisBus>,
+}
+
+async fn spawn_room_runtime(
+    room_id: String,
+    startup: WebStartup,
+    factory: WebSessionFactory,
+    #[cfg(feature = "redis-bus")] redis_bus: Option<RedisBus>,
+) -> Arc<RoomRuntime> {
+    let (session, store) = factory(room_id.clone());
+    let human_id = "나".to_string();
+    let (frame_tx, _) = broadcast::channel::<String>(256);
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<EngineCmd>();
+
+    #[cfg(feature = "redis-bus")]
+    let mut room_redis_bus = redis_bus;
+    #[cfg(feature = "redis-bus")]
+    let owner_worker_id = if let Some(ref bus) = room_redis_bus {
+        let worker_id = make_worker_id(&room_id);
+        match bus
+            .try_acquire_owner(&room_id, &worker_id, OWNER_TTL_SECS)
+            .await
+        {
+            Ok(true) => {
+                eprintln!(
+                    "[tunaSalon] Redis room owner acquired: room='{room_id}' worker='{worker_id}'"
+                );
+                Some(worker_id)
+            }
+            Ok(false) => {
+                eprintln!(
+                    "[tunaSalon] Redis room owner exists; running as gateway for room '{room_id}'"
+                );
+                None
+            }
+            Err(e) => {
+                eprintln!(
+                    "[tunaSalon] Redis owner acquisition failed; room '{room_id}' local-only: {e}"
+                );
+                room_redis_bus = None;
+                None
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(feature = "redis-bus")]
+    let redis_writer = room_redis_bus.clone().map(RedisBusHandle::spawn);
+    #[cfg(feature = "redis-bus")]
+    let start_engine = room_redis_bus.is_none() || owner_worker_id.is_some();
+    #[cfg(not(feature = "redis-bus"))]
+    let start_engine = true;
+
+    #[cfg(feature = "redis-bus")]
+    if let Some(ref bus) = room_redis_bus {
+        if let Some(ref worker_id) = owner_worker_id {
+            spawn_redis_command_reader(bus.clone(), room_id.clone(), cmd_tx.clone());
+            spawn_owner_refresher(
+                bus.clone(),
+                room_id.clone(),
+                worker_id.clone(),
+                cmd_tx.clone(),
+            );
+        } else {
+            spawn_redis_event_subscriber(bus.clone(), room_id.clone(), frame_tx.clone());
+        }
+    }
+
+    if start_engine {
+        let frame_tx_engine = frame_tx.clone();
+        #[cfg(feature = "redis-bus")]
+        let redis_bus_engine = redis_writer.clone();
+        std::thread::spawn(move || {
+            run_engine(
+                session,
+                human_id,
+                startup,
+                frame_tx_engine,
+                cmd_rx,
+                store,
+                #[cfg(feature = "redis-bus")]
+                redis_bus_engine,
+            );
+        });
+    } else {
+        drop(cmd_rx);
+    }
+
+    Arc::new(RoomRuntime {
+        room_id,
+        frame_tx,
+        cmd_tx,
+        client_count: Arc::new(AtomicUsize::new(0)),
+        #[cfg(feature = "redis-bus")]
+        redis_bus: redis_writer,
+    })
+}
+
+async fn get_room_runtime(
+    st: &MultiAppState,
+    room_id: String,
+    startup: WebStartup,
+) -> Arc<RoomRuntime> {
+    let mut rooms = st.rooms.lock().await;
+    if let Some(runtime) = rooms.get(&room_id) {
+        return runtime.clone();
+    }
+    let runtime = spawn_room_runtime(
+        room_id.clone(),
+        startup,
+        st.factory.clone(),
+        #[cfg(feature = "redis-bus")]
+        st.redis_bus.clone(),
+    )
+    .await;
+    rooms.insert(room_id, runtime.clone());
+    runtime
+}
+
+#[derive(Deserialize, Default)]
+struct WsParams {
+    room_id: Option<String>,
+    topic: Option<String>,
+}
+
+async fn handle_runtime_socket(socket: axum::extract::ws::WebSocket, runtime: Arc<RoomRuntime>) {
+    use axum::extract::ws::Message;
+    use futures_util::{SinkExt, StreamExt};
+
+    let (mut sender, mut receiver) = socket.split();
+    let mut frame_rx = runtime.frame_tx.subscribe();
+
+    let connected = runtime.client_count.fetch_add(1, Ordering::SeqCst) + 1;
+    #[cfg(feature = "redis-bus")]
+    {
+        if let Some(ref bus) = runtime.redis_bus {
+            let presence = format!(r#"{{"type":"presence","clients":{connected}}}"#);
+            bus.submit_command_json(&runtime.room_id, &presence);
+        } else {
+            let _ = runtime.cmd_tx.send(EngineCmd::SetClientCount(connected));
+        }
+    }
+    #[cfg(not(feature = "redis-bus"))]
+    {
+        let _ = runtime.cmd_tx.send(EngineCmd::SetClientCount(connected));
+    }
+
+    let send_task = tokio::spawn(async move {
+        loop {
+            match frame_rx.recv().await {
+                Ok(json) => {
+                    if sender.send(Message::Text(json.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    });
+
+    let cmd_tx = runtime.cmd_tx.clone();
+    while let Some(Ok(msg)) = receiver.next().await {
+        if let Message::Text(txt) = msg {
+            if let Ok(frame) = serde_json::from_str::<ClientFrame>(&txt) {
+                #[cfg(feature = "redis-bus")]
+                if let Some(ref bus) = runtime.redis_bus {
+                    bus.submit_command_json(&runtime.room_id, &txt);
+                    continue;
+                }
+                let _ = cmd_tx.send(client_frame_to_cmd(frame));
+            }
+        }
+    }
+    send_task.abort();
+
+    let disconnected = runtime
+        .client_count
+        .fetch_sub(1, Ordering::SeqCst)
+        .saturating_sub(1);
+    #[cfg(feature = "redis-bus")]
+    {
+        if let Some(ref bus) = runtime.redis_bus {
+            let presence = format!(r#"{{"type":"presence","clients":{disconnected}}}"#);
+            bus.submit_command_json(&runtime.room_id, &presence);
+        } else {
+            let _ = runtime.cmd_tx.send(EngineCmd::SetClientCount(disconnected));
+        }
+    }
+    #[cfg(not(feature = "redis-bus"))]
+    {
+        let _ = runtime.cmd_tx.send(EngineCmd::SetClientCount(disconnected));
+    }
+}
+
+pub fn serve_multi(
+    host: &str,
+    port: u16,
+    default_room_id: String,
+    default_startup: WebStartup,
+    factory: WebSessionFactory,
+) {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -419,14 +1084,184 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, stor
         }
     };
     rt.block_on(async move {
+        use axum::extract::ws::WebSocketUpgrade;
+        use axum::extract::{Path, Query, State as AxumState};
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        use axum::{
+            routing::{delete, get},
+            Router,
+        };
+        use tower_http::services::{ServeDir, ServeFile};
+
+        #[cfg(feature = "redis-bus")]
+        let redis_bus = RedisBus::open_from_env();
+
+        let app_state = MultiAppState {
+            default_room_id: normalize_room_id(&default_room_id, "salon"),
+            default_startup,
+            rooms: Arc::new(Mutex::new(HashMap::new())),
+            factory,
+            #[cfg(feature = "redis-bus")]
+            redis_bus,
+        };
+
+        async fn ws_handler(
+            ws: WebSocketUpgrade,
+            Query(params): Query<WsParams>,
+            AxumState(st): AxumState<MultiAppState>,
+        ) -> impl IntoResponse {
+            let room_id = normalize_room_id(
+                params.room_id.as_deref().unwrap_or(&st.default_room_id),
+                &st.default_room_id,
+            );
+            let topics = normalize_topics(params.topic.into_iter().collect());
+            let startup = if topics.is_empty() && room_id == st.default_room_id {
+                st.default_startup.clone()
+            } else {
+                WebStartup::debate(topics)
+            };
+            let runtime = get_room_runtime(&st, room_id, startup).await;
+            ws.on_upgrade(move |socket| handle_runtime_socket(socket, runtime))
+        }
+
+        async fn delete_room_handler(
+            Path(raw_room_id): Path<String>,
+            AxumState(st): AxumState<MultiAppState>,
+        ) -> impl IntoResponse {
+            let room_id = normalize_room_id(&raw_room_id, &st.default_room_id);
+            if let Some(runtime) = st.rooms.lock().await.remove(&room_id) {
+                let _ = runtime.cmd_tx.send(EngineCmd::DeleteAndShutdown);
+            }
+            delete_room_storage(&room_id);
+            StatusCode::NO_CONTENT
+        }
+
+        let dist_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist");
+        let index_file = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist/index.html");
+        if !std::path::Path::new(index_file).exists() {
+            eprintln!(
+                "[tunaSalon] web: 정적 산출물이 없습니다 ({index_file}).\n\
+                 먼저 `cd web && pnpm install && pnpm build` 로 web/dist 를 생성하세요."
+            );
+        } else {
+            eprintln!("[tunaSalon] web: 정적 서빙 {dist_dir}");
+        }
+
+        let serve_dir = ServeDir::new(dist_dir)
+            .append_index_html_on_directories(true)
+            .not_found_service(ServeFile::new(index_file));
+        let app = Router::new()
+            .route("/ws", get(ws_handler))
+            .route("/api/rooms/{room_id}", delete(delete_room_handler))
+            .fallback_service(serve_dir)
+            .with_state(app_state);
+
+        let addr = format!("{host}:{port}");
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[tunaSalon] web: {addr} 바인드 실패: {e}");
+                return;
+            }
+        };
+        eprintln!("[tunaSalon] web 서버: http://{addr} (multi-room, LAN 접속 가능, /ws WebSocket)");
+        if let Err(e) = axum::serve(listener, app).await {
+            eprintln!("[tunaSalon] web serve 오류: {e}");
+        }
+    });
+}
+
+// axum 라우터 + serve. main에서 호출(blocking, 내부에서 tokio runtime).
+pub fn serve(
+    host: &str,
+    port: u16,
+    session: LiveSession,
+    human_id: String,
+    startup: WebStartup,
+    store: Option<RoomStore>,
+) {
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("[tunaSalon] web: tokio runtime 생성 실패: {e}");
+            return;
+        }
+    };
+    rt.block_on(async move {
+        #[cfg(feature = "redis-bus")]
+        let room_id = session.room_id().to_string();
         let (frame_tx, _) = broadcast::channel::<String>(256);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<EngineCmd>();
+        #[cfg(feature = "redis-bus")]
+        let mut redis_bus = RedisBus::open_from_env();
+        #[cfg(feature = "redis-bus")]
+        let owner_worker_id = if let Some(ref bus) = redis_bus {
+            let worker_id = make_worker_id(&room_id);
+            match bus.try_acquire_owner(&room_id, &worker_id, OWNER_TTL_SECS).await {
+                Ok(true) => {
+                    eprintln!(
+                        "[tunaSalon] Redis room owner acquired: room='{room_id}' worker='{worker_id}'"
+                    );
+                    Some(worker_id)
+                }
+                Ok(false) => {
+                    eprintln!("[tunaSalon] Redis room owner exists; running as gateway for room '{room_id}'");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[tunaSalon] Redis owner acquisition failed; running local-only owner: {e}"
+                    );
+                    redis_bus = None;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(feature = "redis-bus")]
+        let redis_writer = redis_bus.clone().map(RedisBusHandle::spawn);
+        #[cfg(feature = "redis-bus")]
+        let start_engine = redis_bus.is_none() || owner_worker_id.is_some();
+        #[cfg(not(feature = "redis-bus"))]
+        let start_engine = true;
 
         // 엔진 전용 스레드(blocking)
-        let frame_tx_engine = frame_tx.clone();
-        let engine_handle = std::thread::spawn(move || {
-            run_engine(session, human_id, frame_tx_engine, cmd_rx, store);
-        });
+        #[cfg(feature = "redis-bus")]
+        if let Some(ref bus) = redis_bus {
+            if let Some(ref worker_id) = owner_worker_id {
+                spawn_redis_command_reader(bus.clone(), room_id.clone(), cmd_tx.clone());
+                spawn_owner_refresher(
+                    bus.clone(),
+                    room_id.clone(),
+                    worker_id.clone(),
+                    cmd_tx.clone(),
+                );
+            } else {
+                spawn_redis_event_subscriber(bus.clone(), room_id.clone(), frame_tx.clone());
+            }
+        }
+        let engine_handle = if start_engine {
+            let frame_tx_engine = frame_tx.clone();
+            #[cfg(feature = "redis-bus")]
+            let redis_bus_engine = redis_writer.clone();
+            Some(std::thread::spawn(move || {
+                run_engine(
+                    session,
+                    human_id,
+                    startup,
+                    frame_tx_engine,
+                    cmd_rx,
+                    store,
+                    #[cfg(feature = "redis-bus")]
+                    redis_bus_engine,
+                );
+            }))
+        } else {
+            drop(cmd_rx);
+            None
+        };
 
         use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
         use axum::extract::State as AxumState;
@@ -436,8 +1271,13 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, stor
 
         #[derive(Clone)]
         struct AppState {
+            #[cfg(feature = "redis-bus")]
+            room_id: String,
             frame_tx: broadcast::Sender<String>,
             cmd_tx: mpsc::UnboundedSender<EngineCmd>,
+            client_count: Arc<AtomicUsize>,
+            #[cfg(feature = "redis-bus")]
+            redis_bus: Option<RedisBusHandle>,
         }
 
         async fn ws_handler(
@@ -451,6 +1291,21 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, stor
             use futures_util::{SinkExt, StreamExt};
             let (mut sender, mut receiver) = socket.split();
             let mut frame_rx = st.frame_tx.subscribe();
+
+            let connected = st.client_count.fetch_add(1, Ordering::SeqCst) + 1;
+            #[cfg(feature = "redis-bus")]
+            {
+                if let Some(ref bus) = st.redis_bus {
+                    let presence = format!(r#"{{"type":"presence","clients":{connected}}}"#);
+                    bus.submit_command_json(&st.room_id, &presence);
+                } else {
+                    let _ = st.cmd_tx.send(EngineCmd::SetClientCount(connected));
+                }
+            }
+            #[cfg(not(feature = "redis-bus"))]
+            {
+                let _ = st.cmd_tx.send(EngineCmd::SetClientCount(connected));
+            }
 
             // 서버->클라: broadcast -> ws
             let send_task = tokio::spawn(async move {
@@ -476,26 +1331,44 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, stor
             while let Some(Ok(msg)) = receiver.next().await {
                 if let Message::Text(txt) = msg {
                     if let Ok(frame) = serde_json::from_str::<ClientFrame>(&txt) {
-                        let cmd = match frame {
-                            ClientFrame::Message { text } => EngineCmd::Human(text),
-                            ClientFrame::Topic { topics } => EngineCmd::Topic(topics),
-                            ClientFrame::Pause { paused } => EngineCmd::SetPaused(paused),
-                            ClientFrame::Pace { interval_ms } => EngineCmd::SetPace(interval_ms),
-                            ClientFrame::Invite { blood, mbti, zodiac, role } => {
-                                EngineCmd::Invite { blood, mbti, zodiac, role }
-                            }
-                            ClientFrame::Remove { id } => EngineCmd::Remove(id),
-                        };
-                        let _ = cmd_tx.send(cmd);
+                        #[cfg(feature = "redis-bus")]
+                        if let Some(ref bus) = st.redis_bus {
+                            bus.submit_command_json(&st.room_id, &txt);
+                            continue;
+                        }
+                        let _ = cmd_tx.send(client_frame_to_cmd(frame));
                     }
                 }
             }
             send_task.abort();
+
+            let disconnected = st
+                .client_count
+                .fetch_sub(1, Ordering::SeqCst)
+                .saturating_sub(1);
+            #[cfg(feature = "redis-bus")]
+            {
+                if let Some(ref bus) = st.redis_bus {
+                    let presence = format!(r#"{{"type":"presence","clients":{disconnected}}}"#);
+                    bus.submit_command_json(&st.room_id, &presence);
+                } else {
+                    let _ = st.cmd_tx.send(EngineCmd::SetClientCount(disconnected));
+                }
+            }
+            #[cfg(not(feature = "redis-bus"))]
+            {
+                let _ = st.cmd_tx.send(EngineCmd::SetClientCount(disconnected));
+            }
         }
 
         let app_state = AppState {
+            #[cfg(feature = "redis-bus")]
+            room_id: room_id.clone(),
             frame_tx: frame_tx.clone(),
             cmd_tx: cmd_tx.clone(),
+            client_count: Arc::new(AtomicUsize::new(0)),
+            #[cfg(feature = "redis-bus")]
+            redis_bus: redis_writer,
         };
 
         // 정적 산출물 경로: cwd 의존을 피해 컴파일 시점의 repo 경로(CARGO_MANIFEST_DIR) 기준 절대경로.
@@ -531,7 +1404,9 @@ pub fn serve(host: &str, port: u16, session: LiveSession, human_id: String, stor
         if let Err(e) = axum::serve(listener, app).await {
             eprintln!("[tunaSalon] web serve 오류: {e}");
         }
-        let _ = engine_handle.join();
+        if let Some(engine_handle) = engine_handle {
+            let _ = engine_handle.join();
+        }
     });
 }
 
@@ -564,6 +1439,7 @@ mod tests {
         ];
 
         let frame = ServerFrame::State {
+            room_id: "room1".to_string(),
             intensities,
             theta: 0.60,
             flow: 0.08,
@@ -571,6 +1447,7 @@ mod tests {
             liveliness: 0.4,
             pending: None,
             participants,
+            messages: vec![],
             topics: vec!["부처님 오신날".to_string()],
             paused: false,
             tick_ms: 4000,
@@ -580,6 +1457,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
 
         assert_eq!(v["type"], "state");
+        assert_eq!(v["room_id"], "room1", "room_id 키 필요");
         assert!(v["intensities"].is_object(), "intensities 키 필요");
         assert!(v["theta"].is_number(), "theta 키 필요");
         assert!(v["flow"].is_number(), "flow 키 필요");
@@ -600,6 +1478,7 @@ mod tests {
     #[test]
     fn state_frame_pending_some_serializes_as_string() {
         let frame = ServerFrame::State {
+            room_id: "room1".to_string(),
             intensities: BTreeMap::new(),
             theta: 0.6,
             flow: 0.0,
@@ -607,6 +1486,7 @@ mod tests {
             liveliness: 0.0,
             pending: Some("friend".to_string()),
             participants: vec![],
+            messages: vec![],
             topics: vec![],
             paused: false,
             tick_ms: 4000,
@@ -620,6 +1500,7 @@ mod tests {
     #[test]
     fn state_frame_paused_true_serializes() {
         let frame = ServerFrame::State {
+            room_id: "room1".to_string(),
             intensities: BTreeMap::new(),
             theta: 0.6,
             flow: 0.0,
@@ -627,6 +1508,7 @@ mod tests {
             liveliness: 0.0,
             pending: None,
             participants: vec![],
+            messages: vec![],
             topics: vec![],
             paused: true,
             tick_ms: 4000,
@@ -703,7 +1585,12 @@ mod tests {
         let json = r#"{"type":"invite","blood":"O","mbti":"ENTJ","zodiac":"can"}"#;
         let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
         match frame {
-            ClientFrame::Invite { blood, mbti, zodiac, role } => {
+            ClientFrame::Invite {
+                blood,
+                mbti,
+                zodiac,
+                role,
+            } => {
                 assert_eq!(blood, "O");
                 assert_eq!(mbti, "ENTJ");
                 assert_eq!(zodiac, "can");
@@ -718,7 +1605,12 @@ mod tests {
         let json = r#"{"type":"invite","blood":"A","mbti":"INFP","zodiac":"pis","role":"poet"}"#;
         let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
         match frame {
-            ClientFrame::Invite { blood, mbti, zodiac, role } => {
+            ClientFrame::Invite {
+                blood,
+                mbti,
+                zodiac,
+                role,
+            } => {
                 assert_eq!(blood, "A");
                 assert_eq!(mbti, "INFP");
                 assert_eq!(zodiac, "pis");
@@ -751,8 +1643,49 @@ mod tests {
     }
 
     #[test]
+    fn client_presence_frame_deserializes() {
+        let json = r#"{"type":"presence","clients":2}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Presence { clients } => assert_eq!(clients, 2),
+            _ => panic!("ClientFrame::Presence 이어야 함"),
+        }
+    }
+
+    #[test]
+    fn client_reset_frame_deserializes() {
+        let json = r#"{"type":"reset","topics":["AI 규제와 오픈소스"]}"#;
+        let frame: ClientFrame = serde_json::from_str(json).expect("역직렬화 실패");
+        match frame {
+            ClientFrame::Reset { topics } => assert_eq!(topics, vec!["AI 규제와 오픈소스"]),
+            _ => panic!("ClientFrame::Reset 이어야 함"),
+        }
+    }
+
+    #[test]
+    fn effective_paused_tracks_manual_presence_and_backend() {
+        assert!(
+            effective_paused(false, 0, false),
+            "클라이언트 0명이면 자동 정지"
+        );
+        assert!(
+            !effective_paused(false, 1, false),
+            "접속자가 있고 수동/백엔드 정지가 없으면 진행"
+        );
+        assert!(
+            effective_paused(true, 1, false),
+            "수동 정지는 접속자가 있어도 유지"
+        );
+        assert!(
+            effective_paused(false, 1, true),
+            "백엔드 장애 정지는 접속자가 있어도 유지"
+        );
+    }
+
+    #[test]
     fn state_frame_tick_ms_serializes() {
         let frame = ServerFrame::State {
+            room_id: "room1".to_string(),
             intensities: BTreeMap::new(),
             theta: 0.6,
             flow: 0.0,
@@ -760,6 +1693,7 @@ mod tests {
             liveliness: 0.0,
             pending: None,
             participants: vec![],
+            messages: vec![],
             topics: vec![],
             paused: false,
             tick_ms: 6000,
@@ -769,10 +1703,33 @@ mod tests {
         assert_eq!(v["tick_ms"], 6000u64, "tick_ms 직렬화 확인");
     }
 
+    #[test]
+    fn web_startup_debate_normalizes_topics() {
+        let startup = WebStartup::debate(vec![
+            "  AI regulation, open source ".to_string(),
+            "".to_string(),
+            "education".to_string(),
+        ]);
+
+        assert_eq!(
+            startup.topics(),
+            &[
+                "AI regulation".to_string(),
+                "open source".to_string(),
+                "education".to_string()
+            ]
+        );
+        assert!(startup
+            .opening_prompt()
+            .expect("opening prompt")
+            .contains("AI regulation"));
+    }
+
     /// State 프레임에 liveliness 키가 number로 직렬화된다.
     #[test]
     fn state_frame_liveliness_serializes_as_number() {
         let frame = ServerFrame::State {
+            room_id: "room1".to_string(),
             intensities: BTreeMap::new(),
             theta: 0.6,
             flow: 0.0,
@@ -780,13 +1737,17 @@ mod tests {
             liveliness: 0.75,
             pending: None,
             participants: vec![],
+            messages: vec![],
             topics: vec![],
             paused: false,
             tick_ms: 6000,
         };
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
-        assert!(v["liveliness"].is_number(), "liveliness 키가 number이어야 함");
+        assert!(
+            v["liveliness"].is_number(),
+            "liveliness 키가 number이어야 함"
+        );
         assert!((v["liveliness"].as_f64().unwrap() - 0.75).abs() < 1e-9);
     }
 

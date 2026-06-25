@@ -31,10 +31,7 @@ fn demo_personas() -> Vec<Persona> {
 }
 
 fn chosen_sequence(sink: &VecSink) -> Vec<Option<&str>> {
-    sink.records
-        .iter()
-        .map(|r| r.chosen.as_deref())
-        .collect()
+    sink.records.iter().map(|r| r.chosen.as_deref()).collect()
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -50,30 +47,48 @@ fn chemistry_modifiers_change_speaker_pattern() {
     let mut modifiers_a: BTreeMap<PersonaId, PersonaModifier> = BTreeMap::new();
     modifiers_a.insert(
         "friend".to_string(),
-        PersonaModifier { reactivity: 2.5, provocativeness: 0.5 },
+        PersonaModifier {
+            reactivity: 2.5,
+            provocativeness: 0.5,
+        },
     );
     modifiers_a.insert(
         "chaos".to_string(),
-        PersonaModifier { reactivity: 0.5, provocativeness: 2.5 },
+        PersonaModifier {
+            reactivity: 0.5,
+            provocativeness: 2.5,
+        },
     );
     modifiers_a.insert(
         "summarizer".to_string(),
-        PersonaModifier { reactivity: 1.0, provocativeness: 1.0 },
+        PersonaModifier {
+            reactivity: 1.0,
+            provocativeness: 1.0,
+        },
     );
 
     // Modifier set B: 반대 — chaos가 반응적이고 friend가 자극적
     let mut modifiers_b: BTreeMap<PersonaId, PersonaModifier> = BTreeMap::new();
     modifiers_b.insert(
         "friend".to_string(),
-        PersonaModifier { reactivity: 0.5, provocativeness: 2.5 },
+        PersonaModifier {
+            reactivity: 0.5,
+            provocativeness: 2.5,
+        },
     );
     modifiers_b.insert(
         "chaos".to_string(),
-        PersonaModifier { reactivity: 2.5, provocativeness: 0.5 },
+        PersonaModifier {
+            reactivity: 2.5,
+            provocativeness: 0.5,
+        },
     );
     modifiers_b.insert(
         "summarizer".to_string(),
-        PersonaModifier { reactivity: 1.0, provocativeness: 1.0 },
+        PersonaModifier {
+            reactivity: 1.0,
+            provocativeness: 1.0,
+        },
     );
 
     let config_a = preset.build_config_with_modifiers(&personas, &modifiers_a);
@@ -85,12 +100,30 @@ fn chemistry_modifiers_change_speaker_pattern() {
 
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config_a, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
-    driver::run(&config_b, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
+    driver::run(
+        &config_a,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_a,
+        &mut FakeBackend,
+    );
+    driver::run(
+        &config_b,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_b,
+        &mut FakeBackend,
+    );
 
     // α 행렬이 비대칭적이어야 한다 (전제 확인)
-    let ab = config_a.alpha.get(&"friend".to_string(), &"chaos".to_string());
-    let ba = config_a.alpha.get(&"chaos".to_string(), &"friend".to_string());
+    let ab = config_a
+        .alpha
+        .get(&"friend".to_string(), &"chaos".to_string());
+    let ba = config_a
+        .alpha
+        .get(&"chaos".to_string(), &"friend".to_string());
     assert!(
         (ab - ba).abs() > 1e-9,
         "config_a의 α가 대칭 — modifier가 실제로 비대칭을 만들어야 한다: α_friend→chaos={ab} α_chaos→friend={ba}"
@@ -283,7 +316,8 @@ fn fsm_forbids_consecutive_same_speaker() {
     // 인접 두 발화가 같은 화자면 실패
     for window in spoken.windows(2) {
         assert_ne!(
-            window[0], window[1],
+            window[0],
+            window[1],
             "forbid_self_repeat=true인데 '{w}'가 2연속 발화됨",
             w = window[0]
         );

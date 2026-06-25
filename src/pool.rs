@@ -51,8 +51,12 @@ impl Backend {
         system_prompt_override: Option<&str>,
     ) -> Option<String> {
         match self {
-            Backend::Ollama(b) => b.generate_shared(speaker, history, tick, recall, system_prompt_override),
-            Backend::OpenAI(b) => b.generate(speaker, history, tick, recall, system_prompt_override),
+            Backend::Ollama(b) => {
+                b.generate_shared(speaker, history, tick, recall, system_prompt_override)
+            }
+            Backend::OpenAI(b) => {
+                b.generate(speaker, history, tick, recall, system_prompt_override)
+            }
         }
     }
 }
@@ -379,7 +383,10 @@ pub fn run_with_caps<T: Send>(
     // 실패한 슬롯은 T의 기본값이 없으므로 컬렉션에서 제외한다.
     // 단 호출처(generate_batch)는 각 슬롯이 정확히 채워지길 기대한다.
     // 현재 구현에서 클로저 패닉은 없으므로 unwrap_or 경로는 도달하지 않는다.
-    slots.into_iter().map(|s| s.expect("run_with_caps: slot not filled — thread panicked")).collect()
+    slots
+        .into_iter()
+        .map(|s| s.expect("run_with_caps: slot not filled — thread panicked"))
+        .collect()
 }
 
 impl BackendPool {
@@ -965,7 +972,10 @@ mod tests {
         let results = run_with_caps(jobs);
         assert_eq!(results.len(), n);
         for (idx, val) in results.iter().enumerate() {
-            assert_eq!(*val, idx, "결과 순서가 입력과 달라야 함: idx={idx}, val={val}");
+            assert_eq!(
+                *val, idx,
+                "결과 순서가 입력과 달라야 함: idx={idx}, val={val}"
+            );
         }
     }
 
@@ -1025,14 +1035,8 @@ mod tests {
 
         let obs_a = peak_a.load(Ordering::SeqCst);
         let obs_b = peak_b.load(Ordering::SeqCst);
-        assert!(
-            obs_a <= cap_a,
-            "sem_a 피크({obs_a}) > cap_a({cap_a})"
-        );
-        assert!(
-            obs_b <= cap_b,
-            "sem_b 피크({obs_b}) > cap_b({cap_b})"
-        );
+        assert!(obs_a <= cap_a, "sem_a 피크({obs_a}) > cap_a({cap_a})");
+        assert!(obs_b <= cap_b, "sem_b 피크({obs_b}) > cap_b({cap_b})");
     }
 
     /// generate_batch: 라우팅 실패(백엔드 없음)이면 해당 슬롯은 None을 반환한다(panic 없음).
@@ -1140,7 +1144,12 @@ mod tests {
 
         let chain = pool.fallback_chain("any-speaker");
         // 체인은 유한: ["a", "b"] (a가 재방문되는 순간 중단)
-        assert_eq!(chain.len(), 2, "사이클 시 체인 길이=2이어야 함: {:?}", chain);
+        assert_eq!(
+            chain.len(),
+            2,
+            "사이클 시 체인 길이=2이어야 함: {:?}",
+            chain
+        );
         assert_eq!(chain[0], "a");
         assert_eq!(chain[1], "b");
     }
@@ -1166,7 +1175,10 @@ mod tests {
         assert_eq!(results.len(), 3, "결과 개수가 입력과 동일해야 함");
         for (i, (speaker, text)) in results.iter().enumerate() {
             assert_eq!(speaker, &jobs[i].0, "순서 불일치 idx={i}");
-            assert_eq!(*text, None, "오프라인 primary+fallback → None이어야 함(idx={i})");
+            assert_eq!(
+                *text, None,
+                "오프라인 primary+fallback → None이어야 함(idx={i})"
+            );
         }
     }
 

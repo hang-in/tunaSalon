@@ -14,9 +14,21 @@ use salon::sink::VecSink;
 
 fn personas() -> Vec<Persona> {
     vec![
-        Persona { id: "friend".to_string(), name: "Friendly Regular".to_string(), base_rate: 0.80 },
-        Persona { id: "chaos".to_string(), name: "Grounded Realist".to_string(), base_rate: 0.70 },
-        Persona { id: "summarizer".to_string(), name: "Quiet Summarizer".to_string(), base_rate: 0.25 },
+        Persona {
+            id: "friend".to_string(),
+            name: "Friendly Regular".to_string(),
+            base_rate: 0.80,
+        },
+        Persona {
+            id: "chaos".to_string(),
+            name: "Grounded Realist".to_string(),
+            base_rate: 0.70,
+        },
+        Persona {
+            id: "summarizer".to_string(),
+            name: "Quiet Summarizer".to_string(),
+            base_rate: 0.25,
+        },
     ]
 }
 

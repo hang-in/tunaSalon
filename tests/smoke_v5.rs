@@ -96,8 +96,22 @@ fn inv1_fake_backend_determinism_preserved_with_v05_code() {
     // (a) 동일 seed 두 번 실행 → records 바이트 동일
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
-    driver::run(&config, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_a,
+        &mut FakeBackend,
+    );
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_b,
+        &mut FakeBackend,
+    );
 
     assert_eq!(
         sink_a.records, sink_b.records,
@@ -134,8 +148,22 @@ fn inv1_determinism_multiple_seeds() {
     for seed in [7u64, 99u64] {
         let mut sink_x = VecSink::default();
         let mut sink_y = VecSink::default();
-        driver::run(&config, &personas, seed, ticks, &mut sink_x, &mut FakeBackend);
-        driver::run(&config, &personas, seed, ticks, &mut sink_y, &mut FakeBackend);
+        driver::run(
+            &config,
+            &personas,
+            seed,
+            ticks,
+            &mut sink_x,
+            &mut FakeBackend,
+        );
+        driver::run(
+            &config,
+            &personas,
+            seed,
+            ticks,
+            &mut sink_y,
+            &mut FakeBackend,
+        );
 
         assert_eq!(
             sink_x.records, sink_y.records,
@@ -170,10 +198,7 @@ fn human_channel_speak_appends_event_and_raises_excitations() {
     ];
 
     let mut state = EngineState {
-        intensities: BTreeMap::from([
-            ("aria".to_string(), 0.4),
-            ("bjorn".to_string(), 0.7),
-        ]),
+        intensities: BTreeMap::from([("aria".to_string(), 0.4), ("bjorn".to_string(), 0.7)]),
         excitations: BTreeMap::new(),
         history: Vec::new(),
         last_speaker: None,
@@ -183,16 +208,16 @@ fn human_channel_speak_appends_event_and_raises_excitations() {
     let channel = HumanChannel::new("you");
 
     // 발화 전 combined_intensities 기록
-    let before = HawkesEngine::combined_intensities(
-        &state.intensities,
-        &state.excitations,
-        &personas,
-    );
+    let before =
+        HawkesEngine::combined_intensities(&state.intensities, &state.excitations, &personas);
 
     channel.speak(&mut state, &personas, "hello smoke gate".to_string(), 3.0);
 
     // history 마지막 이벤트가 사람 Event여야 한다
-    let last = state.history.last().expect("speak 후 history가 비어있지 않아야 한다");
+    let last = state
+        .history
+        .last()
+        .expect("speak 후 history가 비어있지 않아야 한다");
     assert_eq!(last.speaker, "you", "speaker가 'you'여야 한다");
     assert_eq!(
         last.content,
@@ -212,11 +237,8 @@ fn human_channel_speak_appends_event_and_raises_excitations() {
     }
 
     // combined_intensities도 모두 상승해야 한다 (λ = base + excitation)
-    let after = HawkesEngine::combined_intensities(
-        &state.intensities,
-        &state.excitations,
-        &personas,
-    );
+    let after =
+        HawkesEngine::combined_intensities(&state.intensities, &state.excitations, &personas);
     for persona in &personas {
         let b = before.get(&persona.id).copied().unwrap_or(0.0);
         let a = after.get(&persona.id).copied().unwrap_or(0.0);
@@ -251,7 +273,11 @@ fn live_session_submit_human_appends_event_and_raises_excitations() {
 
     // history에 사람 Event가 push됐어야 한다
     let history = &session.state().history;
-    assert_eq!(history.len(), 1, "submit_human 후 history 길이 1이어야 한다");
+    assert_eq!(
+        history.len(),
+        1,
+        "submit_human 후 history 길이 1이어야 한다"
+    );
     let ev = &history[0];
     assert_eq!(ev.speaker, "you");
     assert_eq!(ev.content, Some("smoke gate v05".to_string()));
@@ -287,11 +313,17 @@ fn live_session_tick_dispatches_placeholder_and_blocks_second() {
 
     assert!(dispatched, "50틱 내에 Dispatched가 발생해야 한다");
     // pending이 설정됐어야 한다
-    assert!(session.is_pending(), "Dispatched 후 is_pending()이 true여야 한다");
+    assert!(
+        session.is_pending(),
+        "Dispatched 후 is_pending()이 true여야 한다"
+    );
 
     // history 마지막에 placeholder(content=None) Event가 있어야 한다
     let history = &session.state().history;
-    assert!(!history.is_empty(), "Dispatched 후 history가 비어있지 않아야 한다");
+    assert!(
+        !history.is_empty(),
+        "Dispatched 후 history가 비어있지 않아야 한다"
+    );
     let placeholder = history.last().unwrap();
     assert_eq!(
         placeholder.content, None,
@@ -336,7 +368,10 @@ fn live_session_poll_generation_clears_pending() {
 
     let ev = filled.expect("2s 내에 poll_generation이 Event를 반환해야 한다");
     // 오프라인 백엔드 → content는 None (generate_one → None)
-    assert_eq!(ev.content, None, "오프라인 백엔드 → content None이어야 한다");
+    assert_eq!(
+        ev.content, None,
+        "오프라인 백엔드 → content None이어야 한다"
+    );
     // pending이 해제됐어야 한다
     assert!(
         !session.is_pending(),
@@ -354,7 +389,7 @@ fn live_session_drop_does_not_hang_or_panic() {
             let _ = session.tick();
         }
     } // Drop here: shutdown() → job_tx drop → 워커 루프 종료 → join
-    // hang이나 panic이 없으면 통과
+      // hang이나 panic이 없으면 통과
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -397,10 +432,8 @@ fn render_chat_no_panic_and_shows_input_and_names() {
         },
     ];
 
-    let intensities: BTreeMap<String, f64> = BTreeMap::from([
-        ("aria".to_string(), 0.80),
-        ("bjorn".to_string(), 0.70),
-    ]);
+    let intensities: BTreeMap<String, f64> =
+        BTreeMap::from([("aria".to_string(), 0.80), ("bjorn".to_string(), 0.70)]);
 
     let names: BTreeMap<String, String> = BTreeMap::from([
         ("aria".to_string(), "Aria".to_string()),
@@ -445,10 +478,7 @@ fn render_chat_no_panic_and_shows_input_and_names() {
     );
 
     // '>' 프롬프트가 있어야 한다
-    assert!(
-        text.contains('>'),
-        "입력창에 '>' 프롬프트가 있어야 한다"
-    );
+    assert!(text.contains('>'), "입력창에 '>' 프롬프트가 있어야 한다");
 
     // 페르소나 이름이 사이드바 또는 채팅 pane에 나타나야 한다
     assert!(

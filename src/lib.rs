@@ -1,12 +1,11 @@
+#[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+pub mod ann;
 pub mod chat;
+pub mod debate;
 pub mod driver;
 #[cfg(feature = "friend-engine-semantic")]
 pub mod embed;
-#[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
-pub mod ann;
 pub mod flow;
-#[cfg(feature = "morphology")]
-mod tokenize_ko;
 pub mod gate;
 pub mod hawkes;
 pub mod headless;
@@ -18,17 +17,21 @@ pub mod meta;
 pub mod model;
 pub mod ollama;
 pub mod openai;
-pub mod pool;
 pub mod persona_kit;
+pub mod pool;
 pub mod preset;
+#[cfg(feature = "web")]
+pub mod roomstore;
 pub mod rrf;
 pub mod runtime;
 pub mod semaphore;
+#[cfg(feature = "redis-bus")]
+pub mod session_bus;
 pub mod sink;
 pub mod sweep;
+#[cfg(feature = "morphology")]
+mod tokenize_ko;
 pub mod tui;
 pub mod utterance;
-#[cfg(feature = "web")]
-pub mod roomstore;
 #[cfg(feature = "web")]
 pub mod web;

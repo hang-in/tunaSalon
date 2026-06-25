@@ -81,8 +81,22 @@ fn fake_backend_is_deterministic_and_keeps_mu_frequency() {
     // 동일 seed 두 번 → 동일 records
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
-    driver::run(&config, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_a,
+        &mut FakeBackend,
+    );
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_b,
+        &mut FakeBackend,
+    );
 
     assert_eq!(
         sink_a.records, sink_b.records,
@@ -118,7 +132,9 @@ fn stub_backend_fills_utterance_for_speaking_records() {
 
     // StubBackend: gate_passed인 record → utterance == Some(reply),
     //              gate_passed=false(침묵) → utterance == None
-    let mut stub = StubBackend { reply: reply.clone() };
+    let mut stub = StubBackend {
+        reply: reply.clone(),
+    };
     let mut sink_stub = VecSink::default();
     driver::run(&config, &personas, seed, ticks, &mut sink_stub, &mut stub);
 
@@ -132,8 +148,7 @@ fn stub_backend_fills_utterance_for_speaking_records() {
             );
         } else {
             assert_eq!(
-                record.utterance,
-                None,
+                record.utterance, None,
                 "tick {}: 침묵 record의 utterance가 None이 아님",
                 record.tick
             );
@@ -142,12 +157,18 @@ fn stub_backend_fills_utterance_for_speaking_records() {
 
     // FakeBackend: 모든 utterance == None
     let mut sink_fake = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_fake, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_fake,
+        &mut FakeBackend,
+    );
 
     for record in &sink_fake.records {
         assert_eq!(
-            record.utterance,
-            None,
+            record.utterance, None,
             "tick {}: FakeBackend인데 utterance가 None이 아님",
             record.tick
         );
@@ -173,8 +194,12 @@ fn stub_backend_is_deterministic() {
     let ticks = 200u64;
     let reply = "안녕하세요".to_string();
 
-    let mut stub_a = StubBackend { reply: reply.clone() };
-    let mut stub_b = StubBackend { reply: reply.clone() };
+    let mut stub_a = StubBackend {
+        reply: reply.clone(),
+    };
+    let mut stub_b = StubBackend {
+        reply: reply.clone(),
+    };
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
 
@@ -244,7 +269,14 @@ fn content_naming_a_persona_steers_selection() {
 
     // FakeBackend: content=None, interest 신호 비활성
     let mut sink_fake = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_fake, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_fake,
+        &mut FakeBackend,
+    );
 
     let friend_stub = speak_count_for(&sink_stub, "friend");
     let friend_fake = speak_count_for(&sink_fake, "friend");

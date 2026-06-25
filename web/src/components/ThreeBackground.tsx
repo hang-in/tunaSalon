@@ -15,6 +15,7 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
   const frameRef = useRef(0);
   // 저전력: animate 루프가 prop 클로저(빈 deps) 대신 ref로 현재 visible을 읽는다.
   const visibleRef = useRef(visible);
+  const intensitiesRef = useRef(intensities);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -101,7 +102,7 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
       // Map intensities to light brightness (엔진 persona id: friend/chaos/summarizer)
       const ids = ["friend", "chaos", "summarizer"];
       for (let i = 0; i < 3; i++) {
-        const val = intensities[ids[i]] || 0;
+        const val = intensitiesRef.current[ids[i]] || 0;
         lights[i].intensity = val * 2.5;
       }
 
@@ -141,6 +142,7 @@ export function ThreeBackground({ intensities, visible }: ThreeBackgroundProps) 
 
   // Update light intensities each frame from prop
   useEffect(() => {
+    intensitiesRef.current = intensities;
     const ids = ["friend", "chaos", "summarizer"];
     for (let i = 0; i < 3; i++) {
       const val = intensities[ids[i]] || 0;

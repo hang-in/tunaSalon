@@ -58,19 +58,18 @@ pub fn run(
             match gate::evaluate(&combined_intensities, config.theta) {
                 GateResult::Candidates(candidates) => {
                     // FSM 전이 제약: forbid_self_repeat ON이면 직전 화자를 후보에서 제거한다.
-                    let filtered: Vec<PersonaId> =
-                        if config.forbid_self_repeat {
-                            match &state.last_speaker {
-                                Some(last) => candidates
-                                    .iter()
-                                    .filter(|id| *id != last)
-                                    .cloned()
-                                    .collect(),
-                                None => candidates.clone(),
-                            }
-                        } else {
-                            candidates.clone()
-                        };
+                    let filtered: Vec<PersonaId> = if config.forbid_self_repeat {
+                        match &state.last_speaker {
+                            Some(last) => candidates
+                                .iter()
+                                .filter(|id| *id != last)
+                                .cloned()
+                                .collect(),
+                            None => candidates.clone(),
+                        }
+                    } else {
+                        candidates.clone()
+                    };
 
                     if filtered.is_empty() {
                         // 강제 화자가 연속 불가이고 다른 후보 없음 → 침묵으로 처리한다.
@@ -95,12 +94,8 @@ pub fn run(
 
                         // rrf::select + make_utterance의 rng 소비가 끝난 뒤 runtime을 호출한다.
                         // FakeBackend는 rng를 소비하지 않으므로 기존 결정성이 보존된다.
-                        let content = runtime.generate(
-                            &selection.chosen,
-                            &state.history,
-                            tick,
-                            &mut rng,
-                        );
+                        let content =
+                            runtime.generate(&selection.chosen, &state.history, tick, &mut rng);
                         utterance.event.content = content.clone();
 
                         state.history.push(utterance.event);
@@ -258,7 +253,7 @@ mod tests {
         }
         let config = EngineConfig {
             beta: 0.5,
-            theta: 0.2,   // 낮은 theta: 후보가 거의 항상 존재
+            theta: 0.2, // 낮은 theta: 후보가 거의 항상 존재
             k: 60.0,
             tick_interval: 1.0,
             alpha,
@@ -275,12 +270,17 @@ mod tests {
             .iter()
             .filter_map(|r| r.chosen.as_deref())
             .collect();
-        assert!(spoken.len() >= 10, "너무 많은 침묵: spoken={}", spoken.len());
+        assert!(
+            spoken.len() >= 10,
+            "너무 많은 침묵: spoken={}",
+            spoken.len()
+        );
 
         // 연속 두 발화가 같은 화자면 실패
         for window in spoken.windows(2) {
             assert_ne!(
-                window[0], window[1],
+                window[0],
+                window[1],
                 "forbid_self_repeat=true인데 {w} 가 2연속 발화됨",
                 w = window[0]
             );
@@ -299,8 +299,22 @@ mod tests {
         let mut sink_default = VecSink::default();
         let mut sink_explicit = VecSink::default();
 
-        run(&config_default, &personas, 42, 100, &mut sink_default, &mut FakeBackend);
-        run(&config_explicit, &personas, 42, 100, &mut sink_explicit, &mut FakeBackend);
+        run(
+            &config_default,
+            &personas,
+            42,
+            100,
+            &mut sink_default,
+            &mut FakeBackend,
+        );
+        run(
+            &config_explicit,
+            &personas,
+            42,
+            100,
+            &mut sink_explicit,
+            &mut FakeBackend,
+        );
 
         assert_eq!(sink_default.records, sink_explicit.records);
     }
@@ -359,10 +373,8 @@ mod tests {
             },
         ];
 
-        let content_utterances: Vec<&str> = events
-            .iter()
-            .filter_map(|e| e.content.as_deref())
-            .collect();
+        let content_utterances: Vec<&str> =
+            events.iter().filter_map(|e| e.content.as_deref()).collect();
         let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
         let result = flow::measure(&content_utterances[window_start..]);
 

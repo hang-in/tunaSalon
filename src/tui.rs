@@ -418,7 +418,10 @@ mod tests {
 
         let text = buffer_text(&terminal);
         // chaos 게이지에 자극 표시 +0.09가 나타나야 한다
-        assert!(text.contains("+0.09"), "excitation annotation '+0.09' should appear for chaos");
+        assert!(
+            text.contains("+0.09"),
+            "excitation annotation '+0.09' should appear for chaos"
+        );
         // friend는 excitations에 없으므로 friend의 lambda에 + 표시가 없어야 한다
         assert!(text.contains("0.81"), "friend lambda 0.81 should appear");
     }

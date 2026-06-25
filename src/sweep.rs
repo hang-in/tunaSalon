@@ -38,7 +38,12 @@ pub fn run(seed: u64, ticks: u64) {
 
     println!();
     println!("--- preset comparison (seed={seed} ticks={ticks}) ---");
-    for preset in [RoomPreset::Calm, RoomPreset::Pub, RoomPreset::Argument, RoomPreset::Chaos] {
+    for preset in [
+        RoomPreset::Calm,
+        RoomPreset::Pub,
+        RoomPreset::Argument,
+        RoomPreset::Chaos,
+    ] {
         let config = preset.build_config(&personas);
         let mut sink = VecSink::default();
         driver::run(&config, &personas, seed, ticks, &mut sink, &mut FakeBackend);

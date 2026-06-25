@@ -52,7 +52,7 @@ pub fn format_recall_impl(events: &[MemoryEvent]) -> Option<String> {
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(not(feature = "friend-engine"))]
 mod vec_impl {
-    use super::{MemoryEvent, PersonaId, format_recall_impl};
+    use super::{format_recall_impl, MemoryEvent, PersonaId};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// 메모리 스토어: 사건 로그 + 참여 레지스트리.
@@ -91,6 +91,11 @@ mod vec_impl {
             if let Some(set) = self.participation.get_mut(&room) {
                 set.remove(&persona);
             }
+        }
+
+        pub fn clear_room(&mut self, room: &str) {
+            self.events.retain(|event| event.room != room);
+            self.participation.remove(room);
         }
 
         /// 사건을 기록한다. 화자를 해당 방 참여자로 자동 join한다.
@@ -148,12 +153,14 @@ mod vec_impl {
                 .collect();
 
             // 4. 점수 내림차순 → ts 내림차순
-            scored.sort_by(|a, b| {
-                b.0.cmp(&a.0).then_with(|| b.1.ts.cmp(&a.1.ts))
-            });
+            scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.ts.cmp(&a.1.ts)));
 
             // 5. 상위 k개를 owned clone으로 반환
-            scored.into_iter().take(k).map(|(_, ev)| ev.clone()).collect()
+            scored
+                .into_iter()
+                .take(k)
+                .map(|(_, ev)| ev.clone())
+                .collect()
         }
 
         /// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
@@ -168,8 +175,8 @@ mod vec_impl {
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(feature = "friend-engine")]
 mod sqlite_impl {
-    use super::{MemoryEvent, format_recall_impl};
-    use rusqlite::{Connection, params};
+    use super::{format_recall_impl, MemoryEvent};
+    use rusqlite::{params, Connection};
     use std::path::Path;
 
     /// 공유 DDL: `new()`(:memory:)와 `open()`(파일) 양쪽에서 호출한다.
@@ -218,11 +225,9 @@ mod sqlite_impl {
 
     #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
     fn get_meta(conn: &Connection, key: &str) -> Option<String> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = ?1",
-            params![key],
-            |r| r.get(0),
-        )
+        conn.query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+            r.get(0)
+        })
         .ok()
     }
 
@@ -380,19 +385,21 @@ mod sqlite_impl {
         ///
         /// 고정 DDL + 런타임 입력 없음이므로 실패 시 expect 허용.
         pub fn new() -> Self {
-            let conn = Connection::open_in_memory()
-                .expect("in-memory sqlite must open");
+            let conn = Connection::open_in_memory().expect("in-memory sqlite must open");
             init_schema(&conn).expect("in-memory sqlite schema must init");
 
             #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
             {
                 use crate::embed::MockEmbedder;
-                let embedder: Box<dyn crate::embed::Embedder> =
-                    Box::new(MockEmbedder::default());
+                let embedder: Box<dyn crate::embed::Embedder> = Box::new(MockEmbedder::default());
                 let ann = crate::ann::AnnIndex::in_memory(1024)
                     .map_err(|e| eprintln!("[tunaSalon] warn: ANN in_memory init failed: {e}"))
                     .ok();
-                return Self { conn, embedder, ann };
+                return Self {
+                    conn,
+                    embedder,
+                    ann,
+                };
             }
 
             #[cfg(not(all(feature = "friend-engine-semantic", not(target_os = "windows"))))]
@@ -422,12 +429,10 @@ mod sqlite_impl {
                 if let Some(parent) = path.parent() {
                     if !parent.as_os_str().is_empty() {
                         std::fs::create_dir_all(parent).map_err(|e| {
-                            rusqlite::Error::InvalidPath(
-                                std::path::PathBuf::from(format!(
-                                    "create_dir_all failed for {:?}: {e}",
-                                    parent
-                                ))
-                            )
+                            rusqlite::Error::InvalidPath(std::path::PathBuf::from(format!(
+                                "create_dir_all failed for {:?}: {e}",
+                                parent
+                            )))
                         })?;
                     }
                 }
@@ -453,12 +458,10 @@ mod sqlite_impl {
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
                     std::fs::create_dir_all(parent).map_err(|e| {
-                        rusqlite::Error::InvalidPath(
-                            std::path::PathBuf::from(format!(
-                                "create_dir_all failed for {:?}: {e}",
-                                parent
-                            ))
-                        )
+                        rusqlite::Error::InvalidPath(std::path::PathBuf::from(format!(
+                            "create_dir_all failed for {:?}: {e}",
+                            parent
+                        )))
                     })?;
                 }
             }
@@ -504,7 +507,11 @@ mod sqlite_impl {
                 set_meta(&conn, "embedder_kind", current);
                 a
             };
-            Ok(Self { conn, embedder, ann })
+            Ok(Self {
+                conn,
+                embedder,
+                ann,
+            })
         }
 
         /// 기본 DB 경로를 반환한다(순수, 디스크 I/O 없음).
@@ -521,10 +528,11 @@ mod sqlite_impl {
                 }
             }
             // 2. $HOME 기반 기본 경로
-            if let Ok(home) = std::env::var("HOME") {
+            if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
                 if !home.is_empty() {
-                    return Some(std::path::PathBuf::from(home)
-                        .join(".local/share/tunaSalon/memory.db"));
+                    return Some(
+                        std::path::PathBuf::from(home).join(".local/share/tunaSalon/memory.db"),
+                    );
                 }
             }
             // 3. HOME 없음
@@ -541,6 +549,16 @@ mod sqlite_impl {
         pub fn live_store() -> Self {
             match Self::default_db_path() {
                 Some(path) => {
+                    if let Some(parent) = path.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            eprintln!(
+                                "[tunaSalon] warning: 영속 메모리 DB 디렉터리를 만들 수 없습니다 ({:?}: {e}). \
+                                 이 세션은 :memory: 로 동작합니다(재시작 시 기억 없음).",
+                                parent
+                            );
+                            return Self::new();
+                        }
+                    }
                     #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
                     {
                         match Self::open_with_embedder(&path, choose_live_embedder()) {
@@ -556,7 +574,10 @@ mod sqlite_impl {
                         }
                     }
 
-                    #[cfg(not(all(feature = "friend-engine-semantic", not(target_os = "windows"))))]
+                    #[cfg(not(all(
+                        feature = "friend-engine-semantic",
+                        not(target_os = "windows")
+                    )))]
                     match Self::open(&path) {
                         Ok(store) => store,
                         Err(e) => {
@@ -571,7 +592,7 @@ mod sqlite_impl {
                 }
                 None => {
                     eprintln!(
-                        "[tunaSalon] warning: $HOME 환경 변수가 없어 영속 메모리 DB 경로를 \
+                        "[tunaSalon] warning: $HOME/$USERPROFILE 환경 변수가 없어 영속 메모리 DB 경로를 \
                          결정할 수 없습니다. 이 세션은 :memory: 로 동작합니다."
                     );
                     Self::new()
@@ -600,6 +621,23 @@ mod sqlite_impl {
                 "DELETE FROM participation WHERE room = ?1 AND persona = ?2",
                 params![room, persona],
             );
+        }
+
+        pub fn clear_room(&mut self, room: &str) {
+            #[cfg(all(feature = "friend-engine-semantic", not(target_os = "windows")))]
+            let _ = self.conn.execute(
+                "DELETE FROM memory_vectors WHERE mem_id IN (SELECT id FROM memories WHERE room = ?1)",
+                params![room],
+            );
+            let _ = self
+                .conn
+                .execute("DELETE FROM memories_fts WHERE room = ?1", params![room]);
+            let _ = self
+                .conn
+                .execute("DELETE FROM memories WHERE room = ?1", params![room]);
+            let _ = self
+                .conn
+                .execute("DELETE FROM participation WHERE room = ?1", params![room]);
         }
 
         /// 사건을 기록한다.
@@ -651,7 +689,9 @@ mod sqlite_impl {
                         // ANN add
                         if let Some(ann) = &self.ann {
                             if let Err(e) = ann.add(mem_id as u64, &vec) {
-                                eprintln!("[tunaSalon] warn: ANN add failed (mem_id={mem_id}): {e}");
+                                eprintln!(
+                                    "[tunaSalon] warn: ANN add failed (mem_id={mem_id}): {e}"
+                                );
                             }
                         }
                     }
@@ -716,9 +756,10 @@ mod sqlite_impl {
 
             // 1. persona가 참여한 방 목록
             let rooms: Vec<String> = {
-                let mut stmt = match self.conn.prepare(
-                    "SELECT room FROM participation WHERE persona = ?1",
-                ) {
+                let mut stmt = match self
+                    .conn
+                    .prepare("SELECT room FROM participation WHERE persona = ?1")
+                {
                     Ok(s) => s,
                     Err(_) => return vec![],
                 };
@@ -829,9 +870,10 @@ mod sqlite_impl {
 
             // 1. persona가 참여한 방 목록
             let rooms: Vec<String> = {
-                let mut stmt = match self.conn.prepare(
-                    "SELECT room FROM participation WHERE persona = ?1",
-                ) {
+                let mut stmt = match self
+                    .conn
+                    .prepare("SELECT room FROM participation WHERE persona = ?1")
+                {
                     Ok(s) => s,
                     Err(_) => return vec![],
                 };
@@ -944,7 +986,9 @@ mod sqlite_impl {
                                 let param_refs: Vec<&dyn ToSql> =
                                     param_vals.iter().map(|b| b.as_ref()).collect();
                                 match stmt.query_map(param_refs.as_slice(), |row| row.get(0)) {
-                                    Ok(rows) => rows.filter_map(|r: rusqlite::Result<i64>| r.ok()).collect(),
+                                    Ok(rows) => {
+                                        rows.filter_map(|r: rusqlite::Result<i64>| r.ok()).collect()
+                                    }
                                     Err(_) => std::collections::HashSet::new(),
                                 }
                             }
@@ -981,7 +1025,12 @@ mod sqlite_impl {
                         let ts: i64 = row.get(1)?;
                         let speaker: String = row.get(2)?;
                         let content: String = row.get(3)?;
-                        Ok(MemoryEvent { room, ts: ts as u64, speaker, content })
+                        Ok(MemoryEvent {
+                            room,
+                            ts: ts as u64,
+                            speaker,
+                            content,
+                        })
                     },
                 );
                 if let Ok(ev) = row {
@@ -1062,6 +1111,7 @@ mod sqlite_impl {
     /// 정렬: score 내림차순, 동점은 id 오름차순(결정적 tie-break).
     ///
     /// seCall `reciprocal_rank_fusion` 동형(observer penalty/정규화 미포함).
+    #[allow(dead_code)]
     pub(super) fn rrf_fuse(bm25: &[i64], vector: &[i64], k_rrf: f64) -> Vec<i64> {
         use std::collections::HashMap;
         let mut scores: HashMap<i64, f64> = HashMap::new();
@@ -1158,7 +1208,10 @@ mod tests {
 
         // y는 B에만 참여 → A 사건 접근 불가
         let result_y = store.recall("y", "안녕 세계", 5);
-        assert!(result_y.is_empty(), "y는 A 사건을 볼 수 없어야 한다(참여 격리)");
+        assert!(
+            result_y.is_empty(),
+            "y는 A 사건을 볼 수 없어야 한다(참여 격리)"
+        );
     }
 
     /// (leave-1) leave 후 participation 격리: join → recall 성공 → leave → recall 빈 결과.
@@ -1173,18 +1226,27 @@ mod tests {
 
         // leave 전: alice는 salon에 참여 중 → carol 사건 회상 가능
         let before = store.recall("alice", "오늘 날씨", 5);
-        assert!(!before.is_empty(), "leave 전 alice는 salon 사건을 회상해야 한다");
+        assert!(
+            !before.is_empty(),
+            "leave 전 alice는 salon 사건을 회상해야 한다"
+        );
 
         // alice leave
         store.leave("salon", "alice");
 
         // leave 후: alice는 salon 미참여 → 회상 불가
         let after = store.recall("alice", "오늘 날씨", 5);
-        assert!(after.is_empty(), "leave 후 alice는 salon 사건을 회상하면 안 된다(participation 격리)");
+        assert!(
+            after.is_empty(),
+            "leave 후 alice는 salon 사건을 회상하면 안 된다(participation 격리)"
+        );
 
         // events 보존: bob은 여전히 참여 중 → carol 사건 회상 가능
         let bob_result = store.recall("bob", "오늘 날씨", 5);
-        assert!(!bob_result.is_empty(), "leave 후에도 bob은 salon 사건을 회상할 수 있어야 한다(events 보존)");
+        assert!(
+            !bob_result.is_empty(),
+            "leave 후에도 bob은 salon 사건을 회상할 수 있어야 한다(events 보존)"
+        );
     }
 
     /// (leave-2) leave 멱등성: 이미 없는 room/persona에 leave해도 panic 없음.
@@ -1201,7 +1263,10 @@ mod tests {
         // alice는 여전히 참여 중이어야 함
         store.record(ev("salon", 1, "alice", "테스트 사건"));
         let result = store.recall("alice", "테스트 사건", 5);
-        assert!(!result.is_empty(), "관련 없는 leave 후에도 alice 참여 상태 유지");
+        assert!(
+            !result.is_empty(),
+            "관련 없는 leave 후에도 alice 참여 상태 유지"
+        );
     }
 
     /// (2) 토큰 회상: query와 겹치는 사건이 결과에 포함된다.
@@ -1253,14 +1318,20 @@ mod tests {
         // 미참여 페르소나
         let mut store2 = MemoryStore::new();
         store2.record(ev("A", 1, "alice", "안녕"));
-        assert!(store2.recall("bob", "안녕", 5).is_empty(), "미참여 페르소나는 빈 결과");
+        assert!(
+            store2.recall("bob", "안녕", 5).is_empty(),
+            "미참여 페르소나는 빈 결과"
+        );
 
         // 겹침 없는 쿼리 — BM25-only 빌드에서만 빈 결과를 보장한다.
         // hybrid(semantic) 빌드는 벡터 leg가 추가 결과를 반환할 수 있다(MockEmbedder).
         let mut store3 = MemoryStore::new();
         store3.record(ev("A", 1, "alice", "안녕 세계"));
         #[cfg(not(feature = "friend-engine-semantic"))]
-        assert!(store3.recall("alice", "전혀다른토큰xyz", 5).is_empty(), "겹침 없으면 빈 결과(BM25-only)");
+        assert!(
+            store3.recall("alice", "전혀다른토큰xyz", 5).is_empty(),
+            "겹침 없으면 빈 결과(BM25-only)"
+        );
         // semantic 빌드에서도 패닉 없이 반환되어야 한다.
         #[cfg(feature = "friend-engine-semantic")]
         let _ = store3.recall("alice", "전혀다른토큰xyz", 5);
@@ -1268,7 +1339,10 @@ mod tests {
         // k=0
         let mut store4 = MemoryStore::new();
         store4.record(ev("A", 1, "alice", "안녕"));
-        assert!(store4.recall("alice", "안녕", 0).is_empty(), "k=0이면 빈 결과");
+        assert!(
+            store4.recall("alice", "안녕", 0).is_empty(),
+            "k=0이면 빈 결과"
+        );
 
         // format_recall 빈 슬라이스 → None
         assert!(MemoryStore::format_recall(&[]).is_none());
@@ -1308,7 +1382,9 @@ mod tests {
             "형태소 회상 실패: '비가 온다' 쿼리가 '비 온다 심심해'를 히트해야 한다"
         );
         assert!(
-            result.iter().any(|ev| ev.content.contains("비 온다 심심해")),
+            result
+                .iter()
+                .any(|ev| ev.content.contains("비 온다 심심해")),
             "형태소 회상 실패: 결과에 '비 온다 심심해'가 없다. 결과: {:?}",
             result.iter().map(|e| &e.content).collect::<Vec<_>>()
         );
@@ -1334,7 +1410,8 @@ mod tests {
         let e2 = ev("room", 2, "bob", "반갑습니다");
         let events = vec![e1, e2];
 
-        let output = MemoryStore::format_recall(&events).expect("비어 있지 않으므로 Some이어야 한다");
+        let output =
+            MemoryStore::format_recall(&events).expect("비어 있지 않으므로 Some이어야 한다");
         assert!(output.starts_with("지난 대화에서:"), "헤더로 시작해야 한다");
         assert!(output.contains("alice"), "alice가 포함되어야 한다");
         assert!(output.contains("안녕하세요"), "content가 포함되어야 한다");
@@ -1376,18 +1453,23 @@ mod tests {
     #[test]
     fn persistence_roundtrip_open_close_reopen() {
         let tmp_dir = std::env::temp_dir();
-        let db_path = tmp_dir.join(format!("tunasalon_test_roundtrip_{}.db", std::process::id()));
+        let db_path = tmp_dir.join(format!(
+            "tunasalon_test_roundtrip_{}.db",
+            std::process::id()
+        ));
 
         // 시작 시 잔여 파일 정리(이전 실패 잔재 등).
         for suffix in &["", "-wal", "-shm"] {
-            let p = tmp_dir.join(format!("tunasalon_test_roundtrip_{}{suffix}.db", std::process::id()));
+            let p = tmp_dir.join(format!(
+                "tunasalon_test_roundtrip_{}{suffix}.db",
+                std::process::id()
+            ));
             let _ = std::fs::remove_file(&p);
         }
 
         // 1단계: 파일 DB 열고 사건 기록 후 drop.
         {
-            let mut store = MemoryStore::open(&db_path)
-                .expect("임시 경로 open()이 성공해야 한다");
+            let mut store = MemoryStore::open(&db_path).expect("임시 경로 open()이 성공해야 한다");
             store.join("salon", "alice");
             store.record(ev("salon", 1, "alice", "영속 테스트 안녕"));
         }
@@ -1403,7 +1485,9 @@ mod tests {
                 "재오픈 후 recall에 이전 사건이 있어야 한다(영속 roundtrip 실패)"
             );
             assert!(
-                result.iter().any(|e| e.content.contains("영속 테스트 안녕")),
+                result
+                    .iter()
+                    .any(|e| e.content.contains("영속 테스트 안녕")),
                 "재오픈 recall 결과에 '영속 테스트 안녕'이 없다: {:?}",
                 result.iter().map(|e| &e.content).collect::<Vec<_>>()
             );
@@ -1411,7 +1495,10 @@ mod tests {
 
         // 정리: 임시 DB 파일 + WAL/SHM 사이드카 삭제.
         for suffix in &["", "-wal", "-shm"] {
-            let p = tmp_dir.join(format!("tunasalon_test_roundtrip_{}{suffix}.db", std::process::id()));
+            let p = tmp_dir.join(format!(
+                "tunasalon_test_roundtrip_{}{suffix}.db",
+                std::process::id()
+            ));
             let _ = std::fs::remove_file(&p);
         }
     }
@@ -1454,7 +1541,11 @@ mod tests {
         store.record(ev("salon", 3, "bob", "오늘 날씨 맑다"));
 
         // memory_vectors 행 수 확인
-        assert_eq!(store.test_vector_row_count(), 3, "memory_vectors에 3행이 있어야 한다");
+        assert_eq!(
+            store.test_vector_row_count(),
+            3,
+            "memory_vectors에 3행이 있어야 한다"
+        );
         // ANN size 확인
         assert_eq!(store.test_ann_size(), 3, "ANN에 3개 벡터가 있어야 한다");
     }
@@ -1471,7 +1562,10 @@ mod tests {
 
         // "rust language"와 토큰 겹치는 것은 첫 번째 사건
         let results = store.vector_search("rust language", 3);
-        assert!(!results.is_empty(), "vector_search 결과가 비어 있으면 안 된다");
+        assert!(
+            !results.is_empty(),
+            "vector_search 결과가 비어 있으면 안 된다"
+        );
         // 첫 번째 결과의 mem_id가 1이어야 한다 (MockEmbedder 기준)
         assert_eq!(
             results[0].0, 1,
@@ -1507,7 +1601,11 @@ mod tests {
     }
 
     /// open(file) roundtrip: record → drop → reopen → vector_search 동작.
-    #[cfg(all(feature = "friend-engine", feature = "friend-engine-semantic", not(target_os = "windows")))]
+    #[cfg(all(
+        feature = "friend-engine",
+        feature = "friend-engine-semantic",
+        not(target_os = "windows")
+    ))]
     #[test]
     fn semantic_open_roundtrip_vector_search() {
         let tmp_dir = std::env::temp_dir();
@@ -1526,9 +1624,13 @@ mod tests {
 
         // 1단계: 파일 DB 열고 사건 기록 후 save + drop
         {
-            let mut store = MemoryStore::open(&db_path)
-                .expect("open()이 성공해야 한다");
-            store.record(ev("salon", 1, "alice", "rust programming language semantic"));
+            let mut store = MemoryStore::open(&db_path).expect("open()이 성공해야 한다");
+            store.record(ev(
+                "salon",
+                1,
+                "alice",
+                "rust programming language semantic",
+            ));
             store.record(ev("salon", 2, "alice", "고양이 강아지 귀엽다"));
             // ANN 저장
             let _ = store.test_ann_save();
@@ -1570,7 +1672,7 @@ mod tests {
         // id=2 → bm25 rank 1, vec rank 0 → score = 1/62 + 1/61 ≈ 0.02252
         // id=3 → vec rank 1만 → score = 1/62 ≈ 0.01613
         let bm25 = vec![1i64, 2];
-        let vec  = vec![2i64, 3];
+        let vec = vec![2i64, 3];
         let fused = rrf_fuse(&bm25, &vec, 60.0);
         assert!(!fused.is_empty(), "결과가 비어 있으면 안 된다");
         assert_eq!(fused[0], 2, "양쪽 리스트에 있는 id=2가 최상위여야 한다");
@@ -1675,7 +1777,10 @@ mod tests {
         assert!(
             !has_room_b,
             "벡터 leg 참여 격리 실패: alice 결과에 room B 사건이 있다. 결과: {:?}",
-            results.iter().map(|e| (&e.room, &e.content)).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|e| (&e.room, &e.content))
+                .collect::<Vec<_>>()
         );
     }
 

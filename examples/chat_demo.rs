@@ -33,9 +33,21 @@ const HUMAN_TEXT: &str = "얘들아 각자 자기소개 좀 해줄래?";
 
 fn demo_personas() -> Vec<Persona> {
     vec![
-        Persona { id: "friend".to_string(), name: "친구".to_string(), base_rate: 0.80 },
-        Persona { id: "chaos".to_string(), name: "혼돈".to_string(), base_rate: 0.70 },
-        Persona { id: "summarizer".to_string(), name: "정리자".to_string(), base_rate: 0.25 },
+        Persona {
+            id: "friend".to_string(),
+            name: "친구".to_string(),
+            base_rate: 0.80,
+        },
+        Persona {
+            id: "chaos".to_string(),
+            name: "혼돈".to_string(),
+            base_rate: 0.70,
+        },
+        Persona {
+            id: "summarizer".to_string(),
+            name: "정리자".to_string(),
+            base_rate: 0.25,
+        },
     ]
 }
 
@@ -61,11 +73,7 @@ fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
     m
 }
 
-fn build_pool(
-    cloud_model: &str,
-    friend_model: &str,
-    friend_endpoint: &str,
-) -> BackendPool {
+fn build_pool(cloud_model: &str, friend_model: &str, friend_endpoint: &str) -> BackendPool {
     let mut pool = BackendPool::new();
 
     // cloud 백엔드: Ollama, cap=3, num_ctx=None(원격 auto-max).
@@ -114,10 +122,10 @@ fn display_name(personas: &[Persona], id: &str) -> String {
 
 fn main() {
     // 환경변수 또는 기본값으로 모델/엔드포인트 결정.
-    let cloud_model = std::env::var("SALON_CLOUD_MODEL")
-        .unwrap_or_else(|_| "gemma4:31b-cloud".to_string());
-    let friend_model = std::env::var("SALON_FRIEND_MODEL")
-        .unwrap_or_else(|_| "qwen3.6-35b-fast".to_string());
+    let cloud_model =
+        std::env::var("SALON_CLOUD_MODEL").unwrap_or_else(|_| "gemma4:31b-cloud".to_string());
+    let friend_model =
+        std::env::var("SALON_FRIEND_MODEL").unwrap_or_else(|_| "qwen3.6-35b-fast".to_string());
     let friend_endpoint = std::env::var("SALON_FRIEND_ENDPOINT")
         .unwrap_or_else(|_| "http://yongseek.iptime.org:8008".to_string());
 
@@ -128,7 +136,10 @@ fn main() {
     println!("cloud  : {cloud_model} @ localhost:11434 (cap=3)");
     println!("friend : {friend_model} @ {friend_endpoint} (cap=1)");
     println!("라우팅 : summarizer → friend(→cloud 폴백), 나머지 → cloud");
-    println!("종료   : {}발화 도착 또는 {}초 경과", MAX_UTTERANCES, MAX_WALL_SECS);
+    println!(
+        "종료   : {}발화 도착 또는 {}초 경과",
+        MAX_UTTERANCES, MAX_WALL_SECS
+    );
     println!();
 
     let personas = demo_personas();
@@ -157,7 +168,10 @@ fn main() {
             break;
         }
         if Instant::now() >= deadline {
-            println!("\n[chat_demo] {}초 경과 → 종료 ({}개 발화 도착)", MAX_WALL_SECS, utterance_count);
+            println!(
+                "\n[chat_demo] {}초 경과 → 종료 ({}개 발화 도착)",
+                MAX_WALL_SECS, utterance_count
+            );
             break;
         }
 

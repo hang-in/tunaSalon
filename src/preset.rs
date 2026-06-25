@@ -143,9 +143,21 @@ mod tests {
 
     fn three_personas() -> Vec<Persona> {
         vec![
-            Persona { id: "a".to_string(), name: "A".to_string(), base_rate: 0.8 },
-            Persona { id: "b".to_string(), name: "B".to_string(), base_rate: 0.7 },
-            Persona { id: "c".to_string(), name: "C".to_string(), base_rate: 0.25 },
+            Persona {
+                id: "a".to_string(),
+                name: "A".to_string(),
+                base_rate: 0.8,
+            },
+            Persona {
+                id: "b".to_string(),
+                name: "B".to_string(),
+                base_rate: 0.7,
+            },
+            Persona {
+                id: "c".to_string(),
+                name: "C".to_string(),
+                base_rate: 0.25,
+            },
         ]
     }
 
@@ -174,18 +186,15 @@ mod tests {
     fn spectral_radius_matches_target_rho_within_tolerance() {
         let personas = three_personas();
         let targets = [
-            (RoomPreset::Calm,     0.10_f64),
-            (RoomPreset::Pub,      0.40_f64),
+            (RoomPreset::Calm, 0.10_f64),
+            (RoomPreset::Pub, 0.40_f64),
             (RoomPreset::Argument, 0.80_f64),
-            (RoomPreset::Chaos,    0.92_f64),
+            (RoomPreset::Chaos, 0.92_f64),
         ];
         for (preset, target_rho) in targets {
             let config = preset.build_config(&personas);
-            let radius = HawkesEngine::branching_spectral_radius(
-                &config.alpha,
-                &personas,
-                config.beta,
-            );
+            let radius =
+                HawkesEngine::branching_spectral_radius(&config.alpha, &personas, config.beta);
             assert!(
                 (radius - target_rho).abs() < 1e-6,
                 "{preset:?}: radius={radius} expected={target_rho} diff={}",
@@ -282,15 +291,24 @@ mod tests {
         let mut modifiers = BTreeMap::new();
         modifiers.insert(
             "a".to_string(),
-            PersonaModifier { reactivity: 0.6, provocativeness: 2.0 },
+            PersonaModifier {
+                reactivity: 0.6,
+                provocativeness: 2.0,
+            },
         );
         modifiers.insert(
             "b".to_string(),
-            PersonaModifier { reactivity: 2.0, provocativeness: 1.0 },
+            PersonaModifier {
+                reactivity: 2.0,
+                provocativeness: 1.0,
+            },
         );
         modifiers.insert(
             "c".to_string(),
-            PersonaModifier { reactivity: 0.5, provocativeness: 0.5 },
+            PersonaModifier {
+                reactivity: 0.5,
+                provocativeness: 0.5,
+            },
         );
 
         let config = RoomPreset::Pub.build_config_with_modifiers(&personas, &modifiers);
@@ -314,15 +332,24 @@ mod tests {
         let mut modifiers = BTreeMap::new();
         modifiers.insert(
             "a".to_string(),
-            PersonaModifier { reactivity: 0.6, provocativeness: 2.0 },
+            PersonaModifier {
+                reactivity: 0.6,
+                provocativeness: 2.0,
+            },
         );
         modifiers.insert(
             "b".to_string(),
-            PersonaModifier { reactivity: 2.0, provocativeness: 1.0 },
+            PersonaModifier {
+                reactivity: 2.0,
+                provocativeness: 1.0,
+            },
         );
         modifiers.insert(
             "c".to_string(),
-            PersonaModifier { reactivity: 0.5, provocativeness: 0.5 },
+            PersonaModifier {
+                reactivity: 0.5,
+                provocativeness: 0.5,
+            },
         );
 
         // Pub preset의 target_rho = 0.40
@@ -334,8 +361,7 @@ mod tests {
             "asymmetric config should be stable"
         );
 
-        let radius =
-            HawkesEngine::branching_spectral_radius(&config.alpha, &personas, config.beta);
+        let radius = HawkesEngine::branching_spectral_radius(&config.alpha, &personas, config.beta);
         assert!(
             (radius - target_rho).abs() < 1e-6,
             "asymmetric radius={radius} expected={target_rho} diff={}",
@@ -349,8 +375,7 @@ mod tests {
         let personas = three_personas();
         for preset in ALL_PRESETS {
             let uniform = preset.build_config(&personas);
-            let from_modifiers =
-                preset.build_config_with_modifiers(&personas, &BTreeMap::new());
+            let from_modifiers = preset.build_config_with_modifiers(&personas, &BTreeMap::new());
 
             assert_eq!(
                 uniform.beta, from_modifiers.beta,

@@ -15,9 +15,21 @@ use salon::sink::VecSink;
 
 fn personas() -> Vec<Persona> {
     vec![
-        Persona { id: "friend".to_string(), name: "Friendly Regular".to_string(), base_rate: 0.80 },
-        Persona { id: "chaos".to_string(), name: "Grounded Realist".to_string(), base_rate: 0.70 },
-        Persona { id: "summarizer".to_string(), name: "Quiet Summarizer".to_string(), base_rate: 0.25 },
+        Persona {
+            id: "friend".to_string(),
+            name: "Friendly Regular".to_string(),
+            base_rate: 0.80,
+        },
+        Persona {
+            id: "chaos".to_string(),
+            name: "Grounded Realist".to_string(),
+            base_rate: 0.70,
+        },
+        Persona {
+            id: "summarizer".to_string(),
+            name: "Quiet Summarizer".to_string(),
+            base_rate: 0.25,
+        },
     ]
 }
 
@@ -122,15 +134,13 @@ fn v10_embedder_consistency_same_kind_reopens_clean() {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(&usearch_path);
     for suf in &["-wal", "-shm"] {
-        let _ = std::fs::remove_file(
-            tmp_dir.join(format!("tunasalon_v10_consistency_{pid}{suf}.db")),
-        );
+        let _ =
+            std::fs::remove_file(tmp_dir.join(format!("tunasalon_v10_consistency_{pid}{suf}.db")));
     }
 
     // 1단계: 파일 DB 열고(MockEmbedder) 사건 기록 후 drop
     {
-        let mut store = MemoryStore::open(&db_path)
-            .expect("임시 경로 open()이 성공해야 한다");
+        let mut store = MemoryStore::open(&db_path).expect("임시 경로 open()이 성공해야 한다");
         store.join("salon", "alice");
         store.record(MemoryEvent {
             room: "salon".to_string(),
@@ -144,15 +154,16 @@ fn v10_embedder_consistency_same_kind_reopens_clean() {
 
     // 2단계: 같은 경로로 재오픈(MockEmbedder, 같은 kind) -> recall에 사건 존재
     {
-        let store = MemoryStore::open(&db_path)
-            .expect("재오픈이 성공해야 한다");
+        let store = MemoryStore::open(&db_path).expect("재오픈이 성공해야 한다");
         let result = store.recall("alice", "임베더 일관성 테스트", 5);
         assert!(
             !result.is_empty(),
             "재오픈 후 recall에 이전 사건이 있어야 한다(같은 kind Mock -> Mock 일관)"
         );
         assert!(
-            result.iter().any(|e| e.content.contains("임베더 일관성 테스트")),
+            result
+                .iter()
+                .any(|e| e.content.contains("임베더 일관성 테스트")),
             "재오픈 recall 결과에 '임베더 일관성 테스트'가 없다. 결과: {:?}",
             result.iter().map(|e| &e.content).collect::<Vec<_>>()
         );
@@ -162,8 +173,7 @@ fn v10_embedder_consistency_same_kind_reopens_clean() {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(&usearch_path);
     for suf in &["-wal", "-shm"] {
-        let _ = std::fs::remove_file(
-            tmp_dir.join(format!("tunasalon_v10_consistency_{pid}{suf}.db")),
-        );
+        let _ =
+            std::fs::remove_file(tmp_dir.join(format!("tunasalon_v10_consistency_{pid}{suf}.db")));
     }
 }

@@ -97,8 +97,22 @@ fn inv1_fake_backend_determinism_and_flow_none() {
     // (a) 동일 seed 두 번 실행 → records 바이트 동일
     let mut sink_a = VecSink::default();
     let mut sink_b = VecSink::default();
-    driver::run(&config, &personas, seed, ticks, &mut sink_a, &mut FakeBackend);
-    driver::run(&config, &personas, seed, ticks, &mut sink_b, &mut FakeBackend);
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_a,
+        &mut FakeBackend,
+    );
+    driver::run(
+        &config,
+        &personas,
+        seed,
+        ticks,
+        &mut sink_b,
+        &mut FakeBackend,
+    );
 
     assert_eq!(
         sink_a.records, sink_b.records,
@@ -211,9 +225,10 @@ fn update_intensities_golden_math() {
     );
 
     // (b) mu_scale=0.5: 회복 목표가 낮아져 결과가 scale1보다 낮아야 한다
-    let result_scale_half =
-        HawkesEngine::update_intensities(&state, 1, &config, &personas, 0.5);
-    let actual_scale_half = *result_scale_half.get("aria").expect("aria 강도가 있어야 한다");
+    let result_scale_half = HawkesEngine::update_intensities(&state, 1, &config, &personas, 0.5);
+    let actual_scale_half = *result_scale_half
+        .get("aria")
+        .expect("aria 강도가 있어야 한다");
     assert!(
         actual_scale_half < actual_scale1,
         "mu_scale=0.5인 경우 회복 목표가 낮아 결과가 더 낮아야 한다. \

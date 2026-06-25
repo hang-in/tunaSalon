@@ -20,64 +20,71 @@ const PARTICIPANTS: Participant[] = [
 ];
 
 const THETA = 0.6;
-const TOPICS_POOL = [
-  "부처님 오신날",
-  "주말 계획",
-  "최근에 본 영화",
-  "울릉도 독도",
-  "커피 취향",
-  "봄날의 산책",
-  "좋아하는 음악",
-  "일과 삶의 균형",
-  "반려동물",
-  "독서 습관",
-];
+let currentTopics = ["AI 규제와 오픈소스"];
 
-let currentTopics = ["부처님 오신날"];
-let tickCount = 0;
-
-// ═─ Mock utterance bank (Korean) ─════════════════════════════════
-const UTTERANCES: Record<string, string[][]> = {
+const OPEN_SOURCE_AI_LINES: Record<string, string[]> = {
   friend: [
-    ["부처님 말씀 중에 집착을 버리라는 게 핵심인 것 같아.", "마음이 한결 가벼워지는 느낌이야."],
-    ["오늘 날씨 진짜 좋지 않아?", "이런 날엔 꼭 나가서 산책해야 해."],
-    ["나 요즘 새로운 카페 발견했어!", "분위기가 너무 아늑하고 좋더라고."],
-    ["너도 등산 좋아한다고 했었잖아.", "이번 주말에 같이 가면 어떨까?"],
-    ["봄향기가 참 좋은 것 같아.", "매년 이맘때면 기분이 설레."],
+    "나는 오픈소스 AI를 막기보다 투명한 공개 기준을 세우는 쪽이 낫다고 봐. 모델 카드, 학습 데이터 범위, 위험 평가를 같이 열어두면 커뮤니티도 감시자가 될 수 있어.",
+    "규제가 너무 넓으면 작은 연구팀과 개인 개발자가 먼저 위축될 것 같아. 고위험 배포에는 책임을 묻되, 연구와 검증 목적의 공개는 살려야 한다고 생각해.",
+    "오픈소스는 문제를 숨기지 않고 함께 고치는 문화가 강점이야. 규제도 금지보다 감사 로그와 배포 책임을 요구하는 방식이면 협력 여지가 있어.",
   ],
   chaos: [
-    ["그건 좋은 관점이지만, 현실적으로 볼 때 좀 더 복잡하지 않을까?"],
-    ["감정적으로 판단하기보다는 데이터를 보는 게 중요해.", "실제 수치가 말해주는 게 있거든."],
-    ["좋은 생각이긴 한데 실행 가능성부터 따져봐야 해.", "자원과 시간이 충분한지 확인해야지."],
-    ["너무 낙관적으로만 볼 필요는 없어.", "리스크도 함께 고려하면 좋겠어."],
-    ["그건 개인의 경험일 뿐 일반화하긴 어려워.", "다양한 사례를 함께 볼 필요가 있어."],
+    "오픈소스라고 해서 자동으로 안전한 건 아니야. 가중치가 공개되면 악용 비용도 내려가니, 성능과 접근 범위에 따라 차등 규제를 두는 게 현실적이야.",
+    "핵심은 공개 여부가 아니라 피해 가능성과 배포 규모야. 위험한 기능을 가진 모델은 오픈소스라도 red-team 결과와 완화 장치를 요구해야 해.",
+    "너무 이상적으로 보면 안 돼. 기업은 책임 회피를 위해 오픈소스라고 포장할 수 있고, 국가는 안보 논리로 과도하게 막을 수 있으니 기준을 숫자로 좁혀야 해.",
   ],
   summarizer: [
-    ["지금까지의 대화를 정리핶자면, 집착을 낮추는 게 공통된 화두인 것 같아."],
-    ["서로 다른 관점이 나왔지만, 본질은 비슷하지 않나 싶어.", "현실성과 감정의 균형을 맞추는 거지."],
-    ["이 대화의 핵심은 서로를 이해하려는 태도인 것 같아."],
-    ["정리하면, 친구는 경험을, 현실주의자는 논리를, 나는 의미를 말하고 있어.", "흥미로운 조합이야."],
+    "정리하면 쟁점은 오픈소스를 허용하느냐가 아니라 어떤 위험부터 규제하느냐인 것 같아. 투명성, 악용 가능성, 배포 책임을 나눠 봐야 해.",
+    "지금까지는 두 축이 보여. 하나는 공개 생태계를 살리는 기준이고, 다른 하나는 고위험 모델의 책임 있는 배포 장치야.",
+    "결국 좋은 절충안은 저위험 연구 공개는 넓게 허용하고, 고성능 범용 모델에는 감사와 사후 책임을 붙이는 방향일 수 있어.",
+  ],
+};
+
+const GENERIC_TOPIC_LINES: Record<string, (topic: string) => string[]> = {
+  friend: (topic) => [
+    `나는 "${topic}"에서 먼저 참여자들이 납득할 수 있는 공통 기준을 세우는 게 중요하다고 봐.`,
+    `"${topic}"을 너무 금지 중심으로만 보면 현장에서 좋은 시도까지 같이 줄어들 수 있어.`,
+  ],
+  chaos: (topic) => [
+    `"${topic}"은 의도보다 실행 기준이 더 중요해. 누가 책임지고 어떤 지표로 판단할지 정해야 해.`,
+    `현실적으로 "${topic}"에는 비용과 부작용이 따라와. 원칙만으로는 부족하고 집행 가능성을 봐야 해.`,
+  ],
+  summarizer: (topic) => [
+    `정리하면 "${topic}"의 핵심은 가치 판단과 실행 가능성 사이의 균형이야.`,
+    `지금 논점은 "${topic}"을 넓게 허용할지, 위험 구간부터 좁게 관리할지로 모이는 것 같아.`,
   ],
 };
 
 const RECALL_NOTES: Record<string, string[]> = {
   friend: [
-    "지난 대화에서: 너 등산 좋아한다고 했지",
-    "지난 대화에서: 새로운 카페를 찾고 있었어",
-    "기억나? 봄에 벚꽃 구경 가자고 했잖아",
+    "지난 대화에서: 공개 생태계는 신뢰와 검증 문화가 중요하다고 했어",
+    "지난 대화에서: 작은 팀이 규제 비용을 감당하기 어렵다는 얘기가 나왔어",
   ],
   chaos: [
-    "이전에: 데이터 기반 의사결정을 중요하게 여긴다고 했어",
-    "과거 대화에서: 시간 관리가 고민이었지",
+    "이전에: 고위험 기능은 배포 전 red-team이 필요하다고 했어",
+    "과거 대화에서: 규제 기준은 숫자와 책임 주체가 있어야 한다고 했어",
   ],
   summarizer: [
-    "이전 대화의 주제: 일과 삶의 균형",
-    "오늘 아침 대화: 날씨와 기분의 상관관계",
+    "이전 대화의 주제: 투명성과 안전성의 균형",
+    "오늘 대화의 정리: 공개 범위와 배포 책임을 분리해서 보기",
   ],
 };
 
 function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function currentTopic(): string {
+  return currentTopics[0] || "오늘의 토론 주제";
+}
+
+function topicAwareLine(speaker: string): string {
+  const topic = currentTopic();
+  const normalized = topic.replace(/\s+/g, "");
+  if (normalized.includes("AI규제") || normalized.includes("오픈소스")) {
+    return pickRandom(OPEN_SOURCE_AI_LINES[speaker] ?? OPEN_SOURCE_AI_LINES.friend);
+  }
+  return pickRandom(GENERIC_TOPIC_LINES[speaker]?.(topic) ?? GENERIC_TOPIC_LINES.friend(topic));
 }
 
 // ═─ Conversation simulation ─═══════════════════════════════════════
@@ -94,6 +101,7 @@ class ConversationEngine {
   getStateFrame(): ServerFrame {
     return {
       type: "state",
+      room_id: "salon",
       intensities: { ...this.intensities },
       theta: THETA,
       flow: this.flow,
@@ -109,7 +117,6 @@ class ConversationEngine {
 
   tick(): ServerFrame[] {
     const frames: ServerFrame[] = [];
-    tickCount++;
 
     // paused면 state frame만 emit(람다/발화 갱신 없음)
     if (this.paused) {
@@ -180,8 +187,7 @@ class ConversationEngine {
   }
 
   private emitUtterance(speaker: string) {
-    const sentences = pickRandom(UTTERANCES[speaker]);
-    const content = sentences.join(" ");
+    const content = topicAwareLine(speaker);
     const ts = Math.floor(Date.now() / 1000) % 86400;
 
     const utterance: ServerFrame = {
@@ -214,21 +220,6 @@ class ConversationEngine {
     }
     this.pending = null;
     this.isSpeaking = false;
-
-    // Maybe change topics occasionally
-    if (Math.random() < 0.08) {
-      const newTopic = pickRandom(TOPICS_POOL);
-      if (!currentTopics.includes(newTopic)) {
-        currentTopics = [newTopic, ...currentTopics].slice(0, 3);
-        const sys: ServerFrame = {
-          type: "system",
-          text: `화제가 '${newTopic}'로 바뀌었습니다`,
-        };
-        this.deliver([sys, this.getStateFrame()]);
-        return;
-      }
-    }
-
     this.deliver([this.getStateFrame()]);
   }
 
@@ -245,7 +236,7 @@ class ConversationEngine {
   }
 
   setTopics(topics: string[]) {
-    currentTopics = topics.slice(0, 5);
+    currentTopics = topics.map((topic) => topic.trim()).filter(Boolean).slice(0, 5);
   }
 }
 
@@ -256,10 +247,13 @@ let callback: ((frame: ServerFrame) => void) | null = null;
 
 export function connect(
   onFrame: (frame: ServerFrame) => void,
-  onStatus?: (connected: boolean) => void
+  onStatus?: (connected: boolean) => void,
+  _roomId?: string,
+  topics?: string[]
 ): { send: (frame: ClientFrame) => void; disconnect: () => void } {
   // Cleanup any previous connection
   if (intervalId) clearInterval(intervalId);
+  if (topics?.length) currentTopics = topics;
 
   engine = new ConversationEngine();
   callback = onFrame;
@@ -306,6 +300,10 @@ export function connect(
         setTimeout(() => callback?.(engine!.getStateFrame()), 50);
       } else if (frame.type === "topic") {
         engine.setTopics(frame.topics);
+        callback?.({
+          type: "system",
+          text: `토론 주제: ${currentTopics.join(", ") || "없음"}`,
+        });
         callback?.(engine.getStateFrame());
       } else if (frame.type === "pause") {
         engine.paused = frame.paused;

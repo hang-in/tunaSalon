@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Users, Tag, PanelRightOpen, Box, HelpCircle, X, Pause, Play } from "lucide-react";
+import { Users, Tag, PanelRightOpen, Box, HelpCircle, X, Pause, Play, LogOut, RotateCcw, Trash2 } from "lucide-react";
 
 interface HeaderProps {
   topics: string[];
@@ -10,9 +10,12 @@ interface HeaderProps {
   onToggle3d: () => void;
   paused: boolean;
   onTogglePause: () => void;
+  onLeave: () => void;
+  onReset: () => void;
+  onDelete: () => void;
 }
 
-export function Header({ topics, connected, participantCount, onToggleSidebar, bg3d, onToggle3d, paused, onTogglePause }: HeaderProps) {
+export function Header({ topics, connected, participantCount, onToggleSidebar, bg3d, onToggle3d, paused, onTogglePause, onLeave, onReset, onDelete }: HeaderProps) {
   const [helpOpen, setHelpOpen] = useState(false);
   return (
     <header
@@ -194,6 +197,30 @@ export function Header({ topics, connected, participantCount, onToggleSidebar, b
           <Users size={13} />
           <span className="text-xs font-medium">{participantCount}</span>
         </div>
+        <button
+          onClick={onReset}
+          className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          aria-label="토론 초기화"
+          title="토론 초기화"
+        >
+          <RotateCcw size={16} className="text-[var(--text-secondary)]" />
+        </button>
+        <button
+          onClick={onDelete}
+          className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          aria-label="토론방 삭제"
+          title="토론방 삭제"
+        >
+          <Trash2 size={16} className="text-[var(--text-secondary)]" />
+        </button>
+        <button
+          onClick={onLeave}
+          className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          aria-label="토론방 나가기"
+          title="토론방 나가기"
+        >
+          <LogOut size={16} className="text-[var(--text-secondary)]" />
+        </button>
       </div>
     </header>
   );
