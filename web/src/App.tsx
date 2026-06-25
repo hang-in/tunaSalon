@@ -5,13 +5,16 @@ import { ChatArea } from "@/components/ChatArea";
 import { SidePanel } from "@/components/SidePanel";
 import { Composer } from "@/components/Composer";
 import { ThreeBackground } from "@/components/ThreeBackground";
-import { MessageSquareText, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { CreateRoomDialog } from "@/components/CreateRoomDialog";
+import { MessageSquareText, PanelRightOpen, Plus, Trash2, Users } from "lucide-react";
 
 interface DebateRoom {
   id: string;
   title: string;
   topics: string[];
   summary?: string;
+  /** 새 방 수동 구성 참가자 ["blood:mbti:zodiac:role", ...]. 비면 서버가 랜덤 3명 시딩. */
+  personas?: string[];
 }
 
 const RECENT_ROOMS_KEY = "tunaSalon.recentRooms.v1";
@@ -115,7 +118,13 @@ function App() {
     personaConfigs,
     humanPulse,
     resetChat,
-  } = useChat({ enabled: inRoom && !!activeRoom, roomId: activeRoom?.id, topics: activeRoom?.topics });
+  } = useChat({
+    enabled: inRoom && !!activeRoom,
+    roomId: activeRoom?.id,
+    topics: activeRoom?.topics,
+    personas: activeRoom?.personas,
+  });
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   const rememberRoom = useCallback((room: DebateRoom) => {
     setRecentRooms((prev) => {
@@ -136,21 +145,42 @@ function App() {
     setInRoom(true);
   }, [rememberRoom, resetChat]);
 
-  const handleCreateRoom = useCallback(() => {
+  const resolveTopics = useCallback(() => {
     const source = topicDraft.trim() || topicPlaceholder;
-    const topics = source
+    return source
       .split(",")
       .map((topic) => topic.trim())
       .filter(Boolean)
       .slice(0, 5);
+  }, [topicDraft, topicPlaceholder]);
+
+  // "만들기": 랜덤 3명으로 시작(personas 미지정 → 서버가 room_id 기반 랜덤 3명 시딩).
+  const handleCreateRoom = useCallback(() => {
+    const topics = resolveTopics();
     if (topics.length === 0) return;
     openRoom({
       id: roomIdFromTopics(topics),
       title: topics[0],
       topics,
-      summary: `"${topics[0]}"에 대해 페르소나들이 찬반과 조건을 나눠 보는 새 토론방`,
+      summary: `"${topics[0]}"에 대해 랜덤 참가자들이 찬반과 조건을 나눠 보는 새 토론방`,
     });
-  }, [openRoom, topicDraft, topicPlaceholder]);
+  }, [openRoom, resolveTopics]);
+
+  // "직접 고르기": 빌더에서 구성한 2~3명으로 시작. 같은 주제라도 구성이 다르면 다른 방.
+  const handleCreateRoomWithPersonas = useCallback(
+    (personas: string[]) => {
+      const topics = resolveTopics();
+      if (topics.length === 0 || personas.length === 0) return;
+      openRoom({
+        id: `${roomIdFromTopics(topics)}-${hashString(personas.join("|"))}`,
+        title: topics[0],
+        topics,
+        personas,
+        summary: `"${topics[0]}"에 대해 직접 구성한 참가자들이 토론하는 새 토론방`,
+      });
+    },
+    [openRoom, resolveTopics]
+  );
 
   const handleLeaveRoom = useCallback(() => {
     setInRoom(false);
@@ -326,9 +356,23 @@ function App() {
                     background: "var(--accent-warm)",
                     color: "#1E1E1E",
                   }}
+                  title="랜덤 3명으로 바로 시작"
                 >
                   <Plus size={18} />
                   만들기
+                </button>
+                <button
+                  onClick={() => setBuilderOpen(true)}
+                  className="h-12 px-5 rounded-lg flex items-center justify-center gap-2 font-semibold transition-opacity"
+                  style={{
+                    background: "var(--bg-elevated)",
+                    color: "var(--accent-warm)",
+                    border: "1px solid var(--border-color)",
+                  }}
+                  title="참가자 2~3명을 직접 구성해 시작"
+                >
+                  <Users size={18} />
+                  직접 고르기
                 </button>
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5">
@@ -346,6 +390,12 @@ function App() {
             </div>
           </section>
         </main>
+        <CreateRoomDialog
+          open={builderOpen}
+          onOpenChange={setBuilderOpen}
+          topic={topicDraft.trim() || topicPlaceholder}
+          onStart={handleCreateRoomWithPersonas}
+        />
       </div>
     );
   }

@@ -13,12 +13,15 @@ export function connect(
   onFrame: (frame: ServerFrame) => void,
   onStatus?: (connected: boolean) => void,
   roomId?: string,
-  topics?: string[]
+  topics?: string[],
+  personas?: string[]
 ): { send: (f: ClientFrame) => void; disconnect: () => void } {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const params = new URLSearchParams();
   if (roomId) params.set("room_id", roomId);
   if (topics?.length) params.set("topic", topics.join(","));
+  // 새 방 수동 구성: "blood:mbti:zodiac:role"를 ';'로 결합(최대 3명). 없으면 서버가 랜덤 3명.
+  if (personas?.length) params.set("personas", personas.join(";"));
   const query = params.toString();
   const url = `${protocol}://${location.host}/ws${query ? `?${query}` : ""}`;
 

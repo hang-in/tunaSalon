@@ -75,9 +75,11 @@ interface UseChatOptions {
   enabled?: boolean;
   roomId?: string;
   topics?: string[];
+  /** 새 방 수동 구성 참가자 ["blood:mbti:zodiac:role", ...]. 비면 서버가 랜덤 3명을 시딩. */
+  personas?: string[];
 }
 
-export function useChat({ enabled = true, roomId, topics = [] }: UseChatOptions = {}) {
+export function useChat({ enabled = true, roomId, topics = [], personas }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [engineState, setEngineState] = useState<EngineState>(DEFAULT_ENGINE_STATE);
   const [connected, setConnected] = useState(false);
@@ -166,13 +168,15 @@ export function useChat({ enabled = true, roomId, topics = [] }: UseChatOptions 
           },
         ]);
       }
-    }, (isConnected: boolean) => setConnected(isConnected), roomId, topics);
+    }, (isConnected: boolean) => setConnected(isConnected), roomId, topics, personas);
     connRef.current = conn;
     return () => {
       conn.disconnect();
       connRef.current = null;
       setConnected(false);
     };
+    // personas는 방 생성 시점에만 의미가 있어 의존성에서 제외(이후 변경은 서버 무시).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, roomId, topicKey, topics]);
 
   const resetChat = useCallback(() => {

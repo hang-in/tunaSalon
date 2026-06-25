@@ -7,111 +7,20 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { indianName } from "@/lib/indianName";
+import { AxisSelect } from "@/components/AxisSelect";
+import {
+  BLOOD_OPTIONS,
+  MBTI_OPTIONS,
+  ZODIAC_OPTIONS,
+  ROLE_OPTIONS,
+  MAX_PERSONAS,
+} from "@/lib/personaAxes";
 
 interface InvitePanelProps {
   /** human 제외 현재 persona 수 */
   personaCount: number;
   onInvite: (blood: string, mbti: string, zodiac: string, role?: string) => void;
-}
-
-interface Option {
-  value: string;
-  label: string;
-}
-
-const BLOOD_OPTIONS: Option[] = [
-  { value: "A", label: "A형" },
-  { value: "B", label: "B형" },
-  { value: "O", label: "O형" },
-  { value: "AB", label: "AB형" },
-];
-
-const MBTI_OPTIONS: Option[] = [
-  "ENTP", "ENTJ", "ENFP", "ENFJ",
-  "ESTP", "ESTJ", "ESFP", "ESFJ",
-  "INTP", "INTJ", "INFP", "INFJ",
-  "ISTP", "ISTJ", "ISFP", "ISFJ",
-].map((m) => ({ value: m, label: m }));
-
-const ZODIAC_OPTIONS: Option[] = [
-  { value: "ari", label: "양자리" },
-  { value: "tau", label: "황소자리" },
-  { value: "gem", label: "쌍둥이자리" },
-  { value: "can", label: "게자리" },
-  { value: "leo", label: "사자자리" },
-  { value: "vir", label: "처녀자리" },
-  { value: "lib", label: "천칭자리" },
-  { value: "sco", label: "전갈자리" },
-  { value: "sag", label: "사수자리" },
-  { value: "cap", label: "염소자리" },
-  { value: "aqu", label: "물병자리" },
-  { value: "pis", label: "물고기자리" },
-];
-
-const ROLE_OPTIONS: Option[] = [
-  { value: "friend", label: "친구" },
-  { value: "chaos", label: "와일드카드" },
-  { value: "critic", label: "비평가" },
-  { value: "realist", label: "현실주의자" },
-  { value: "teacher", label: "교사" },
-  { value: "poet", label: "시인" },
-  { value: "strategist", label: "전략가" },
-  { value: "summarizer", label: "정리자" },
-];
-
-const MAX_PERSONAS = 3;
-
-function AxisSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: Option[];
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-medium" style={{ color: "var(--text-secondary)" }}>
-        {label}
-      </span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger
-          className="h-9 text-[12px] rounded-lg w-full"
-          style={{
-            background: "var(--bg-base)",
-            border: "1px solid var(--border-color)",
-            color: value ? "var(--text-primary)" : "var(--text-secondary)",
-          }}
-        >
-          <SelectValue placeholder={label} />
-        </SelectTrigger>
-        <SelectContent
-          style={{
-            background: "var(--bg-elevated)",
-            borderColor: "var(--border-color)",
-            color: "var(--text-primary)",
-          }}
-        >
-          {options.map((o) => (
-            <SelectItem key={o.value} value={o.value} className="text-[12px]">
-              {o.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
 }
 
 export function InvitePanel({ personaCount, onInvite }: InvitePanelProps) {

@@ -249,11 +249,13 @@ export function connect(
   onFrame: (frame: ServerFrame) => void,
   onStatus?: (connected: boolean) => void,
   _roomId?: string,
-  topics?: string[]
+  topics?: string[],
+  _personas?: string[]
 ): { send: (frame: ClientFrame) => void; disconnect: () => void } {
   // Cleanup any previous connection
   if (intervalId) clearInterval(intervalId);
   if (topics?.length) currentTopics = topics;
+  void _personas; // mock 엔진은 초기 참가자 스펙을 사용하지 않는다(시그니처 일치용).
 
   engine = new ConversationEngine();
   callback = onFrame;
