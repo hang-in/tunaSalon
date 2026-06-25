@@ -6,6 +6,12 @@ use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModi
 use salon::persona_kit::{assemble, Blood, Mbti, Role, Zodiac};
 use salon::pool::{BackendConfig, BackendPool};
 use salon::preset::RoomPreset;
+#[cfg(feature = "web")]
+use rand::{Rng, SeedableRng};
+#[cfg(feature = "web")]
+use rand_chacha::ChaCha8Rng;
+#[cfg(feature = "web")]
+use std::str::FromStr;
 use salon::runtime::FakeBackend;
 use salon::sweep;
 use salon::tui::TuiSink;
@@ -135,9 +141,8 @@ fn main() {
             let rooms_db_path = RoomStore::default_rooms_db_path();
             let session_factory: salon::web::WebSessionFactory = {
                 let chat_config = chat_config.clone();
-                let chat_personas = chat_personas.clone();
                 let pool = pool.clone();
-                Arc::new(move |room_id: String| {
+                Arc::new(move |room_id: String, startup: &salon::web::WebStartup| {
                     let store = rooms_db_path
                         .as_ref()
                         .and_then(|p| match RoomStore::open(p) {
@@ -176,17 +181,20 @@ fn main() {
                             );
                             sess
                         } else {
-                            LiveSession::with_store_for_room(
+                            // 새 방: startup이 참가자 스펙을 주면 그걸로, 없으면 주제 기반
+                            // 랜덤 3명으로 시딩한다(고정 friend/chaos/summarizer 대신).
+                            let mut sess = LiveSession::with_store_for_room(
                                 chat_config.clone(),
-                                chat_personas.clone(),
+                                vec![],
                                 cli.seed,
                                 pool.clone(),
                                 "나",
                                 salon::memory::live_store(),
-                                room_id,
+                                room_id.clone(),
                             )
-                            .with_target_rho(RoomPreset::Pub.target_rho())
-                            .with_persona_meta(build_demo_persona_meta())
+                            .with_target_rho(RoomPreset::Pub.target_rho());
+                            seed_new_room_personas(&mut sess, &room_id, startup);
+                            sess
                         };
                     (session, store)
                 })
@@ -591,10 +599,100 @@ fn chat_personas() -> Vec<Persona> {
 }
 
 /// 데모 3인(friend / chaos / summarizer)의 역할 기반 system prompt를 반환한다.
+/// 공통 토론 가드레일 꼬리말(언어·간결·형식·반복억제). demo 페르소나뿐 아니라 새 방에
+/// 시딩되는 랜덤/수동 참가자도 같은 규율을 따르도록 공유한다.
+/// 응답 언어는 시스템 로케일(`$LANG`)에서 감지, 기본 한국어(salon::locale).
+fn debate_common_tail() -> String {
+    let lang = salon::locale::reply_language();
+    format!(
+        " You are in a live debate room, not casual small talk. A real person participates as \"나\". Always respond in {lang}, even if others write in another language. Take a clear position on the current topic only, and explicitly connect to at least one real participant by nickname when agreeing, rebutting, or refining their point. Do not write \"나님\"; refer to the human as \"사용자님\" only when direct address is necessary. Do not address Moderator, system-like progress lines, or 나 unless you are answering a fresh user message from 나. Use prior memory only when it directly matches the current topic; never import old topic terms just because a broad word overlaps. Default to brevity and vary your length turn to turn: most turns should be 2-4 sentences, and some should be a single sharp line — a pointed question, a direct rebuttal, or a one-line concession. Write a longer developed argument only occasionally, and only when the per-turn 형식 explicitly calls for it. Never pad to fill space; follow the per-turn 형식/길이 guidance rather than always writing the same amount. Lead with your key point, and format for readability: put your single most important claim or term in **bold**, break longer replies into two or three short paragraphs with a blank line between them, and address other participants by their exact nickname in plain text (do not bold the nickname). If you are repeating an earlier position, add a new concrete example, metric, legal threshold, implementation mechanism, or compromise test. Use real-world cases or standards only when they are genuinely relevant to the current topic. Do not expose chain-of-thought or hidden reasoning; give only the final argument. Avoid generic greetings, seasonal chatter, therapy language, excessive praise, emojis, and laughter. Some recent lines may be YOUR OWN earlier messages; never praise or react to your own line as if someone else said it."
+    )
+}
+
+/// 새 방 초기 참가자를 시딩한다(`--web` 팩토리 전용). startup이 수동 스펙을 주면 그걸로,
+/// 비어 있으면 room_id 기반 결정적 랜덤 3명으로. 각 참가자는 가용 백엔드로 라우팅된다
+/// (friend 다운이면 전부 cloud). 복원된 방에는 호출되지 않는다.
+#[cfg(feature = "web")]
+fn seed_new_room_personas(sess: &mut LiveSession, room_id: &str, startup: &salon::web::WebStartup) {
+    let use_friend = use_friend_backend();
+    let specs: Vec<(Blood, Mbti, Zodiac, Role)> = if startup.personas().is_empty() {
+        random_three_axes(room_id)
+    } else {
+        startup
+            .personas()
+            .iter()
+            .filter_map(parse_initial_persona)
+            .collect()
+    };
+    let tail = debate_common_tail();
+    for (i, (blood, mbti, zodiac, role)) in specs.into_iter().enumerate() {
+        let assembled = assemble(role, mbti, blood, zodiac, "");
+        // 닉네임(id) 충돌 시 건너뛴다.
+        if sess.persona_meta().contains_key(&assembled.persona.id)
+            || sess.personas().iter().any(|p| p.id == assembled.persona.id)
+        {
+            continue;
+        }
+        // 첫 참가자는 cloud, 나머지는 friend(가용 시). friend 다운이면 전부 cloud.
+        let backend = if use_friend && i > 0 { "friend" } else { "cloud" };
+        let meta = PersonaMeta {
+            backend: backend.to_string(),
+            system_prompt: format!("{}{}", assembled.system_prompt, tail),
+            modifier: assembled.modifier,
+            axes: Some(salon::live::PersonaAxes {
+                blood: blood.code().to_string(),
+                mbti: mbti.code().to_string(),
+                zodiac: zodiac.abbreviation().to_string(),
+                role: role.key().to_string(),
+            }),
+        };
+        sess.add_persona(assembled.persona, meta);
+    }
+}
+
+/// 프런트가 보낸 초기 참가자 축 문자열을 enum으로 파싱한다. 잘못된 항목은 None.
+#[cfg(feature = "web")]
+fn parse_initial_persona(p: &salon::web::InitialPersona) -> Option<(Blood, Mbti, Zodiac, Role)> {
+    Some((
+        Blood::from_str(&p.blood).ok()?,
+        Mbti::from_str(&p.mbti).ok()?,
+        Zodiac::from_str(&p.zodiac).ok()?,
+        Role::from_str(&p.role).ok()?,
+    ))
+}
+
+/// room_id에서 결정적으로 랜덤 3명의 축을 뽑는다(같은 방 = 같은 3명, 재현 가능).
+#[cfg(feature = "web")]
+fn random_three_axes(room_id: &str) -> Vec<(Blood, Mbti, Zodiac, Role)> {
+    // FNV-1a 해시로 room_id → seed.
+    let seed = room_id.bytes().fold(0xcbf29ce484222325u64, |acc, b| {
+        (acc ^ b as u64).wrapping_mul(0x100000001b3)
+    });
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let bloods = Blood::all();
+    let mbtis = Mbti::all();
+    let zodiacs = Zodiac::all();
+    let roles = Role::all();
+    let mut out: Vec<(Blood, Mbti, Zodiac, Role)> = Vec::new();
+    let mut guard = 0;
+    while out.len() < 3 && guard < 64 {
+        guard += 1;
+        let b = bloods[rng.gen_range(0..bloods.len())];
+        let m = mbtis[rng.gen_range(0..mbtis.len())];
+        let z = zodiacs[rng.gen_range(0..zodiacs.len())];
+        let r = roles[rng.gen_range(0..roles.len())];
+        // 같은 (blood,mbti,zodiac) 조합은 닉네임이 겹치므로 건너뛴다.
+        if out.iter().any(|(ob, om, oz, _)| *ob == b && *om == m && *oz == z) {
+            continue;
+        }
+        out.push((b, m, z, r));
+    }
+    out
+}
+
 /// 웹/채팅 경로는 이제 잡담방이 아니라 토론방으로 다룬다.
 /// 응답 언어는 시스템 로케일(`$LANG`)에서 감지, 기본 한국어(salon::locale).
 fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
-    let lang = salon::locale::reply_language();
     let friend_name = default_persona_seed("friend")
         .map(default_persona_name)
         .unwrap_or_else(|| "Friendly Regular".to_string());
@@ -604,10 +702,8 @@ fn demo_persona_system_prompts() -> BTreeMap<PersonaId, String> {
     let summarizer_name = default_persona_seed("summarizer")
         .map(default_persona_name)
         .unwrap_or_else(|| "Quiet Summarizer".to_string());
-    // 공통 꼬리말: 언어 지시 + 토론 가드레일.
-    let common = format!(
-        " You are in a live debate room, not casual small talk. A real person participates as \"나\". Always respond in {lang}, even if others write in another language. Take a clear position on the current topic only, and explicitly connect to at least one real participant by nickname when agreeing, rebutting, or refining their point. Do not write \"나님\"; refer to the human as \"사용자님\" only when direct address is necessary. Do not address Moderator, system-like progress lines, or 나 unless you are answering a fresh user message from 나. Use prior memory only when it directly matches the current topic; never import old topic terms just because a broad word overlaps. Default to brevity and vary your length turn to turn: most turns should be 2-4 sentences, and some should be a single sharp line — a pointed question, a direct rebuttal, or a one-line concession. Write a longer developed argument only occasionally, and only when the per-turn 형식 explicitly calls for it. Never pad to fill space; follow the per-turn 형식/길이 guidance rather than always writing the same amount. Lead with your key point, and format for readability: put your single most important claim or term in **bold**, break longer replies into two or three short paragraphs with a blank line between them, and address other participants by their exact nickname in plain text (do not bold the nickname). If you are repeating an earlier position, add a new concrete example, metric, legal threshold, implementation mechanism, or compromise test. Use real-world cases or standards only when they are genuinely relevant to the current topic. Do not expose chain-of-thought or hidden reasoning; give only the final argument. Avoid generic greetings, seasonal chatter, therapy language, excessive praise, emojis, and laughter. Some recent lines may be YOUR OWN earlier messages; never praise or react to your own line as if someone else said it."
-    );
+    // 공통 꼬리말: 언어 지시 + 토론 가드레일(seed/invite 참가자와 공유 — debate_common_tail).
+    let common = debate_common_tail();
     let mut m = BTreeMap::new();
     m.insert(
         "friend".to_string(),

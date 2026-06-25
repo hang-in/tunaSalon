@@ -133,17 +133,42 @@ const OWNER_REFRESH_SECS: u64 = 5;
 #[derive(Debug, Clone, Default)]
 pub struct WebStartup {
     topics: Vec<String>,
+    /// 새 방 시딩용 초기 참가자 스펙(수동 구성). 비어 있으면 랜덤 3명으로 시딩한다.
+    /// 복원된 방(rooms.db 스냅샷 존재)에는 적용되지 않는다.
+    personas: Vec<InitialPersona>,
+}
+
+/// 새 방을 만들 때 프런트가 지정한 초기 참가자 한 명의 축.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InitialPersona {
+    pub blood: String,
+    pub mbti: String,
+    pub zodiac: String,
+    pub role: String,
 }
 
 impl WebStartup {
     pub fn debate(topics: Vec<String>) -> Self {
         Self {
             topics: normalize_topics(topics),
+            personas: Vec::new(),
+        }
+    }
+
+    pub fn debate_with_personas(topics: Vec<String>, personas: Vec<InitialPersona>) -> Self {
+        Self {
+            topics: normalize_topics(topics),
+            personas,
         }
     }
 
     fn topics(&self) -> &[String] {
         &self.topics
+    }
+
+    /// 새 방 초기 참가자 스펙(수동). 비어 있으면 호출측이 랜덤 3명을 시딩한다.
+    pub fn personas(&self) -> &[InitialPersona] {
+        &self.personas
     }
 
     fn opening_prompt(&self) -> Option<String> {
@@ -858,7 +883,7 @@ fn spawn_owner_refresher(
 }
 
 pub type WebSessionFactory =
-    Arc<dyn Fn(String) -> (LiveSession, Option<RoomStore>) + Send + Sync + 'static>;
+    Arc<dyn Fn(String, &WebStartup) -> (LiveSession, Option<RoomStore>) + Send + Sync + 'static>;
 
 struct RoomRuntime {
     room_id: String,
@@ -885,7 +910,7 @@ async fn spawn_room_runtime(
     factory: WebSessionFactory,
     #[cfg(feature = "redis-bus")] redis_bus: Option<RedisBus>,
 ) -> Arc<RoomRuntime> {
-    let (session, store) = factory(room_id.clone());
+    let (session, store) = factory(room_id.clone(), &startup);
     let human_id = "나".to_string();
     let (frame_tx, _) = broadcast::channel::<String>(256);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<EngineCmd>();
@@ -999,6 +1024,31 @@ async fn get_room_runtime(
 struct WsParams {
     room_id: Option<String>,
     topic: Option<String>,
+    /// 새 방 초기 참가자(수동 구성). "blood:mbti:zodiac:role" 를 ';'로 구분해 최대 3명.
+    /// 비거나 없으면 호출측이 랜덤 3명을 시딩한다.
+    personas: Option<String>,
+}
+
+/// `WsParams.personas` 쿼리("blood:mbti:zodiac:role;..." )를 파싱한다. 잘못된 항목은 건너뛴다.
+fn parse_persona_param(raw: Option<&str>) -> Vec<InitialPersona> {
+    let Some(raw) = raw else {
+        return Vec::new();
+    };
+    raw.split(';')
+        .filter_map(|entry| {
+            let parts: Vec<&str> = entry.split(':').map(|s| s.trim()).collect();
+            if parts.len() != 4 || parts.iter().any(|p| p.is_empty()) {
+                return None;
+            }
+            Some(InitialPersona {
+                blood: parts[0].to_string(),
+                mbti: parts[1].to_string(),
+                zodiac: parts[2].to_string(),
+                role: parts[3].to_string(),
+            })
+        })
+        .take(3)
+        .collect()
 }
 
 async fn handle_runtime_socket(socket: axum::extract::ws::WebSocket, runtime: Arc<RoomRuntime>) {
@@ -1118,10 +1168,12 @@ pub fn serve_multi(
                 &st.default_room_id,
             );
             let topics = normalize_topics(params.topic.into_iter().collect());
-            let startup = if topics.is_empty() && room_id == st.default_room_id {
+            let personas = parse_persona_param(params.personas.as_deref());
+            let startup = if topics.is_empty() && personas.is_empty() && room_id == st.default_room_id
+            {
                 st.default_startup.clone()
             } else {
-                WebStartup::debate(topics)
+                WebStartup::debate_with_personas(topics, personas)
             };
             let runtime = get_room_runtime(&st, room_id, startup).await;
             ws.on_upgrade(move |socket| handle_runtime_socket(socket, runtime))
