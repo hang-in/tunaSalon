@@ -16,6 +16,7 @@
 
 mod directive;
 mod format;
+pub mod plan;
 mod text;
 
 pub(crate) use directive::{
@@ -23,6 +24,7 @@ pub(crate) use directive::{
     significant_topic_tokens,
 };
 pub(crate) use format::length_hint;
+pub use plan::{infer_debate_plan, DebateMode, DebatePlan};
 pub(crate) use text::{
     mentioned_persona_id, sanitize_generated_text, strip_speaker_prefix, summary_persona_id,
 };
