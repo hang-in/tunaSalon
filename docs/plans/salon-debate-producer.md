@@ -146,7 +146,7 @@ LiveSession.tick:                       ▼
 - `format_hint`로 `length_hint` 대체(summarizer는 다른 가중치).
 - 프롬프트 비대화 주의(길면 모델 드리프트) — plan 텍스트는 압축.
 
-### Stage E — 루프 차단 producer (핸드오프 Step 5)
+### Stage E — 루프 차단 producer (핸드오프 Step 5) ✅ DONE(Stage E.1)
 - 신호: `flow()`(과수렴) + `repetition_guard` + `turns_since_summary` + 동일화자 반복.
 - 개입: evidence card 1장 투입 / 미응답 질문 강제 / summarizer 도전. 전부 hidden producer
   텍스트(처음엔 가시 system 메시지 아님).

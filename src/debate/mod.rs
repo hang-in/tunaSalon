@@ -15,6 +15,7 @@
 //! 이후 DebatePlan/숨은목표/evidence card 등은 이 모듈에서 자란다(`docs/plans/salon-debate-producer.md`).
 
 mod directive;
+mod evidence;
 mod format;
 pub mod plan;
 mod text;
@@ -23,6 +24,7 @@ pub(crate) use directive::{
     build_directive, cross_room_memory_is_topic_relevant, repetition_guard,
     significant_topic_tokens,
 };
+pub(crate) use evidence::twist_card;
 pub(crate) use format::format_hint;
 pub use plan::{infer_debate_plan, DebateMode, DebatePlan};
 pub(crate) use text::{

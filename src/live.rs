@@ -10,7 +10,7 @@
 use crate::debate::{
     build_directive, cross_room_memory_is_topic_relevant, format_hint, infer_debate_plan,
     mentioned_persona_id, repetition_guard, sanitize_generated_text, significant_topic_tokens,
-    strip_speaker_prefix, summary_persona_id, DebatePlan,
+    strip_speaker_prefix, summary_persona_id, twist_card, DebatePlan,
 };
 use crate::flow;
 use crate::gate::{self, GateResult};
@@ -136,9 +136,16 @@ pub struct LiveSession {
     forced_next_speaker: Option<PersonaId>,
     /// 요약/쟁점정리 persona가 개입하지 않은 최근 persona 발화 수.
     turns_since_summary: u32,
+    /// 마지막 twist(새 국면) 투입 이후 경과한 디스패치 턴 수(Stage E 쿨다운).
+    turns_since_twist: u32,
     /// 화자 라벨 집합(소문자). 생성 결과 앞 `이름:`/`나:` echo 제거용.
     speaker_labels: std::collections::BTreeSet<String>,
 }
+
+/// 과수렴 판정 임계값(flow convergence). 이 값을 넘고 쿨다운이 지나면 twist 투입.
+const CONVERGENCE_TWIST_THRESHOLD: f64 = 0.6;
+/// twist(새 국면) 투입 간 최소 디스패치 턴 간격(연속 투입 방지).
+const TWIST_COOLDOWN: u32 = 3;
 
 /// 사람 발화 후 그 메시지를 최우선으로 둘 페르소나 턴 수.
 const HUMAN_FOCUS_TURNS: u32 = 4;
@@ -312,6 +319,7 @@ impl LiveSession {
             topics: Vec::new(),
             debate_plan: None,
             target_rho: 0.0,
+            turns_since_twist: 0,
             last_human_msg: None,
             human_focus: 0,
             forced_next_speaker: None,
@@ -619,8 +627,23 @@ impl LiveSession {
         );
         // 발화 형식 변주(tick+화자 기반 결정적, rng 무소비). plan 있으면 모드별 형식.
         let fmt_hint = format_hint(tick, &chosen, self.debate_plan.as_ref());
+        // 루프 차단 producer(Stage E): 과수렴(flow) 또는 반복 신호가 지속되고 쿨다운이
+        // 지났으면 모드별 새 국면(twist) 1장 투입. content 없는 골든/FakeBackend는
+        // flow None + repetition None → 신호 false → 개입 없음(불변식 보존). plan 없으면 미투입.
+        let over_converging = flow_now.is_some_and(|m| m.convergence > CONVERGENCE_TWIST_THRESHOLD);
+        let loop_signal = repetition.is_some() || over_converging;
+        let twist: Option<&'static str> = match self.debate_plan.as_ref() {
+            Some(plan) if loop_signal && self.turns_since_twist >= TWIST_COOLDOWN => {
+                self.turns_since_twist = 0;
+                Some(twist_card(plan.mode, tick as usize))
+            }
+            _ => {
+                self.turns_since_twist = self.turns_since_twist.saturating_add(1);
+                None
+            }
+        };
         // 토론 연출 프레임(모드 anchor + 대립축 1개). plan 없으면 생략 → 기존 동작 보존.
-        // 순서: [토론 프레임] [진행 지시] [형식] — 한 줄로 합쳐 최근 로그 1줄만 차지.
+        // 순서: [토론 프레임] [진행 지시] [새 국면] [형식] — 한 줄로 합쳐 최근 로그 1줄만 차지.
         let mut segs: Vec<String> = Vec::new();
         if let Some(plan) = self.debate_plan.as_ref() {
             segs.push(plan.directive_line(tick));
@@ -631,6 +654,9 @@ impl LiveSession {
                 self.human_focus -= 1;
             }
             segs.push(d);
+        }
+        if let Some(t) = twist {
+            segs.push(t.to_string());
         }
         segs.push(fmt_hint);
         let combined = segs.join(" ");
@@ -895,6 +921,7 @@ impl LiveSession {
         self.human_focus = 0;
         self.forced_next_speaker = None;
         self.turns_since_summary = 0;
+        self.turns_since_twist = 0;
         self.set_topics(topics);
         self.store.clear_room(&self.room);
         for persona in &self.personas {
