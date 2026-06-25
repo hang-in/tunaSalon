@@ -136,11 +136,11 @@ export function Composer({ onSend, onSetTopics, currentTopics, disabled }: Compo
       )}
 
       {/* Input row */}
-      <div className="px-4 lg:px-6 py-3 flex items-end gap-3">
+      <div className="px-4 lg:px-6 py-3 flex items-center gap-3">
         {/* Topic toggle button */}
         <button
           onClick={() => setShowTopicEditor(!showTopicEditor)}
-          className="shrink-0 p-2.5 rounded-xl transition-colors mb-0.5"
+          className="shrink-0 p-2.5 rounded-xl transition-colors"
           style={{
             background: showTopicEditor ? "rgba(229, 164, 74, 0.15)" : "var(--bg-surface)",
             color: showTopicEditor ? "var(--accent-warm)" : "var(--text-secondary)",
