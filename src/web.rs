@@ -637,16 +637,18 @@ fn run_engine(
                         );
                         continue;
                     }
-                    // 자동 backend 배분: cloud 1명 우선, 나머지 friend
+                    // 자동 backend 배분: cloud 1명 우선, 나머지 friend.
+                    // 단 friend 백엔드가 실제 가용할 때만 friend로 보낸다 — 서버 다운(cloud-only)
+                    // 상태에서 friend로 라우팅하면 그 참가자가 발화하지 못한다(침묵 버그).
                     let cloud_count = session
                         .persona_meta()
                         .values()
                         .filter(|m| m.backend == "cloud")
                         .count();
-                    let backend = if cloud_count < 1 {
-                        "cloud".to_string()
-                    } else {
+                    let backend = if session.has_backend("friend") && cloud_count >= 1 {
                         "friend".to_string()
+                    } else {
+                        "cloud".to_string()
                     };
                     let name = assembled.persona.name.clone();
                     session.add_persona(

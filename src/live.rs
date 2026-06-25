@@ -945,6 +945,12 @@ impl LiveSession {
         &self.persona_meta
     }
 
+    /// 풀에 주어진 backend 이름이 실제로 존재하는지.
+    /// 초대 시 죽은 백엔드(예: friend 서버 다운 → cloud-only)로 라우팅해 침묵하는 것을 막는다.
+    pub fn has_backend(&self, name: &str) -> bool {
+        self.pool.backend_names().iter().any(|n| *n == name)
+    }
+
     /// 영속 복원용: 저장된 대화 로그와 tick_count를 주입한다.
     ///
     /// add_persona로 참가자를 먼저 복원한 뒤 호출한다.
