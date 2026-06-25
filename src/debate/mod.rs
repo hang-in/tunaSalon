@@ -23,7 +23,7 @@ pub(crate) use directive::{
     build_directive, cross_room_memory_is_topic_relevant, repetition_guard,
     significant_topic_tokens,
 };
-pub(crate) use format::length_hint;
+pub(crate) use format::format_hint;
 pub use plan::{infer_debate_plan, DebateMode, DebatePlan};
 pub(crate) use text::{
     mentioned_persona_id, sanitize_generated_text, strip_speaker_prefix, summary_persona_id,

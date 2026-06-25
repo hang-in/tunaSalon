@@ -8,9 +8,9 @@
 //! - crossterm·ratatui 없음 — 순수 세션 로직.
 
 use crate::debate::{
-    build_directive, cross_room_memory_is_topic_relevant, length_hint, mentioned_persona_id,
-    repetition_guard, sanitize_generated_text, significant_topic_tokens, strip_speaker_prefix,
-    summary_persona_id,
+    build_directive, cross_room_memory_is_topic_relevant, format_hint, infer_debate_plan,
+    mentioned_persona_id, repetition_guard, sanitize_generated_text, significant_topic_tokens,
+    strip_speaker_prefix, summary_persona_id, DebatePlan,
 };
 use crate::flow;
 use crate::gate::{self, GateResult};
@@ -122,6 +122,9 @@ pub struct LiveSession {
     persona_meta: BTreeMap<PersonaId, PersonaMeta>,
     /// 방 화제 태그(최대 5개). 생성 워커로 보내는 history 스냅샷에만 주입(INV-2).
     topics: Vec<String>,
+    /// topics에서 결정적으로 추론한 토론 연출 계획(Stage D). topics 비면 None.
+    /// 생성 지시·형식 변주에만 쓰이고 화자선택/골든에는 무영향(history_snapshot 전용).
+    debate_plan: Option<DebatePlan>,
     /// alpha 정규화 목표 spectral radius. 0.0이면 coupling_from_modifiers가 빈 행렬 반환(케미 없음).
     /// with_target_rho 빌더로 설정. add/remove_persona 시 alpha 재계산에 사용.
     target_rho: f64,
@@ -307,6 +310,7 @@ impl LiveSession {
             human_id,
             persona_meta: BTreeMap::new(),
             topics: Vec::new(),
+            debate_plan: None,
             target_rho: 0.0,
             last_human_msg: None,
             human_focus: 0,
@@ -613,19 +617,23 @@ impl LiveSession {
             direct_call,
             repetition,
         );
-        // 발화 길이 변주(tick+화자 기반 결정적, rng 무소비). 진행 지시와 한 줄로 합쳐
-        // 최근 로그 컨텍스트 중 1줄만 차지하게 한다.
-        let len_hint = length_hint(tick, &chosen);
-        let combined = match directive {
-            Some(d) => {
-                // 진행 지시(사람 우선/화제)를 실제로 쓴 경우 human_focus 1턴 소모.
-                if self.human_focus > 0 {
-                    self.human_focus -= 1;
-                }
-                format!("{d} {len_hint}")
+        // 발화 형식 변주(tick+화자 기반 결정적, rng 무소비). plan 있으면 모드별 형식.
+        let fmt_hint = format_hint(tick, &chosen, self.debate_plan.as_ref());
+        // 토론 연출 프레임(모드 anchor + 대립축 1개). plan 없으면 생략 → 기존 동작 보존.
+        // 순서: [토론 프레임] [진행 지시] [형식] — 한 줄로 합쳐 최근 로그 1줄만 차지.
+        let mut segs: Vec<String> = Vec::new();
+        if let Some(plan) = self.debate_plan.as_ref() {
+            segs.push(plan.directive_line(tick));
+        }
+        if let Some(d) = directive {
+            // 진행 지시(사람 우선/화제)를 실제로 쓴 경우 human_focus 1턴 소모.
+            if self.human_focus > 0 {
+                self.human_focus -= 1;
             }
-            None => len_hint.to_string(),
-        };
+            segs.push(d);
+        }
+        segs.push(fmt_hint);
+        let combined = segs.join(" ");
         let topic_event = crate::model::Event {
             ts: tick as f64 * self.config.tick_interval,
             speaker: "(진행)".to_string(),
@@ -863,6 +871,12 @@ impl LiveSession {
             .filter(|s| !s.is_empty())
             .take(5)
             .collect();
+        // 토론 연출 계획 재추론(결정적). topics 비면 None → plan 미주입(기존 동작 보존).
+        self.debate_plan = if self.topics.is_empty() {
+            None
+        } else {
+            Some(infer_debate_plan(&self.topics))
+        };
     }
 
     pub fn reset_discussion(&mut self, topics: Vec<String>) {

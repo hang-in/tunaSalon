@@ -125,14 +125,14 @@ LiveSession.tick:                       ▼
 
 핸드오프의 Step 1~6을 **갓파일 분리와 결합**해 재배열한다.
 
-### Stage A — `src/debate/` 모듈 신설 + 기존 순수 로직 이관 (행위 동일)
+### Stage A — `src/debate/` 모듈 신설 + 기존 순수 로직 이관 (행위 동일) ✅ DONE(9cfc248)
 - `live.rs` L141~286의 producer 순수 함수들을 `src/debate/`로 **이동만**(시그니처 동일,
   `live.rs`는 `use crate::debate::…`). 신규 동작 0.
 - 단위테스트를 새 위치에 동반(TDD: 이동 전 카운트 확인 → 이동 → green).
 - **이점**: 이후 모든 producer 기능이 `live.rs`가 아니라 `src/debate/`에서 자란다.
 - 검증: `cargo test` 카운트 동일 + 골든 5/5.
 
-### Stage B — DebatePlan 타입 + 결정적 추론 (핸드오프 Step 1)
+### Stage B — DebatePlan 타입 + 결정적 추론 (핸드오프 Step 1) ✅ DONE(43be2d5)
 - `plan.rs`: `infer_debate_plan(topics) -> DebatePlan`(키워드/카테고리 매칭, LLM 미사용).
 - 모드: PolicyDuel / MoralDilemma / Courtroom / Forecasting / DesignReview / PersonalStakes.
 - 테스트: "AI 판사…"→Courtroom/MoralDilemma, "AI 규제와 오픈소스"→PolicyDuel,
@@ -141,7 +141,7 @@ LiveSession.tick:                       ▼
 ### Stage C — DebatePlan 영속 (핸드오프 Step 2, roomstore.rs)
 - `rooms.db`에 plan 저장/복원, 누락 컬럼 안전 마이그레이션, 기존 룸은 topics로 추론.
 
-### Stage D — 지시 주입 + format 변주 (핸드오프 Step 3+4)
+### Stage D — 지시 주입 + format 변주 (핸드오프 Step 3+4) ✅ DONE(Stage D.1)
 - `directive.rs`가 plan(mode/stakes/공개입장/숨은목표 1개/format 1개)을 간결히 조립.
 - `format_hint`로 `length_hint` 대체(summarizer는 다른 가중치).
 - 프롬프트 비대화 주의(길면 모델 드리프트) — plan 텍스트는 압축.

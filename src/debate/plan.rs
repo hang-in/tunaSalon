@@ -38,6 +38,65 @@ pub struct DebatePlan {
     pub fault_lines: Vec<String>,
 }
 
+impl DebateMode {
+    /// 짧은 모드 라벨(생성 지시용).
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            DebateMode::PolicyDuel => "정책 다툼",
+            DebateMode::MoralDilemma => "가치 딜레마",
+            DebateMode::Courtroom => "법정형 다툼",
+            DebateMode::Forecasting => "전망·예측",
+            DebateMode::DesignReview => "설계 논쟁",
+            DebateMode::PersonalStakes => "개인적 쟁점",
+        }
+    }
+
+    /// 주제가 다른 영역으로 새지 않게 잡아주는 모드별 행동 지시(anti-drift).
+    pub(crate) fn instruction(self) -> &'static str {
+        match self {
+            DebateMode::PolicyDuel => {
+                "누가 무엇을 의무화·금지하고 그 비용과 집행을 누가 지는지에 집중하세요."
+            }
+            DebateMode::MoralDilemma => {
+                "각자 어떤 가치를 우선하는지 밝히고 그 대가를 인정하며 논하세요."
+            }
+            DebateMode::Courtroom => {
+                "주장마다 근거를 대고 상대 전제를 교차신문하되, 이 쟁점의 공정성·책임 문제에서 벗어나지 마세요."
+            }
+            DebateMode::Forecasting => {
+                "예측과 신뢰도를 내걸고, 무엇을 보면 누가 틀렸는지 함께 말하세요."
+            }
+            DebateMode::DesignReview => {
+                "설계 대안 하나를 들고 그 트레이드오프와 실패 모드를 짚으세요."
+            }
+            DebateMode::PersonalStakes => {
+                "추상 정책으로 빠지지 말고 구체적 경험에서 시작해 입장을 세우세요."
+            }
+        }
+    }
+}
+
+impl DebatePlan {
+    /// 생성 워커에 주입할 압축 토론 프레임(한 줄). tick으로 대립축을 회전 선택한다.
+    /// 길게 쓰면 모델이 드리프트하므로 의도적으로 짧게 유지(라벨+anti-drift 지시+대립축 1개).
+    pub(crate) fn directive_line(&self, tick: u64) -> String {
+        let fault = if self.fault_lines.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " (대립축: {})",
+                self.fault_lines[(tick as usize) % self.fault_lines.len()]
+            )
+        };
+        format!(
+            "[토론] 이 쟁점은 {} 성격입니다 — {}{}",
+            self.mode.label(),
+            self.mode.instruction(),
+            fault
+        )
+    }
+}
+
 /// 모드별 키워드. (모드, 우선순위 순서대로 나열 — 동점 tie-break에 사용)
 /// 키워드는 공백 제거 없이 원문 substring 매칭.
 fn mode_keywords() -> [(DebateMode, &'static [&'static str]); 6] {
@@ -189,6 +248,15 @@ mod tests {
         let b = infer_debate_plan(&topics);
         assert_eq!(a, b);
         assert_eq!(a.topic, "AI 규제와 오픈소스, 보안 책임");
+    }
+
+    #[test]
+    fn directive_line_carries_mode_anchor_and_fault() {
+        let p = plan_of("AI 판사가 인간 판사보다 공정할 수 있을까?"); // Courtroom
+        let line = p.directive_line(0);
+        assert!(line.starts_with("[토론]"));
+        assert!(line.contains("법정형"));
+        assert!(line.contains("대립축:"));
     }
 
     #[test]
