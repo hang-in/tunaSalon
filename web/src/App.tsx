@@ -464,10 +464,10 @@ function App() {
         onDelete={handleDeleteActiveRoom}
       />
 
-      {/* P2-1: 연결 끊김 배너 */}
+      {/* P2-1: 연결 끊김 배너 (in-flow — 헤더 아래에 자연스럽게 쌓임) */}
       {!connected && (
         <div
-          className="fixed top-16 left-0 right-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium"
+          className="shrink-0 z-30 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium"
           style={{
             background: "rgba(217, 100, 90, 0.12)",
             borderBottom: "1px solid rgba(217, 100, 90, 0.25)",
@@ -482,11 +482,8 @@ function App() {
         </div>
       )}
 
-      {/* Main content - 배너가 있을 때 top offset 추가 */}
-      <div
-        className="flex flex-1 overflow-hidden relative z-10 transition-all duration-300"
-        style={{ paddingTop: connected ? 64 : 100 }}
-      >
+      {/* Main content — 헤더/배너가 in-flow라 별도 top offset 불필요(모바일 브라우저 무관). */}
+      <div className="flex flex-1 overflow-hidden relative z-10">
         {/* Chat column */}
         <main className="flex flex-col flex-1 min-w-0">
           <ChatArea

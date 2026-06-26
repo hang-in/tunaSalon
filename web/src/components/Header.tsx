@@ -19,7 +19,7 @@ export function Header({ topics, connected, participantCount, onToggleSidebar, b
   const [helpOpen, setHelpOpen] = useState(false);
   return (
     <header
-      className="fixed top-0 left-0 right-0 h-16 z-40 flex items-center px-4 lg:px-6"
+      className="relative shrink-0 h-16 z-40 flex items-center px-4 lg:px-6"
       style={{
         background: "rgba(30, 30, 30, 0.85)",
         backdropFilter: "blur(16px)",
