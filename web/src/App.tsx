@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useChat } from "@/hooks/useChat";
 import { Header } from "@/components/Header";
 import { ChatArea } from "@/components/ChatArea";
@@ -15,6 +15,12 @@ interface DebateRoom {
   summary?: string;
   /** 새 방 수동 구성 참가자 ["blood:mbti:zodiac:role", ...]. 비면 서버가 랜덤 3명 시딩. */
   personas?: string[];
+}
+
+/** 서버 /api/suggested-topics 응답: 분야별 추천 토론 주제. */
+interface SuggestedGroup {
+  category: string;
+  topics: string[];
 }
 
 const RECENT_ROOMS_KEY = "tunaSalon.recentRooms.v1";
@@ -125,6 +131,20 @@ function App() {
     personas: activeRoom?.personas,
   });
   const [builderOpen, setBuilderOpen] = useState(false);
+  // 서버가 12h마다 웹서치+gemma로 생성하는 분야별 추천 주제. 비면 정적 TOPIC_SUGGESTIONS 폴백.
+  const [suggestedGroups, setSuggestedGroups] = useState<SuggestedGroup[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/suggested-topics")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: SuggestedGroup[]) => {
+        if (alive && Array.isArray(data)) setSuggestedGroups(data.filter((g) => g?.topics?.length));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const rememberRoom = useCallback((room: DebateRoom) => {
     setRecentRooms((prev) => {
@@ -375,18 +395,42 @@ function App() {
                   직접 고르기
                 </button>
               </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {TOPIC_SUGGESTIONS.map((topic) => (
-                  <button
-                    key={topic}
-                    onClick={() => setTopicDraft(topic)}
-                    className="px-2 py-1 rounded-md text-[11px] font-medium"
-                    style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
-                  >
-                    {topic}
-                  </button>
-                ))}
-              </div>
+              {suggestedGroups.length > 0 ? (
+                <div className="mt-3 flex flex-col gap-2.5">
+                  {suggestedGroups.map((group) => (
+                    <div key={group.category}>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] opacity-70 mb-1">
+                        {group.category}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.topics.map((topic) => (
+                          <button
+                            key={topic}
+                            onClick={() => setTopicDraft(topic)}
+                            className="px-2 py-1 rounded-md text-[11px] font-medium text-left"
+                            style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
+                          >
+                            {topic}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {TOPIC_SUGGESTIONS.map((topic) => (
+                    <button
+                      key={topic}
+                      onClick={() => setTopicDraft(topic)}
+                      className="px-2 py-1 rounded-md text-[11px] font-medium"
+                      style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
+                    >
+                      {topic}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
         </main>
