@@ -264,7 +264,9 @@ function App() {
   if (!inRoom) {
     return (
       <div className="h-screen w-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
-        <main className="h-full overflow-y-auto px-4 py-8 flex items-center justify-center">
+        <main className="h-full overflow-y-auto">
+          {/* min-h-full 래퍼: 콘텐츠가 짧으면 중앙, 길면 위에서부터 스크롤(모바일 상단 잘림 방지). */}
+          <div className="min-h-full flex items-center justify-center px-4 py-8">
           <section
             className="w-full max-w-4xl"
             style={{ color: "var(--text-primary)" }}
@@ -430,6 +432,7 @@ function App() {
               )}
             </div>
           </section>
+          </div>
         </main>
         <CreateRoomDialog
           open={builderOpen}
