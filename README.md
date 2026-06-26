@@ -3,14 +3,16 @@
 # tunaSalon
 
 ![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)
-![status](https://img.shields.io/badge/status-v0.10-blue)
-![tests](https://img.shields.io/badge/tests-271%20passing-brightgreen)
+![status](https://img.shields.io/badge/status-v0.10%20%2B%20web-blue)
+![tests](https://img.shields.io/badge/tests-291%20passing-brightgreen)
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
 A terminal chat room where you drop in and small-talk with LLM personas. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet. v0.5 makes you a first-class participant: type something and the personas turn to react; go quiet and they drift back to their own chatter. v0.6 adds a conversation thermometer — watching whether the room is converging or still alive.
 
 Designing speech is easy. Designing silence is hard. This project is a little backwards on purpose.
+
+> **Now in the browser, as a topic debate.** The room has grown a web front-end and become a topic-based LLM **debate app**: pick a topic, a *producer* layer decides what kind of argument it should be, and the personas argue it out — remembering, rebutting, and calling each other by name. The flow engine below is still the heart; the debate is what it now powers. See [Topic debate in the browser](#topic-debate-in-the-browser) near the end.
 
 ---
 
@@ -244,6 +246,32 @@ So lexically-different-but-semantically-same lines now recall: a stored "강아�
 
 ---
 
+## Topic debate in the browser
+
+The engine track (v0.1–v0.10) was always *means to an end*: liveliness. The product is the room — and the room has become a **topic-based LLM debate app** you open in a browser (axum WebSocket + React, `--features "web redis-bus"`).
+
+A debate of competent essays is boring. What makes it fun is a **producer** layer — and it lives in its own framework-independent module, `src/debate/`, so the engine files don't bloat:
+
+- **DebatePlan** — a topic is mapped, deterministically (no LLM meta-call), to a debate **mode**: `Courtroom`, `PolicyDuel`, `MoralDilemma`, `PersonalStakes`, `Forecasting`, `DesignReview`. "AI 판사가 공정할까?" becomes a courtroom; "AI 규제와 오픈소스" a policy duel. The mode anchors the room so it stops drifting off-topic.
+- **Format variation** — instead of every turn being the same length, a per-turn hint cycles through formats: cross-examine, steelman-then-attack, one concrete case, a measurable threshold, a conditional concession. Some are deliberately one or two sentences, so turns stop feeling uniform.
+- **Loop-breaking twist cards** — when the room converges (FlowMeter) or a speaker repeats, the producer injects a fresh "new development" (a wrongful-conviction stat, a maintainer who quit over regulation) and forces the participants to react to it.
+
+All of it is injected only into the generation snapshot, never the stored history — so the deterministic LLM-off golden path stays byte-identical.
+
+**The room, as a product:**
+
+- **Create a room two ways** — "만들기" seeds a **deterministic random trio** from the room id (same topic → same three), or "직접 고르기" lets you **build 2–3 participants** by axes (blood-type / MBTI / zodiac / role) with a live nickname preview before entering.
+- **Invite & remove** mid-debate; participants route to an available backend (a cloud model, or a friend's vLLM when it's up — never to a dead one).
+- **Readable chat** — messages render light Markdown, and each participant's nickname is highlighted in that persona's colour when others address them.
+- **Lobby with persistence** — rooms checkpoint to `rooms.db` and restore with their participants, topics, and history.
+- **A speaking gauge** per participant: the Hawkes urge λ as a bar against the θ threshold — cross it and you're *eligible* to speak (the RRF tie-break still picks one), so you watch the room's rise-speak-suppress-quiet rhythm directly.
+
+**Redis multi-session** (`redis-bus` feature, opt-in via `SALON_REDIS_URL`) is a *volatile coordination* layer — room command/event streams, owner lease, presence — not a memory store. `LiveSession` stays the single writer per room and SQLite (`memory.db`, `rooms.db`) stays the durable source of truth; flushing Redis never loses history.
+
+The whole product track sits behind the `web` / `redis-bus` features. The default build and the headless golden output are untouched.
+
+---
+
 ## Try it
 
 All you need is [Rust](https://rustup.rs). The default run needs no LLM and no network.
@@ -251,7 +279,7 @@ All you need is [Rust](https://rustup.rs). The default run needs no LLM and no n
 ```bash
 cargo run                                         # watch the meter live (TUI). q to quit, space to pause
 cargo run -- --chat                               # join the room: interactive chat (needs a real terminal)
-cargo run --features web -- --web                 # web app in the browser (dynamic persona invite + single-room persistence)
+cargo run --features "web redis-bus" -- --web --topic "AI 판사가 공정할까?"  # browser debate app (topic modes, room builder, invite)
 cargo run -- --headless --ticks 200               # deterministic NDJSON, one line per tick
 cargo run -- --sweep                              # θ × k grid + preset comparison
 cargo run -- --room argument                      # room mood preset (calm/pub/argument/chaos)
@@ -263,7 +291,7 @@ cargo run --features friend-engine-semantic -- --chat  # + semantic recall (load
 cargo run --example persona_collapse              # same model, two personas — does it hold? (needs Ollama)
 cargo run --example mixed_bench                   # cloud + friend vLLM in the same room (needs both backends)
 cargo run --example chat_demo                     # non-interactive chat loop with flow readout per line
-cargo test                                        # 271 tests (277 with friend-engine, 295 with web)
+cargo test                                        # 291 tests (297 with friend-engine, 326 with web+redis-bus)
 ```
 
 Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (RRF tie-break sharpness) · **β** (urge recovery speed). Same `--seed` gives identical output every run, so it's verifiable headless.
@@ -272,9 +300,7 @@ Knobs: **μ** (per-persona chattiness) · **θ** (silence threshold) · **k** (R
 
 ## Status
 
-**v0.10 (now):** semantic recall — BGE-M3 embeddings (ONNX, in-process) + HNSW (usearch) + hybrid BM25/vector RRF fusion, on top of the v0.9 store and behind a `friend-engine-semantic` feature (default build still ML-free and golden-clean). The real embedder loads in `--chat` when the model is present (Mock fallback), with per-DB embedder consistency. Rust, 271 tests (277 / 295 with the features), smoke gates green.
-
-A web product track is now live: browser chat over WebSocket with dynamic persona invite, single-room persistence, and morphology-based flow.
+**Now:** a **topic-debate web app** runs on top of the complete v0.1–v0.10 engine. Browser debate over WebSocket with a framework-independent producer layer (deterministic debate modes, format variation, loop-breaking twist cards), random-or-build-your-own room creation, dynamic invite, Markdown chat with nickname highlighting, lobby persistence, and a Redis multi-session bus — all behind the `web` / `redis-bus` features, with the default build and headless golden output untouched. The engine track peaks at v0.10: semantic recall (BGE-M3 ONNX in-process + HNSW + hybrid BM25/vector RRF) behind `friend-engine-semantic`. Rust, 291 tests (297 with friend-engine, 326 with web+redis-bus), smoke gates green.
 
 **So far:**
 - **v0.1 — rhythm:** speech/silence rhythm from μ, θ, and the tie-break alone.
@@ -287,11 +313,12 @@ A web product track is now live: browser chat over WebSocket with dynamic person
 - **v0.8 — friend engine (first increment):** participation-based memory + keyword recall + recall-eval harness. Personas start remembering what was said in rooms they were in.
 - **v0.9 — friend engine, deeper:** Korean morphology + SQLite/FTS5 BM25 recall + cross-session persistence (feature-gated). Livelier `--chat` (3-way config + `/topic`).
 - **v0.10 — semantic recall:** BGE-M3 embeddings (ONNX) + HNSW (usearch) + hybrid BM25/vector RRF fusion (feature-gated), real embedder wired into `--chat` with per-DB consistency.
+- **web — topic debate app:** browser front-end (axum WebSocket + React) that turns the room into a topic debate. A framework-independent producer (`src/debate/`): deterministic DebatePlan/mode inference, mode-aware format variation, loop-breaking twist cards. Random-or-build-your-own room creation, invite/remove, Markdown chat with nickname highlighting, lobby persistence (`rooms.db`), and a Redis multi-session bus (volatile coordination; SQLite stays the source of truth). Behind the `web` / `redis-bus` features — default build and golden output untouched.
 
 **What's next (separate tracks, no fixed order):**
+- **debate producer, further:** hidden per-persona goals (public stance + private objective), topic-specific evidence cards, an argument ledger of unanswered questions.
 - **friend engine, further:** forgetting, subjective per-persona storage, cross-room impressions of people, on top of the v0.10 store.
-- **Web app (live):** axum WebSocket + React, dynamic persona invite (blood-type / MBTI / zodiac / role assembly + auto Indian-style names), single-room persistence (rooms.db), runtime pace control, morphology-based flow for Korean, 4-axis persona badges. Next here: pixel-art avatars, multi-room, profiles/presets.
-- **Persona synthesis + characters:** building personas from MBTI / blood-type / zodiac / role presets, with pixel-art (Cyworld-minimi-style) avatars for the web — see `docs/temp/salon-persona-ui.md`.
+- **Web app:** pixel-art (Cyworld-minimi-style) avatars, multi-room, user profiles/presets, web search (tool use). Persona axes assembled from blood-type / MBTI / zodiac / role with auto Indian-style names — see `docs/temp/salon-persona-ui.md`.
 
 ---
 
