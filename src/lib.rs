@@ -11,6 +11,8 @@ pub mod hawkes;
 pub mod headless;
 pub mod human;
 pub mod live;
+#[cfg(feature = "web")]
+pub mod lobby_topics;
 pub mod locale;
 pub mod memory;
 pub mod meta;

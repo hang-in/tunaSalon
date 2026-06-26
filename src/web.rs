@@ -900,6 +900,8 @@ struct MultiAppState {
     default_startup: WebStartup,
     rooms: Arc<Mutex<HashMap<String, Arc<RoomRuntime>>>>,
     factory: WebSessionFactory,
+    /// 로비 추천 토론 주제(12h마다 백그라운드 갱신). 비면 프런트가 정적 폴백.
+    topics_cache: Arc<Mutex<Option<Vec<crate::lobby_topics::CategoryTopics>>>>,
     #[cfg(feature = "redis-bus")]
     redis_bus: Option<RedisBus>,
 }
@@ -1149,11 +1151,40 @@ pub fn serve_multi(
         #[cfg(feature = "redis-bus")]
         let redis_bus = RedisBus::open_from_env();
 
+        // 로비 추천 주제: 서버 시작 시 1회 + 12h마다 백그라운드로 웹서치+gemma 생성.
+        // 블로킹 호출(reqwest)이라 spawn_blocking으로 감싼다. 실패하면 캐시는 비어 프런트가 정적 폴백.
+        let topics_cache: Arc<Mutex<Option<Vec<crate::lobby_topics::CategoryTopics>>>> =
+            Arc::new(Mutex::new(None));
+        {
+            let cache = topics_cache.clone();
+            tokio::spawn(async move {
+                loop {
+                    let generated = tokio::task::spawn_blocking(
+                        crate::lobby_topics::generate_suggested_topics,
+                    )
+                    .await
+                    .ok()
+                    .flatten();
+                    match generated {
+                        Some(topics) => {
+                            eprintln!("[tunaSalon] 로비 추천 주제 {} 분야 생성", topics.len());
+                            *cache.lock().await = Some(topics);
+                        }
+                        None => eprintln!(
+                            "[tunaSalon] 로비 추천 주제 생성 실패(키/네트워크) — 정적 폴백 사용"
+                        ),
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
+                }
+            });
+        }
+
         let app_state = MultiAppState {
             default_room_id: normalize_room_id(&default_room_id, "salon"),
             default_startup,
             rooms: Arc::new(Mutex::new(HashMap::new())),
             factory,
+            topics_cache,
             #[cfg(feature = "redis-bus")]
             redis_bus,
         };
@@ -1191,6 +1222,14 @@ pub fn serve_multi(
             StatusCode::NO_CONTENT
         }
 
+        // 로비 추천 토론 주제(분야별). 캐시 비었으면 빈 배열 → 프런트가 정적 폴백.
+        async fn suggested_topics_handler(
+            AxumState(st): AxumState<MultiAppState>,
+        ) -> impl IntoResponse {
+            let topics = st.topics_cache.lock().await.clone().unwrap_or_default();
+            axum::Json(topics)
+        }
+
         let dist_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist");
         let index_file = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist/index.html");
         if !std::path::Path::new(index_file).exists() {
@@ -1208,6 +1247,7 @@ pub fn serve_multi(
         let app = Router::new()
             .route("/ws", get(ws_handler))
             .route("/api/rooms/{room_id}", delete(delete_room_handler))
+            .route("/api/suggested-topics", get(suggested_topics_handler))
             .fallback_service(serve_dir)
             .with_state(app_state);
 
