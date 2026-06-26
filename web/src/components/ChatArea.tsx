@@ -190,6 +190,12 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
 
               {/* Bubble(s) */}
               <div className={`flex flex-col ${isHuman ? "items-end" : "items-start"} max-w-[75%] sm:max-w-[65%]`}>
+                {/* 사람이 캐릭터를 만들면 본인 이름도 표시(기본 "나"는 생략) */}
+                {isHuman && displayName !== "나" && (
+                  <span className="mb-1 mr-1 text-[11px] font-medium text-[var(--text-secondary)]">
+                    {displayName}
+                  </span>
+                )}
                 {/* Name label + axes 배지 */}
                 {!isHuman && (
                   <span className="flex items-baseline gap-1.5 mb-1 ml-1">

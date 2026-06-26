@@ -330,6 +330,22 @@ fn backend_to_model(backend: &str) -> String {
     }
 }
 
+/// 사람(나) 표시 이름: 4축이 있으면 인디언식 닉네임, 없으면 human_id("나").
+fn human_display_name(human_id: &str, axes: Option<&PersonaAxes>) -> String {
+    use crate::persona_kit::{indian_name, Blood, Mbti, Zodiac};
+    use std::str::FromStr;
+    if let Some(a) = axes {
+        if let (Ok(m), Ok(b), Ok(z)) = (
+            Mbti::from_str(&a.mbti),
+            Blood::from_str(&a.blood),
+            Zodiac::from_str(&a.zodiac),
+        ) {
+            return indian_name(m, b, z);
+        }
+    }
+    human_id.to_string()
+}
+
 // 엔진 스레드: blocking LiveSession 구동, frame을 broadcast로 push, cmd를 mpsc로 수신.
 fn run_engine(
     mut session: LiveSession,
@@ -376,9 +392,10 @@ fn run_engine(
                     }
                 })
                 .collect();
+            let human_name = human_display_name(human_id, session.human_axes());
             participants.push(Participant {
                 id: human_id.to_string(),
-                name: human_id.to_string(),
+                name: human_name.clone(),
                 model: None,
                 axes: session.human_axes().map(|a| ParticipantAxes {
                     blood: a.blood.clone(),
@@ -389,7 +406,7 @@ fn run_engine(
             });
             let speaker_name = |speaker: &str| -> String {
                 if speaker == human_id {
-                    return human_id.to_string();
+                    return human_name.clone();
                 }
                 if speaker == "(진행)" {
                     return "Moderator".to_string();

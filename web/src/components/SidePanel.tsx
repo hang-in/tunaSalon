@@ -136,30 +136,37 @@ export function SidePanel({ engineState, personaConfigs, getPersonaConfig, open,
                   );
                 })}
 
-              {/* Human card — 클릭하면 내 캐릭터(4축) 구성 */}
-              <button
-                type="button"
-                onClick={onEditHuman}
-                disabled={!onEditHuman}
-                className="w-full text-left rounded-xl transition-opacity hover:opacity-90 disabled:cursor-default"
-                title={onEditHuman ? "내 캐릭터 만들기" : undefined}
-              >
-                <PersonaPresence
-                  config={personaConfigs.find((p) => p.id === "나") ?? {
-                    id: "나",
-                    name: "나",
-                    color: "#E5A44A",
-                    glowColor: "rgba(229, 164, 74, 0.5)",
-                    bgColor: "rgba(229, 164, 74, 0.12)",
-                    description: onEditHuman ? "클릭해서 내 캐릭터 만들기" : "당신",
-                  }}
-                  lambda={0}
-                  theta={engineState.theta}
-                  isPending={false}
-                  isHuman
-                  axes={engineState.participants.find((p) => p.id === "나")?.axes}
-                />
-              </button>
+              {/* Human card — 클릭하면 내 캐릭터(4축) 구성. 이름은 서버가 보낸 캐릭터명(없으면 "나"). */}
+              {(() => {
+                const human = engineState.participants.find((p) => p.id === "나");
+                const base = personaConfigs.find((p) => p.id === "나");
+                const humanConfig = {
+                  id: "나",
+                  name: human?.name ?? "나",
+                  color: base?.color ?? "#E5A44A",
+                  glowColor: base?.glowColor ?? "rgba(229, 164, 74, 0.5)",
+                  bgColor: base?.bgColor ?? "rgba(229, 164, 74, 0.12)",
+                  description: onEditHuman ? "클릭해서 내 캐릭터 만들기" : "당신",
+                };
+                return (
+                  <button
+                    type="button"
+                    onClick={onEditHuman}
+                    disabled={!onEditHuman}
+                    className="w-full text-left rounded-xl transition-opacity hover:opacity-90 disabled:cursor-default"
+                    title={onEditHuman ? "내 캐릭터 만들기" : undefined}
+                  >
+                    <PersonaPresence
+                      config={humanConfig}
+                      lambda={0}
+                      theta={engineState.theta}
+                      isPending={false}
+                      isHuman
+                      axes={human?.axes}
+                    />
+                  </button>
+                );
+              })()}
             </div>
           </div>
 
