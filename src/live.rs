@@ -10,7 +10,7 @@
 use crate::debate::{
     build_directive, cross_room_memory_is_topic_relevant, format_hint, infer_debate_plan,
     mentioned_persona_id, repetition_guard, sanitize_generated_text, significant_topic_tokens,
-    strip_speaker_prefix, summary_persona_id, twist_card, DebatePlan,
+    strip_speaker_prefix, summary_persona_id, twist_card, DebatePhase, DebatePlan, PhaseController,
 };
 use crate::flow;
 use crate::gate::{self, GateResult};
@@ -125,6 +125,11 @@ pub struct LiveSession {
     /// topics에서 결정적으로 추론한 토론 연출 계획(Stage D). topics 비면 None.
     /// 생성 지시·형식 변주에만 쓰이고 화자선택/골든에는 무영향(history_snapshot 전용).
     debate_plan: Option<DebatePlan>,
+    /// 단계형 토론 컨트롤러(오프닝→클로징→종료). debate_plan이 Some일 때만 Some.
+    /// 종료 시 dispatch 중단. plan None이면 None → 단계 비활성(기존 동작·골든 보존).
+    phase: Option<PhaseController>,
+    /// 직전 틱에서 토론이 막 종료됐는지(web가 1회 "토론 마무리" 알림을 보내고 소비).
+    just_concluded: bool,
     /// alpha 정규화 목표 spectral radius. 0.0이면 coupling_from_modifiers가 빈 행렬 반환(케미 없음).
     /// with_target_rho 빌더로 설정. add/remove_persona 시 alpha 재계산에 사용.
     target_rho: f64,
@@ -318,6 +323,8 @@ impl LiveSession {
             persona_meta: BTreeMap::new(),
             topics: Vec::new(),
             debate_plan: None,
+            phase: None,
+            just_concluded: false,
             target_rho: 0.0,
             turns_since_twist: 0,
             last_human_msg: None,
@@ -415,6 +422,12 @@ impl LiveSession {
         self.last_human_msg = Some(text.clone());
         self.human_focus = HUMAN_FOCUS_TURNS;
         self.forced_next_speaker = mentioned_persona_id(&text, &self.personas);
+        // 종료된 토론에 사람이 끼어들면 공방으로 재진입(단계 흐름 재개).
+        if let Some(pc) = self.phase.as_mut() {
+            if pc.is_concluded() {
+                pc.reopen_to_clash();
+            }
+        }
         // 회상 스토어에 사람 발화 기록(task-41). 페르소나가 사람 말을 회상할 수 있다.
         self.store.record(MemoryEvent {
             room: self.room.clone(),
@@ -440,6 +453,12 @@ impl LiveSession {
     pub fn tick(&mut self) -> TickOutcome {
         let tick = self.tick_count;
         self.tick_count += 1;
+
+        // 0. 단계형 토론이 종료됐으면 화자 선택·dispatch를 건너뛴다(방 idle, 토큰 0).
+        //    사람이 발화하면 submit_human이 reopen_to_clash로 재진입시킨다.
+        if self.phase.as_ref().is_some_and(|p| p.is_concluded()) {
+            return TickOutcome::Silent;
+        }
 
         // 1. Hawkes 강도 갱신 (MetaController mu_scale 적용).
         // flow()는 content 있는 최근 발화 기반 수렴도. content 없으면 None → mu_scale=1.0(no-op).
@@ -498,7 +517,12 @@ impl LiveSession {
         }
 
         // 6. 화자 선택.
-        // 사용자 직접 호출 > 주기적 요약자 개입 > 기존 RRF 순서.
+        // 사용자 직접 호출 > (클로징 단계 or 주기적) 요약자 개입 > 기존 RRF 순서.
+        // 클로징 단계에서는 cadence와 무관히 정리자를 우선해 마지막 말을 맡긴다.
+        let closing_phase = self
+            .phase
+            .as_ref()
+            .is_some_and(|p| p.phase == DebatePhase::Closing);
         let mut direct_call = false;
         let chosen = if let Some(forced) = self.forced_next_speaker.take() {
             if self.personas.iter().any(|p| p.id == forced) {
@@ -514,7 +538,7 @@ impl LiveSession {
                 )
                 .chosen
             }
-        } else if self.turns_since_summary >= SUMMARY_CADENCE_TURNS {
+        } else if closing_phase || self.turns_since_summary >= SUMMARY_CADENCE_TURNS {
             if let Some(summary_id) = summary_persona_id(&self.personas) {
                 if self.state.last_speaker.as_deref() != Some(summary_id.as_str()) {
                     summary_id
@@ -648,6 +672,13 @@ impl LiveSession {
         if let Some(plan) = self.debate_plan.as_ref() {
             segs.push(plan.directive_line(tick));
         }
+        // 단계 지시(오프닝/입장/공방/클로징). plan과 같은 게이팅 — phase Some일 때만.
+        if let Some(pc) = self.phase.as_ref() {
+            let d = pc.directive();
+            if !d.is_empty() {
+                segs.push(d.to_string());
+            }
+        }
         if let Some(d) = directive {
             // 진행 지시(사람 우선/화제)를 실제로 쓴 경우 human_focus 1턴 소모.
             if self.human_focus > 0 {
@@ -694,6 +725,14 @@ impl LiveSession {
             self.turns_since_summary = 0;
         } else {
             self.turns_since_summary = self.turns_since_summary.saturating_add(1);
+        }
+
+        // 단계 전진: 한 발화가 디스패치됐으니 카운트 + 수렴 신호로 전환 판정.
+        // flow_now는 content 있는 최근 발화 기반(없으면 None → 카운트만). 화자선택 이후라 rng 불변.
+        if let Some(pc) = self.phase.as_mut() {
+            if pc.on_utterance(flow_now.map(|m| m.convergence)) {
+                self.just_concluded = true;
+            }
         }
 
         TickOutcome::Dispatched(chosen)
@@ -903,6 +942,12 @@ impl LiveSession {
         } else {
             Some(infer_debate_plan(&self.topics))
         };
+        // 단계 컨트롤러도 plan과 동기화. 새 화제 = 새 토론 → 오프닝부터 시작.
+        self.phase = self
+            .debate_plan
+            .as_ref()
+            .map(|plan| PhaseController::new(plan.mode, self.personas.len() as u32));
+        self.just_concluded = false;
     }
 
     pub fn reset_discussion(&mut self, topics: Vec<String>) {
@@ -960,6 +1005,23 @@ impl LiveSession {
         self.state.history = messages;
         self.tick_count = tick_count;
         self.pending = None;
+        // 복원된 방은 오프닝/입장개진을 재실행하지 않고 공방부터 재개한다(다시 클로징까지 도달 가능).
+        if let Some(pc) = self.phase.as_mut() {
+            pc.reopen_to_clash();
+        }
+        self.just_concluded = false;
+    }
+
+    /// 현재 토론 단계(단계형 활성 시). plan 없으면 None.
+    pub fn current_phase(&self) -> Option<DebatePhase> {
+        self.phase.as_ref().map(|p| p.phase)
+    }
+
+    /// 직전 틱에서 토론이 막 종료됐는지 확인하고 플래그를 소비한다(web가 1회 알림용).
+    pub fn take_just_concluded(&mut self) -> bool {
+        let v = self.just_concluded;
+        self.just_concluded = false;
+        v
     }
 
     // -------------------------------------------------------------------------
@@ -986,6 +1048,10 @@ impl LiveSession {
         self.store.join(&self.room, &id);
         self.persona_meta.insert(id, meta);
         self.personas.push(persona);
+        // 단계 쿼터(인원 비례) 갱신.
+        if let Some(pc) = self.phase.as_mut() {
+            pc.set_persona_count(self.personas.len() as u32);
+        }
         // target_rho가 설정된 세션에서 신규 persona 쌍의 alpha를 정규화된 값으로 갱신.
         self.recompute_alpha();
     }
@@ -1011,6 +1077,10 @@ impl LiveSession {
             self.state.last_speaker = None;
         }
         self.rebuild_speaker_labels();
+        // 단계 쿼터(인원 비례) 갱신.
+        if let Some(pc) = self.phase.as_mut() {
+            pc.set_persona_count(self.personas.len() as u32);
+        }
         // 제거 후 나머지 persona 쌍의 alpha를 전체 재계산.
         self.recompute_alpha();
     }

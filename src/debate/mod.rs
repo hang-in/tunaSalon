@@ -17,6 +17,7 @@
 mod directive;
 mod evidence;
 mod format;
+pub mod phase;
 pub mod plan;
 mod text;
 
@@ -26,6 +27,7 @@ pub(crate) use directive::{
 };
 pub(crate) use evidence::twist_card;
 pub(crate) use format::format_hint;
+pub use phase::{DebatePhase, PhaseController};
 pub use plan::{infer_debate_plan, DebateMode, DebatePlan};
 pub(crate) use text::{
     mentioned_persona_id, sanitize_generated_text, strip_speaker_prefix, summary_persona_id,

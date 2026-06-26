@@ -414,6 +414,9 @@ fn run_engine(
     let mut backend_paused = false;
     let mut client_count = 0usize;
     let mut generation_failures = 0usize;
+    // 단계형 토론 종료 대기: tick에서 종료가 확정되면 set, 마지막(클로징) 발화가
+    // 도착해 pending이 비면 "토론 마무리" 배너를 1회 보내고 해제한다(발화→배너 순서 보장).
+    let mut awaiting_conclusion = false;
     let mut tick_period = Duration::from_millis(DEFAULT_TICK_MS);
     let mut last_state = Instant::now();
     let mut last_tick = Instant::now()
@@ -727,6 +730,9 @@ fn run_engine(
         let paused = effective_paused(manual_paused, client_count, backend_paused);
         if !paused && last_tick.elapsed() >= tick_period {
             session.tick();
+            if session.take_just_concluded() {
+                awaiting_conclusion = true;
+            }
             last_tick = Instant::now();
         }
 
@@ -775,6 +781,23 @@ fn run_engine(
                     &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
                 );
             }
+        }
+
+        // 3.5 단계형 토론 종료 배너: 클로징 발화가 도착(pending 해제)한 뒤 1회.
+        if awaiting_conclusion && !session.is_pending() {
+            emit(
+                &frame_tx,
+                &ServerFrame::System {
+                    text: "토론이 마무리됐습니다. 더 이어가려면 메시지를 입력하세요.".to_string(),
+                },
+            );
+            awaiting_conclusion = false;
+            dirty = true;
+            let paused = effective_paused(manual_paused, client_count, backend_paused);
+            emit(
+                &frame_tx,
+                &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+            );
         }
 
         // 4. state frame (주기)
