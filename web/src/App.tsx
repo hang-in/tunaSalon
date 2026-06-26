@@ -77,9 +77,12 @@ function saveRecentRooms(rooms: DebateRoom[]) {
 }
 
 function roomSummary(room: DebateRoom): string {
-  if (room.summary?.trim()) return room.summary;
-  const topic = room.topics[0] || room.title;
-  return `"${topic}"에 대해 찬반과 조건을 나눠 보는 사용자 생성 토론방`;
+  // 제목(=주제)이 이미 카드 상단에 보이므로 설명은 주제를 다시 인용하지 않는다.
+  // 저장된 summary는 random/custom 구분 용도로만 읽는다(주제 반복 방지).
+  const isCustom = room.summary?.includes("직접 구성");
+  return isCustom
+    ? "직접 구성한 참가자들이 토론하는 방"
+    : "랜덤 참가자들이 찬반·조건을 나눠 토론하는 방";
 }
 
 function roomKey(room: DebateRoom): string {
@@ -311,20 +314,29 @@ function App() {
                       </button>
                     </div>
                     <h2 className="text-base font-bold leading-snug mb-2">{room.title}</h2>
-                    <p className="text-sm leading-relaxed text-[var(--text-secondary)] min-h-[42px]">
+                    <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
                       {roomSummary(room)}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {room.topics.slice(0, 3).map((topic) => (
-                        <span
-                          key={topic}
-                          className="px-2 py-0.5 rounded-md text-[11px] font-medium"
-                          style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
-                        >
-                          {topic}
-                        </span>
-                      ))}
-                    </div>
+                    {/* 제목과 다른 추가 주제만 칩으로 표시(제목 반복 방지) */}
+                    {(() => {
+                      const extra = room.topics.filter(
+                        (t) => t.trim() && t.trim() !== room.title.trim(),
+                      );
+                      if (extra.length === 0) return null;
+                      return (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {extra.slice(0, 3).map((topic) => (
+                            <span
+                              key={topic}
+                              className="px-2 py-0.5 rounded-md text-[11px] font-medium"
+                              style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
+                            >
+                              {topic}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     <button
                       onClick={() => openRoom(room)}
                       className="mt-4 w-full h-9 rounded-lg text-sm font-semibold"

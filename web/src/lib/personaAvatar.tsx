@@ -62,6 +62,25 @@ function hexToRgba(hex: string, a: number): string {
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
+// 별자리 원소 → 머리 색(얼굴색=혈액형과 독립된 둘째 색축으로 다양성↑).
+const ZODIAC_HAIR: Record<string, string> = {
+  ari: "#8B4A3A", leo: "#8B4A3A", sag: "#8B4A3A", // 불: 적갈
+  tau: "#5A4632", vir: "#5A4632", cap: "#5A4632", // 흙: 갈색
+  gem: "#C9A86A", lib: "#C9A86A", aqu: "#C9A86A", // 공기: 금발
+  can: "#2E3440", sco: "#2E3440", pis: "#2E3440", // 물: 흑청
+};
+
+// MBTI 코드 → 얼굴형(rx, ry). 같은 색이어도 윤곽이 달라 보이게.
+function faceShape(mbti: string): { rx: number; ry: number } {
+  let h = 0;
+  for (const ch of mbti) h = (h + ch.charCodeAt(0)) % 3;
+  return [
+    { rx: 13, ry: 13.5 }, // 둥근
+    { rx: 11.5, ry: 14 }, // 갸름
+    { rx: 14, ry: 12.3 }, // 넓적
+  ][h];
+}
+
 /** 참가자 색 세트(아바타·게이지·카드 공용). 혈액형 팔레트 우선, 없으면 id 해시. */
 export function personaColorSet(
   id: string,
@@ -105,8 +124,8 @@ function roleHair(role: string, hair: string, accent: string): ReactElement {
   }
 }
 
-/** 포즈별 눈. */
-function eyes(pose: AvatarPose, ink: string): ReactElement {
+/** 포즈별 눈. eyeR: 점눈 크기(캐릭터별 변주). */
+function eyes(pose: AvatarPose, ink: string, eyeR: number): ReactElement {
   if (pose === "sleep") {
     return (
       <g stroke={ink} strokeWidth="1.4" strokeLinecap="round" fill="none">
@@ -129,8 +148,8 @@ function eyes(pose: AvatarPose, ink: string): ReactElement {
   const cy = pose === "antsy" ? 19.2 : 20;
   return (
     <g fill={ink}>
-      <circle cx="15.5" cy={cy} r="1.7" />
-      <circle cx="24.5" cy={cy} r="1.7" />
+      <circle cx="15.5" cy={cy} r={eyeR} />
+      <circle cx="24.5" cy={cy} r={eyeR} />
     </g>
   );
 }
@@ -198,17 +217,21 @@ export const PersonaAvatar = memo(function PersonaAvatar({
   const base = BLOOD_PALETTE[blood] ?? color;
   const face = lighten(base, 0.5);
   const ink = darken(base, 0.45);
-  const hair = darken(base, 0.2);
   const role = axes?.role ?? "";
   const mbti = (axes?.mbti ?? "").toUpperCase();
   const isExtrovert = mbti.startsWith("E");
   const zodiac = axes?.zodiac ?? "";
   const symbol = ZODIAC_SYMBOL[zodiac];
+  // 머리 색은 별자리 원소(얼굴색=혈액형과 독립), 없으면 얼굴색의 어두운 톤.
+  const hair = ZODIAC_HAIR[zodiac] ?? darken(base, 0.2);
+  // 얼굴형·눈 크기는 MBTI로 변주(같은 색이어도 달라 보이게).
+  const { rx, ry } = faceShape(mbti);
+  const eyeR = [1.4, 1.7, 2.0][mbti.length ? mbti.charCodeAt(mbti.length - 1) % 3 : 1];
 
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
       {/* 얼굴 */}
-      <ellipse cx="20" cy="20" rx="13" ry="13.5" fill={face} stroke={darken(base, 0.1)} strokeWidth="0.8" />
+      <ellipse cx="20" cy="20" rx={rx} ry={ry} fill={face} stroke={darken(base, 0.1)} strokeWidth="0.8" />
 
       {/* E형 볼터치 */}
       {isExtrovert && (
@@ -219,7 +242,7 @@ export const PersonaAvatar = memo(function PersonaAvatar({
       )}
 
       {brows(role, mbti, ink)}
-      {eyes(pose, ink)}
+      {eyes(pose, ink, eyeR)}
       {mouth(pose, ink)}
 
       {/* 현실주의자 안경 */}
