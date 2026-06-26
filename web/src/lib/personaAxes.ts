@@ -4,6 +4,8 @@
 export interface AxisOption {
   value: string;
   label: string;
+  /** 선택지 위에 마우스를 올리면 뜨는 설명(역할 토론 성격 등). */
+  hint?: string;
 }
 
 export const MAX_PERSONAS = 3;
@@ -37,13 +39,11 @@ export const ZODIAC_OPTIONS: AxisOption[] = [
   { value: "pis", label: "물고기자리" },
 ];
 
+// 토론용 역할 5종(잡담형 친구·시인·해설자는 제외). hint는 선택 시 툴팁으로 표시된다.
 export const ROLE_OPTIONS: AxisOption[] = [
-  { value: "friend", label: "친구" },
-  { value: "chaos", label: "와일드카드" },
-  { value: "critic", label: "비평가" },
-  { value: "realist", label: "현실주의자" },
-  { value: "teacher", label: "교사" },
-  { value: "poet", label: "시인" },
-  { value: "strategist", label: "전략가" },
-  { value: "summarizer", label: "정리자" },
+  { value: "critic", label: "비평가", hint: "약한 전제와 과신을 날카롭게 반박합니다." },
+  { value: "realist", label: "현실주의자", hint: "실현 가능성·비용·근거를 따집니다." },
+  { value: "chaos", label: "반론자", hint: "떠오르는 합의에 반론하고 악마의 변호인을 맡습니다." },
+  { value: "strategist", label: "전략가", hint: "쟁점을 정리해 결정해야 할 지점을 제시합니다." },
+  { value: "summarizer", label: "정리자", hint: "양측의 핵심을 종합하고 결론을 압박합니다." },
 ];

@@ -672,7 +672,14 @@ fn random_three_axes(room_id: &str) -> Vec<(Blood, Mbti, Zodiac, Role)> {
     let bloods = Blood::all();
     let mbtis = Mbti::all();
     let zodiacs = Zodiac::all();
-    let roles = Role::all();
+    // 토론 역할 5종만 시딩(잡담형 friend/poet/teacher 제외 — picker와 일치).
+    let roles = [
+        Role::Critic,
+        Role::Realist,
+        Role::Chaos,
+        Role::Strategist,
+        Role::Summarizer,
+    ];
     let mut out: Vec<(Blood, Mbti, Zodiac, Role)> = Vec::new();
     let mut guard = 0;
     while out.len() < 3 && guard < 64 {

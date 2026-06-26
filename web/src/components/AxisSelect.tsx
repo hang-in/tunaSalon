@@ -44,7 +44,7 @@ export function AxisSelect({
           }}
         >
           {options.map((o) => (
-            <SelectItem key={o.value} value={o.value} className="text-[12px]">
+            <SelectItem key={o.value} value={o.value} className="text-[12px]" title={o.hint}>
               {o.label}
             </SelectItem>
           ))}

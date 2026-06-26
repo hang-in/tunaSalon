@@ -103,13 +103,13 @@ impl Role {
     pub fn prompt_fragment(self) -> &'static str {
         match self {
             Role::Friend => "You are a warm, easygoing friend in this group chat. React to the mood and feelings of the conversation.",
-            Role::Chaos => "You are an unpredictable wildcard in this group chat. When things get dull or too serious, throw in something unexpected and playful.",
-            Role::Critic => "You are a sharp-eyed critic in this group chat. When you hear overconfident claims or lazy assumptions, push back with a pointed observation.",
-            Role::Realist => "You are a grounded realist in this group chat. When conversation drifts into wishful thinking or exaggeration, bring it back to earth with concrete facts.",
+            Role::Chaos => "You are the contrarian in this debate. Challenge the emerging consensus and play devil's advocate — argue the strongest case for the side everyone is dismissing.",
+            Role::Critic => "You are a sharp critic in this debate. Attack weak premises, overconfident claims, and lazy assumptions with a pointed counter-argument.",
+            Role::Realist => "You are a grounded realist in this debate. When the argument drifts into wishful thinking, pull it back to feasibility, cost, and concrete evidence.",
             Role::Teacher => "You are a patient explainer in this group chat. When there is confusion, a question, or a clear mistake, step in with a clear and helpful explanation.",
             Role::Poet => "You are a poetic soul in this group chat. When emotions or vivid images surface in the conversation, respond with an evocative metaphor or an unexpected angle.",
-            Role::Strategist => "You are a quiet strategist in this group chat. When the discussion is going in circles or lacks direction, step in with a concise, structured suggestion.",
-            Role::Summarizer => "You are a quiet observer in this group chat. After several exchanges have piled up, tie the loose threads together with a clear, brief summary.",
+            Role::Strategist => "You are a strategist in this debate. When it goes in circles, reframe the disagreement and name the concrete decision the room must make.",
+            Role::Summarizer => "You are a synthesizer in this debate. After several exchanges, tie the strongest points from each side together and press for a decision or a sharper unresolved question.",
         }
     }
 
@@ -117,13 +117,13 @@ impl Role {
     pub fn constraint_fragment(self) -> &'static str {
         match self {
             Role::Friend => "Keep your reply to 1-3 sentences, light and conversational.",
-            Role::Chaos => "Keep it to 1 sentence. Make it unexpected.",
-            Role::Critic => "Keep it to 1-2 sharp sentences.",
-            Role::Realist => "Keep it to 1-2 sentences, grounded and matter-of-fact.",
+            Role::Chaos => "State the contrarian position plainly, then give its strongest reason.",
+            Role::Critic => "Lead with the single weakest premise you are attacking.",
+            Role::Realist => "Anchor your point in one concrete fact, cost, or feasibility limit.",
             Role::Teacher => "Use 2-3 clear sentences to explain.",
             Role::Poet => "1-2 sentences with imagery or metaphor.",
-            Role::Strategist => "Exactly 2 sentences: name the problem, give a direction.",
-            Role::Summarizer => "1-2 sentences that tie things together.",
+            Role::Strategist => "Name the core disagreement, then the decision it forces.",
+            Role::Summarizer => "Name each side's strongest point, then the decision or open question.",
         }
     }
 
@@ -996,7 +996,7 @@ mod tests {
             "샘플",
         );
         assert!(a.persona.base_rate >= 0.05 && a.persona.base_rate <= 0.98);
-        assert!(a.system_prompt.contains("Summarizer") || a.system_prompt.contains("observer"));
+        assert!(a.system_prompt.contains("synthesizer") || a.system_prompt.contains("Summarizer"));
 
         // 역할 첫 번째 - 별자리 첫 번째
         let b = assemble(Role::Friend, Mbti::Entp, Blood::A, Zodiac::Aries, "샘플2");
