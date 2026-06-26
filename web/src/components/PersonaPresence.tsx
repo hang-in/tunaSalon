@@ -71,7 +71,7 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
             transform: isPending ? "scale(1.08)" : pct >= theta ? "scale(1.04)" : "scale(1)",
           }}
         >
-          {isHuman ? (
+          {isHuman && !axes ? (
             <span style={{ fontSize: 14 }}>🧑</span>
           ) : (
             <PersonaAvatar axes={axes} color={config.color} pose={pose} size={34} />

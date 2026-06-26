@@ -54,6 +54,29 @@ function mix(hex: string, target: string, t: number): string {
 const lighten = (hex: string, t: number) => mix(hex, "#ffffff", t);
 const darken = (hex: string, t: number) => mix(hex, "#000000", t);
 
+// 혈액형이 없는(구 방/사람 미설정) 참가자에 id 해시로 배정하는 색.
+const HASH_PALETTE = ["#7BA7D9", "#D99A5B", "#9FCC8A", "#CC8AB8", "#5BC0BE"];
+
+function hexToRgba(hex: string, a: number): string {
+  const [r, g, b] = toRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+/** 참가자 색 세트(아바타·게이지·카드 공용). 혈액형 팔레트 우선, 없으면 id 해시. */
+export function personaColorSet(
+  id: string,
+  blood?: string,
+): { color: string; glowColor: string; bgColor: string } {
+  const b = blood?.toUpperCase();
+  let base = (b && BLOOD_PALETTE[b]) || undefined;
+  if (!base) {
+    let h = 0;
+    for (const ch of id) h = (h + ch.charCodeAt(0)) % HASH_PALETTE.length;
+    base = HASH_PALETTE[h];
+  }
+  return { color: base, glowColor: hexToRgba(base, 0.5), bgColor: hexToRgba(base, 0.12) };
+}
+
 /** 역할별 머리/소품. 얼굴(이마 위)에 얹는다. */
 function roleHair(role: string, hair: string, accent: string): ReactElement {
   switch (role) {

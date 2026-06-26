@@ -7,15 +7,17 @@ import type { EngineState, PersonaConfig } from "@/types";
 interface SidePanelProps {
   engineState: EngineState;
   personaConfigs: PersonaConfig[];
+  getPersonaConfig: (id: string, blood?: string) => PersonaConfig;
   open: boolean;
   onClose: () => void;
   humanPulse?: boolean;
   onInvite?: (blood: string, mbti: string, zodiac: string, role?: string) => void;
   onRemove?: (id: string) => void;
   onPace?: (intervalMs: number) => void;
+  onEditHuman?: () => void;
 }
 
-export function SidePanel({ engineState, personaConfigs, open, onClose, humanPulse = false, onInvite, onRemove, onPace }: SidePanelProps) {
+export function SidePanel({ engineState, personaConfigs, getPersonaConfig, open, onClose, humanPulse = false, onInvite, onRemove, onPace, onEditHuman }: SidePanelProps) {
   // Compute silence status
   const isSilent = useMemo(() => {
     const ids = Object.keys(engineState.intensities).filter((id) => id !== "나");
@@ -97,15 +99,8 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
               {engineState.participants
                 .filter((p) => p.id !== "나")
                 .map((participant) => {
-                  // PersonaConfig 매칭: 서버가 동적으로 추가한 persona는 fallback config 생성
-                  const config = personaConfigs.find((c) => c.id === participant.id) ?? {
-                    id: participant.id,
-                    name: participant.name,
-                    color: "#A89FCC",
-                    glowColor: "rgba(168, 159, 204, 0.5)",
-                    bgColor: "rgba(168, 159, 204, 0.12)",
-                    description: participant.model ?? "",
-                  };
+                  // PersonaConfig: 혈액형 팔레트(없으면 id 해시)로 색 통일 — 게이지·아바타 일치.
+                  const config = getPersonaConfig(participant.id, participant.axes?.blood);
                   const displayConfig = {
                     ...config,
                     name: participant.name,
@@ -141,21 +136,30 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
                   );
                 })}
 
-              {/* Human card */}
-              <PersonaPresence
-                config={personaConfigs.find((p) => p.id === "나") ?? {
-                  id: "나",
-                  name: "나",
-                  color: "#E5A44A",
-                  glowColor: "rgba(229, 164, 74, 0.5)",
-                  bgColor: "rgba(229, 164, 74, 0.12)",
-                  description: "당신",
-                }}
-                lambda={0}
-                theta={engineState.theta}
-                isPending={false}
-                isHuman
-              />
+              {/* Human card — 클릭하면 내 캐릭터(4축) 구성 */}
+              <button
+                type="button"
+                onClick={onEditHuman}
+                disabled={!onEditHuman}
+                className="w-full text-left rounded-xl transition-opacity hover:opacity-90 disabled:cursor-default"
+                title={onEditHuman ? "내 캐릭터 만들기" : undefined}
+              >
+                <PersonaPresence
+                  config={personaConfigs.find((p) => p.id === "나") ?? {
+                    id: "나",
+                    name: "나",
+                    color: "#E5A44A",
+                    glowColor: "rgba(229, 164, 74, 0.5)",
+                    bgColor: "rgba(229, 164, 74, 0.12)",
+                    description: onEditHuman ? "클릭해서 내 캐릭터 만들기" : "당신",
+                  }}
+                  lambda={0}
+                  theta={engineState.theta}
+                  isPending={false}
+                  isHuman
+                  axes={engineState.participants.find((p) => p.id === "나")?.axes}
+                />
+              </button>
             </div>
           </div>
 

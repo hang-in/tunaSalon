@@ -100,6 +100,13 @@ enum ClientFrame {
     Presence { clients: usize },
     #[serde(rename = "reset")]
     Reset { topics: Vec<String> },
+    #[serde(rename = "human_profile")]
+    HumanProfile {
+        blood: String,
+        mbti: String,
+        zodiac: String,
+        role: String,
+    },
 }
 
 #[allow(dead_code)]
@@ -117,6 +124,12 @@ enum EngineCmd {
     Remove(String),
     SetClientCount(usize),
     Reset(Vec<String>),
+    SetHumanProfile {
+        blood: String,
+        mbti: String,
+        zodiac: String,
+        role: String,
+    },
     DeleteAndShutdown,
     Shutdown,
 }
@@ -252,6 +265,17 @@ fn client_frame_to_cmd(frame: ClientFrame) -> EngineCmd {
         ClientFrame::Remove { id } => EngineCmd::Remove(id),
         ClientFrame::Presence { clients } => EngineCmd::SetClientCount(clients),
         ClientFrame::Reset { topics } => EngineCmd::Reset(topics),
+        ClientFrame::HumanProfile {
+            blood,
+            mbti,
+            zodiac,
+            role,
+        } => EngineCmd::SetHumanProfile {
+            blood,
+            mbti,
+            zodiac,
+            role,
+        },
     }
 }
 
@@ -278,6 +302,7 @@ fn save_room(store: &Option<RoomStore>, session: &LiveSession) {
             &session.state().history,
             session.topics(),
             session.tick_count(),
+            session.human_axes(),
         ) {
             eprintln!("[tunaSalon] rooms.db 저장 실패(비치명): {e}");
         }
@@ -355,7 +380,12 @@ fn run_engine(
                 id: human_id.to_string(),
                 name: human_id.to_string(),
                 model: None,
-                axes: None,
+                axes: session.human_axes().map(|a| ParticipantAxes {
+                    blood: a.blood.clone(),
+                    mbti: a.mbti.clone(),
+                    zodiac: a.zodiac.clone(),
+                    role: a.role.clone(),
+                }),
             });
             let speaker_name = |speaker: &str| -> String {
                 if speaker == human_id {
@@ -560,6 +590,26 @@ fn run_engine(
                         &frame_tx,
                         &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
                     ); // 즉시 반영
+                }
+                EngineCmd::SetHumanProfile {
+                    blood,
+                    mbti,
+                    zodiac,
+                    role,
+                } => {
+                    session.set_human_axes(Some(PersonaAxes {
+                        blood,
+                        mbti,
+                        zodiac,
+                        role,
+                    }));
+                    // 즉시 영속(재시작·재접속 후에도 내 캐릭터 유지).
+                    save_room(&store, &session);
+                    dirty = false;
+                    emit(
+                        &frame_tx,
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    );
                 }
                 EngineCmd::Remove(id) => {
                     let name = session

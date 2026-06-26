@@ -6,6 +6,7 @@ import { SidePanel } from "@/components/SidePanel";
 import { Composer } from "@/components/Composer";
 import { ThreeBackground } from "@/components/ThreeBackground";
 import { CreateRoomDialog } from "@/components/CreateRoomDialog";
+import { HumanProfileDialog } from "@/components/HumanProfileDialog";
 import { MessageSquareText, PanelRightOpen, Plus, Trash2, Users } from "lucide-react";
 
 interface DebateRoom {
@@ -120,6 +121,7 @@ function App() {
     sendReset,
     sendInvite,
     sendRemove,
+    sendHumanProfile,
     getPersonaConfig,
     personaConfigs,
     humanPulse,
@@ -131,6 +133,7 @@ function App() {
     personas: activeRoom?.personas,
   });
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [humanDialogOpen, setHumanDialogOpen] = useState(false);
   // 서버가 12h마다 웹서치+gemma로 생성하는 분야별 추천 주제. 비면 정적 TOPIC_SUGGESTIONS 폴백.
   const [suggestedGroups, setSuggestedGroups] = useState<SuggestedGroup[]>([]);
   useEffect(() => {
@@ -502,12 +505,21 @@ function App() {
         <SidePanel
           engineState={engineState}
           personaConfigs={personaConfigs}
+          getPersonaConfig={getPersonaConfig}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           humanPulse={humanPulse}
           onInvite={sendInvite}
           onRemove={sendRemove}
           onPace={sendPace}
+          onEditHuman={() => setHumanDialogOpen(true)}
+        />
+
+        <HumanProfileDialog
+          open={humanDialogOpen}
+          onOpenChange={setHumanDialogOpen}
+          initial={engineState.participants.find((p) => p.id === "나")?.axes}
+          onSave={sendHumanProfile}
         />
       </div>
 

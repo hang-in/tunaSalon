@@ -28,6 +28,8 @@ pub struct RoomSnapshot {
     pub topics: Vec<String>,
     /// 누적 틱 카운터.
     pub tick_count: u64,
+    /// 사람(나)이 고른 4축 캐릭터. 없으면 None.
+    pub human_axes: Option<PersonaAxes>,
 }
 
 impl RoomStore {
@@ -84,6 +86,7 @@ impl RoomStore {
     ///   `persona_meta.get(&p.id)` 없는 persona는 건너뛴다.
     /// - `messages`: `history` 에서 content = Some 인 것만 seq(0부터) 부여.
     /// - `room_meta`: topics = JSON, tick_count = 전달값, updated_at = 0.
+    #[allow(clippy::too_many_arguments)]
     pub fn save(
         &self,
         room_id: &str,
@@ -92,6 +95,7 @@ impl RoomStore {
         history: &[Event],
         topics: &[String],
         tick_count: u64,
+        human_axes: Option<&PersonaAxes>,
     ) -> rusqlite::Result<()> {
         // 트랜잭션 시작
         self.conn.execute("BEGIN", [])?;
@@ -153,12 +157,22 @@ impl RoomStore {
                 }
             }
 
-            // room_meta 삽입
+            // room_meta 삽입 (사람 4축 포함)
             let topics_json = serde_json::to_string(topics).unwrap_or_else(|_| "[]".to_string());
             self.conn.execute(
-                "INSERT INTO room_meta(room_id, topics_json, tick_count, updated_at)
-                 VALUES (?1, ?2, ?3, 0)",
-                params![room_id, topics_json, tick_count as i64],
+                "INSERT INTO room_meta(
+                    room_id, topics_json, tick_count, updated_at,
+                    human_blood, human_mbti, human_zodiac, human_role
+                 ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7)",
+                params![
+                    room_id,
+                    topics_json,
+                    tick_count as i64,
+                    human_axes.map(|a| a.blood.clone()),
+                    human_axes.map(|a| a.mbti.clone()),
+                    human_axes.map(|a| a.zodiac.clone()),
+                    human_axes.map(|a| a.role.clone()),
+                ],
             )?;
 
             Ok(())
@@ -210,25 +224,37 @@ impl RoomStore {
     /// 있으면 participants(ord ASC) / messages(seq ASC) / topics / tick_count를
     /// `RoomSnapshot`으로 조합해 반환한다.
     pub fn load(&self, room_id: &str) -> rusqlite::Result<Option<RoomSnapshot>> {
-        // room_meta 확인
-        let meta_row: Option<(String, i64)> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT topics_json, tick_count FROM room_meta WHERE room_id = ?1")?;
+        // room_meta 확인 (사람 4축 포함)
+        type MetaRow = (String, i64, Option<String>, Option<String>, Option<String>, Option<String>);
+        let meta_row: Option<MetaRow> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT topics_json, tick_count,
+                        human_blood, human_mbti, human_zodiac, human_role
+                 FROM room_meta WHERE room_id = ?1",
+            )?;
             let mut rows = stmt.query(params![room_id])?;
             match rows.next()? {
-                Some(row) => {
-                    let topics_json: String = row.get(0)?;
-                    let tick_count: i64 = row.get(1)?;
-                    Some((topics_json, tick_count))
-                }
+                Some(row) => Some((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                )),
                 None => None,
             }
         };
 
-        let (topics_json, tick_count_raw) = match meta_row {
-            Some(pair) => pair,
+        let (topics_json, tick_count_raw, h_blood, h_mbti, h_zodiac, h_role) = match meta_row {
+            Some(t) => t,
             None => return Ok(None),
+        };
+        let human_axes = match (h_blood, h_mbti, h_zodiac, h_role) {
+            (Some(blood), Some(mbti), Some(zodiac), Some(role)) => {
+                Some(PersonaAxes { blood, mbti, zodiac, role })
+            }
+            _ => None,
         };
 
         // topics 역직렬화
@@ -299,6 +325,7 @@ impl RoomStore {
             messages,
             topics,
             tick_count: tick_count_raw as u64,
+            human_axes,
         }))
     }
 }
@@ -341,6 +368,10 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
             &format!("ALTER TABLE room_participants ADD COLUMN {col} TEXT"),
             [],
         );
+    }
+    // 사람(나) 4축은 room_meta에 보관(참가자가 아니라 방 단위 1개).
+    for col in ["human_blood", "human_mbti", "human_zodiac", "human_role"] {
+        let _ = conn.execute(&format!("ALTER TABLE room_meta ADD COLUMN {col} TEXT"), []);
     }
     Ok(())
 }
@@ -413,7 +444,7 @@ mod tests {
         persona_meta.insert("noaxes".to_string(), make_meta("cloud", "p2", 1.0, 1.0));
 
         store
-            .save("r", &personas, &persona_meta, &[], &[], 0)
+            .save("r", &personas, &persona_meta, &[], &[], 0, None)
             .expect("save");
         let snap = store.load("r").expect("load").expect("some");
 
@@ -423,6 +454,33 @@ mod tests {
         assert_eq!(axes.zodiac, "leo");
         assert_eq!(axes.role, "critic");
         assert!(snap.participants[1].1.axes.is_none(), "축 없으면 None");
+    }
+
+    /// 사람(나) 4축 라운드트립: room_meta에 저장·복원.
+    #[test]
+    fn human_axes_roundtrip() {
+        let store = make_store();
+        let human = PersonaAxes {
+            blood: "A".to_string(),
+            mbti: "INFJ".to_string(),
+            zodiac: "pis".to_string(),
+            role: "strategist".to_string(),
+        };
+        store
+            .save("hr", &[], &BTreeMap::new(), &[], &[], 0, Some(&human))
+            .expect("save");
+        let snap = store.load("hr").expect("load").expect("some");
+        let h = snap.human_axes.expect("human_axes Some");
+        assert_eq!(h.blood, "A");
+        assert_eq!(h.mbti, "INFJ");
+        assert_eq!(h.zodiac, "pis");
+        assert_eq!(h.role, "strategist");
+
+        // 사람 미설정 방은 None.
+        store
+            .save("hr2", &[], &BTreeMap::new(), &[], &[], 0, None)
+            .expect("save2");
+        assert!(store.load("hr2").unwrap().unwrap().human_axes.is_none());
     }
 
     /// (1) save -> load 라운드트립: participants 순서·meta 포함, messages, topics, tick_count 일치.
@@ -455,7 +513,7 @@ mod tests {
         let topics = vec!["러스트".to_string(), "AI".to_string()];
 
         store
-            .save("room1", &personas, &persona_meta, &history, &topics, 42)
+            .save("room1", &personas, &persona_meta, &history, &topics, 42, None)
             .expect("save 성공");
 
         let snap = store
@@ -511,7 +569,7 @@ mod tests {
         ];
 
         store
-            .save("room2", &personas, &persona_meta, &history, &[], 0)
+            .save("room2", &personas, &persona_meta, &history, &[], 0, None)
             .expect("save");
 
         let snap = store.load("room2").expect("load").expect("Some");
@@ -545,7 +603,7 @@ mod tests {
         // ghost는 persona_meta에 없음
 
         store
-            .save("room3", &personas, &persona_meta, &[], &[], 0)
+            .save("room3", &personas, &persona_meta, &[], &[], 0, None)
             .expect("save");
 
         let snap = store.load("room3").expect("load").expect("Some");
@@ -576,6 +634,7 @@ mod tests {
                 &history1,
                 &["topic1".to_string()],
                 10,
+                None,
             )
             .expect("save 1");
         store
@@ -586,6 +645,7 @@ mod tests {
                 &history2,
                 &["topic2".to_string()],
                 20,
+                None,
             )
             .expect("save 2");
 

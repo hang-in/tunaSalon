@@ -175,6 +175,7 @@ fn main() {
                             }
                             sess.restore_history(snap.messages, snap.tick_count);
                             sess.set_topics(snap.topics);
+                            sess.set_human_axes(snap.human_axes);
                             eprintln!(
                                 "[tunaSalon] 방 '{}' 복원: {n_personas}명, {n_messages}발화",
                                 room_id

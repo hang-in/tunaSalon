@@ -117,6 +117,8 @@ pub struct LiveSession {
     room: String,
     /// 사람 화자 ID. submit_human 시 MemoryEvent 생성에 사용(HumanChannel 필드 직접 노출 회피).
     human_id: PersonaId,
+    /// 사람(나)이 직접 고른 4축 캐릭터. 엔진엔 영향 없고 시각/정체성용(아바타 렌더). 영속됨.
+    human_axes: Option<PersonaAxes>,
     /// 페르소나별 백엔드 라우팅 + system_prompt. with_persona_meta 빌더로 설정.
     /// 빈 맵이면 모든 persona가 기존 generate_one(폴백 체인) 경로를 사용한다.
     persona_meta: BTreeMap<PersonaId, PersonaMeta>,
@@ -320,6 +322,7 @@ impl LiveSession {
             store,
             room,
             human_id,
+            human_axes: None,
             persona_meta: BTreeMap::new(),
             topics: Vec::new(),
             debate_plan: None,
@@ -1015,6 +1018,16 @@ impl LiveSession {
     /// 현재 토론 단계(단계형 활성 시). plan 없으면 None.
     pub fn current_phase(&self) -> Option<DebatePhase> {
         self.phase.as_ref().map(|p| p.phase)
+    }
+
+    /// 사람(나)의 4축 캐릭터를 설정한다(시각/정체성용, 엔진 무영향).
+    pub fn set_human_axes(&mut self, axes: Option<PersonaAxes>) {
+        self.human_axes = axes;
+    }
+
+    /// 사람(나)의 4축 캐릭터 참조.
+    pub fn human_axes(&self) -> Option<&PersonaAxes> {
+        self.human_axes.as_ref()
     }
 
     /// 직전 틱에서 토론이 막 종료됐는지 확인하고 플래그를 소비한다(web가 1회 알림용).

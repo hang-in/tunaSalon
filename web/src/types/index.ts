@@ -94,7 +94,15 @@ export interface ClientResetFrame {
   topics: string[];
 }
 
-export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame | ClientPaceFrame | ClientInviteFrame | ClientRemoveFrame | ClientResetFrame;
+export interface ClientHumanProfileFrame {
+  type: "human_profile";
+  blood: string;
+  mbti: string;
+  zodiac: string;
+  role: string;
+}
+
+export type ClientFrame = ClientMessageFrame | ClientTopicFrame | ClientPauseFrame | ClientPaceFrame | ClientInviteFrame | ClientRemoveFrame | ClientResetFrame | ClientHumanProfileFrame;
 
 // ── UI-local types ──────────────────────────────────────────────
 
