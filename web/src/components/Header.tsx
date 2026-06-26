@@ -199,7 +199,7 @@ export function Header({ topics, connected, participantCount, bg3d, onToggle3d, 
         </div>
         <button
           onClick={onReset}
-          className="hidden sm:flex p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          className="flex p-1.5 rounded-lg hover:bg-white/5 transition-colors"
           aria-label="토론 초기화"
           title="토론 초기화"
         >
