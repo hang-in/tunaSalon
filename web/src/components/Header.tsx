@@ -18,7 +18,7 @@ export function Header({ topics, connected, participantCount, bg3d, onToggle3d, 
   const [helpOpen, setHelpOpen] = useState(false);
   return (
     <header
-      className="relative shrink-0 h-16 min-h-[64px] z-40 flex items-center justify-between gap-2 px-3 lg:px-6"
+      className="shrink-0 h-16 min-h-[64px] flex items-center justify-between gap-2 px-3 lg:px-6"
       style={{
         // in-flow 헤더라 블러/반투명 불필요. 솔리드 배경으로 — mobile Firefox의
         // backdrop-filter 미렌더 버그(헤더가 안 보이던 원인)를 회피한다.
