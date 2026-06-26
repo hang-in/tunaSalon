@@ -510,7 +510,7 @@ fn run_engine(
                         &frame_tx,
                         &ServerFrame::Utterance {
                             speaker: human_id.clone(),
-                            name: human_id.clone(),
+                            name: human_display_name(&human_id, session.human_axes()),
                             content: text,
                             ts,
                         },
