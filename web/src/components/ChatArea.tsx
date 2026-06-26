@@ -3,6 +3,7 @@ import { MessageCircle, Sparkles, UserPlus, UserMinus } from "lucide-react";
 import type { ChatMessage, EngineState, PersonaConfig } from "@/types";
 import { bloodLabel, zodiacLabel, roleLabel } from "@/lib/personaLabels";
 import { RichText } from "@/components/RichText";
+import { PersonaAvatar, poseFromLambda } from "@/lib/personaAvatar";
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -159,7 +160,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
             >
               {/* Avatar */}
               <div
-                className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold select-none transition-transform duration-300 ${
+                className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold select-none overflow-hidden transition-transform duration-300 ${
                   engineState.pending === group.speaker && isLastGroupOfSpeaker ? "scale-110" : ""
                 }`}
                 style={{
@@ -171,7 +172,20 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
                       : "none",
                 }}
               >
-                {isHuman ? "나" : displayName.charAt(0)}
+                {isHuman ? (
+                  "나"
+                ) : (
+                  <PersonaAvatar
+                    axes={participantAxes}
+                    color={config.color}
+                    pose={poseFromLambda(
+                      engineState.intensities[group.speaker] ?? 0,
+                      engineState.theta,
+                      engineState.pending === group.speaker && isLastGroupOfSpeaker,
+                    )}
+                    size={40}
+                  />
+                )}
               </div>
 
               {/* Bubble(s) */}

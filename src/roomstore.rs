@@ -6,7 +6,7 @@
 //!
 //! 저장 계층만 담당하며, web.rs 배선과 LiveSession 복원 주입은 task G에서 수행한다.
 
-use crate::live::PersonaMeta;
+use crate::live::{PersonaAxes, PersonaMeta};
 use crate::model::{Event, Persona, PersonaModifier};
 use rusqlite::{params, Connection};
 use std::collections::BTreeMap;
@@ -115,11 +115,13 @@ impl RoomStore {
                     Some(m) => m,
                     None => continue, // persona_meta에 없으면 건너뜀
                 };
+                let axes = meta.axes.as_ref();
                 self.conn.execute(
                     "INSERT INTO room_participants(
                         room_id, ord, persona_id, name, base_rate,
-                        backend, system_prompt, reactivity, provocativeness
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        backend, system_prompt, reactivity, provocativeness,
+                        blood, mbti, zodiac, role
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         room_id,
                         ord as i64,
@@ -130,6 +132,10 @@ impl RoomStore {
                         meta.system_prompt,
                         meta.modifier.reactivity,
                         meta.modifier.provocativeness,
+                        axes.map(|a| a.blood.clone()),
+                        axes.map(|a| a.mbti.clone()),
+                        axes.map(|a| a.zodiac.clone()),
+                        axes.map(|a| a.role.clone()),
                     ],
                 )?;
             }
@@ -232,7 +238,8 @@ impl RoomStore {
         let participants: Vec<(Persona, PersonaMeta)> = {
             let mut stmt = self.conn.prepare(
                 "SELECT persona_id, name, base_rate,
-                        backend, system_prompt, reactivity, provocativeness
+                        backend, system_prompt, reactivity, provocativeness,
+                        blood, mbti, zodiac, role
                  FROM room_participants
                  WHERE room_id = ?1
                  ORDER BY ord ASC",
@@ -243,6 +250,17 @@ impl RoomStore {
                     name: row.get(1)?,
                     base_rate: row.get(2)?,
                 };
+                // 4축은 nullable(구 DB row는 NULL). 넷이 모두 있을 때만 axes 복원.
+                let blood: Option<String> = row.get(7)?;
+                let mbti: Option<String> = row.get(8)?;
+                let zodiac: Option<String> = row.get(9)?;
+                let role: Option<String> = row.get(10)?;
+                let axes = match (blood, mbti, zodiac, role) {
+                    (Some(blood), Some(mbti), Some(zodiac), Some(role)) => {
+                        Some(PersonaAxes { blood, mbti, zodiac, role })
+                    }
+                    _ => None,
+                };
                 let meta = PersonaMeta {
                     backend: row.get(3)?,
                     system_prompt: row.get(4)?,
@@ -250,7 +268,7 @@ impl RoomStore {
                         reactivity: row.get(5)?,
                         provocativeness: row.get(6)?,
                     },
-                    axes: None,
+                    axes,
                 };
                 Ok((persona, meta))
             })?;
@@ -315,7 +333,16 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
             tick_count   INTEGER NOT NULL,
             updated_at   INTEGER NOT NULL
         );",
-    )
+    )?;
+    // 4축(혈액형/MBTI/별자리/역할) 컬럼 마이그레이션. 기존 DB에도 추가(이미 있으면 무시).
+    // CREATE TABLE IF NOT EXISTS는 컬럼을 추가하지 못하므로 ALTER로 멱등 보강한다.
+    for col in ["blood", "mbti", "zodiac", "role"] {
+        let _ = conn.execute(
+            &format!("ALTER TABLE room_participants ADD COLUMN {col} TEXT"),
+            [],
+        );
+    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -364,6 +391,38 @@ mod tests {
             mark,
             content: content.map(|s| s.to_string()),
         }
+    }
+
+    /// 4축(axes) 라운드트립: Some이면 그대로 복원, 없는 persona는 None.
+    #[test]
+    fn axes_roundtrip_preserves_persona_axes() {
+        let store = make_store();
+        let personas = vec![
+            make_persona("withaxes", "축있음", 0.8),
+            make_persona("noaxes", "축없음", 0.7),
+        ];
+        let mut persona_meta = BTreeMap::new();
+        let mut m = make_meta("cloud", "p1", 1.0, 1.0);
+        m.axes = Some(PersonaAxes {
+            blood: "O".to_string(),
+            mbti: "ENTP".to_string(),
+            zodiac: "leo".to_string(),
+            role: "critic".to_string(),
+        });
+        persona_meta.insert("withaxes".to_string(), m);
+        persona_meta.insert("noaxes".to_string(), make_meta("cloud", "p2", 1.0, 1.0));
+
+        store
+            .save("r", &personas, &persona_meta, &[], &[], 0)
+            .expect("save");
+        let snap = store.load("r").expect("load").expect("some");
+
+        let axes = snap.participants[0].1.axes.as_ref().expect("axes Some");
+        assert_eq!(axes.blood, "O");
+        assert_eq!(axes.mbti, "ENTP");
+        assert_eq!(axes.zodiac, "leo");
+        assert_eq!(axes.role, "critic");
+        assert!(snap.participants[1].1.axes.is_none(), "축 없으면 None");
     }
 
     /// (1) save -> load 라운드트립: participants 순서·meta 포함, messages, topics, tick_count 일치.
