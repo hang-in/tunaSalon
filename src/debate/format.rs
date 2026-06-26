@@ -49,8 +49,19 @@ fn mode_formats(mode: DebateMode) -> &'static [&'static str] {
         DebateMode::PersonalStakes => &[CONCRETE_CASE, DIRECT_REBUTTAL, OPENING, CONCESSION],
         DebateMode::Forecasting => &[PREDICTION, THRESHOLD, CONCESSION, DIRECT_REBUTTAL],
         DebateMode::DesignReview => &[DIRECT_REBUTTAL, DILEMMA_FORK, THRESHOLD, STEELMAN],
+        DebateMode::CasualBanter => &[CASUAL_PICK, CASUAL_JAB, CASUAL_EXAMPLE, CASUAL_EXAGGERATE],
     }
 }
+
+// ── 캐주얼(반말) 형식 — 음식·취향 등 가벼운 주제용 ──────────────────────────────
+const CASUAL_PICK: &str =
+    "[형식: 취향 선언 · 반말] 네 취향을 한 문장으로 딱 정하고, 왜 그런지 웃긴 이유 하나만 대.";
+const CASUAL_JAB: &str =
+    "[형식: 받아치기 · 반말] 바로 앞 사람 닉네임 부르며 한두 문장으로 가볍게 받아쳐.";
+const CASUAL_EXAMPLE: &str =
+    "[형식: 경험담 · 반말] 짧은 경험담 하나로 네 편을 들어. 길게 늘이지 마.";
+const CASUAL_EXAGGERATE: &str =
+    "[형식: 우기기 · 반말] 살짝 오버해서 네 취향을 유쾌하게 우겨. 진지하게 분석하지 마.";
 
 /// plan 없는 세션(일반 `--chat`)용 길이 변주 폴백. `idx`는 (tick+화자 salt).
 /// Stage D 이전 `length_hint(tick, speaker)`와 동일 동작(behavior-preserving).

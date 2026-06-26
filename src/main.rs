@@ -609,6 +609,16 @@ fn debate_common_tail() -> String {
     )
 }
 
+/// 가벼운 취향(음식·일상) 방 전용 꼬리말 — 반말·유쾌 톤. CasualBanter 모드 방에 시딩된다.
+/// 형식 토론이 아니라 친구끼리 취향 가지고 티격태격하는 분위기를 강제한다.
+#[cfg(feature = "web")]
+fn casual_common_tail() -> String {
+    let lang = salon::locale::reply_language();
+    format!(
+        " This is a light, fun room arguing about tastes and preferences with friends — not a serious debate. A real person joins as \"나\". Always respond in {lang}, in casual informal speech ({lang} being Korean means 반말, never 존댓말). Be playful and a little cheeky: pick a side, defend your taste with a funny or concrete reason, and tease the others by their exact nickname — but never be mean or insulting. Keep it short: 1 to 3 sentences. Do NOT do serious policy, ethics, or academic analysis, do not cite studies or standards, and do not lecture. Address the human as \"너\" casually if needed, never \"사용자님\". Do not expose chain-of-thought; just banter. Avoid emojis and long paragraphs. Some recent lines may be YOUR OWN earlier messages; never react to your own line as if someone else said it."
+    )
+}
+
 /// 새 방 초기 참가자를 시딩한다(`--web` 팩토리 전용). startup이 수동 스펙을 주면 그걸로,
 /// 비어 있으면 room_id 기반 결정적 랜덤 3명으로. 각 참가자는 가용 백엔드로 라우팅된다
 /// (friend 다운이면 전부 cloud). 복원된 방에는 호출되지 않는다.
@@ -624,7 +634,14 @@ fn seed_new_room_personas(sess: &mut LiveSession, room_id: &str, startup: &salon
             .filter_map(parse_initial_persona)
             .collect()
     };
-    let tail = debate_common_tail();
+    // 음식·취향 등 가벼운 주제 방은 반말·유쾌 톤의 시스템 프롬프트를 쓴다(존댓말 형식 토론 대신).
+    let casual = salon::debate::infer_debate_plan(startup.topics()).mode
+        == salon::debate::DebateMode::CasualBanter;
+    let tail = if casual {
+        casual_common_tail()
+    } else {
+        debate_common_tail()
+    };
     for (i, (blood, mbti, zodiac, role)) in specs.into_iter().enumerate() {
         let assembled = assemble(role, mbti, blood, zodiac, "");
         // 닉네임(id) 충돌 시 건너뛴다.

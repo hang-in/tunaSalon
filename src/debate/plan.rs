@@ -21,6 +21,8 @@ pub enum DebateMode {
     DesignReview,
     /// 연애·가족·친구 등 일상에 발 디딘 개인적 쟁점.
     PersonalStakes,
+    /// 음식·취향 등 가볍고 호불호 갈리는 주제. 반말로 유쾌하게 티격태격.
+    CasualBanter,
 }
 
 /// 주제에서 추론한 토론 연출 계획(결정적). v1은 mode/opening/stakes/fault_lines까지.
@@ -48,6 +50,7 @@ impl DebateMode {
             DebateMode::Forecasting => "전망·예측",
             DebateMode::DesignReview => "설계 논쟁",
             DebateMode::PersonalStakes => "개인적 쟁점",
+            DebateMode::CasualBanter => "가벼운 취향 논쟁",
         }
     }
 
@@ -71,6 +74,10 @@ impl DebateMode {
             }
             DebateMode::PersonalStakes => {
                 "추상 정책으로 빠지지 말고 구체적 경험에서 시작해 입장을 세우세요."
+            }
+            DebateMode::CasualBanter => {
+                "존댓말 말고 반말로, 가볍고 유쾌하게 티격태격하세요. 진지한 정책·윤리 분석은 빼고 \
+                 각자 취향과 웃긴 근거로 우기되 상대를 무시하진 마세요."
             }
         }
     }
@@ -99,8 +106,16 @@ impl DebatePlan {
 
 /// 모드별 키워드. (모드, 우선순위 순서대로 나열 — 동점 tie-break에 사용)
 /// 키워드는 공백 제거 없이 원문 substring 매칭.
-fn mode_keywords() -> [(DebateMode, &'static [&'static str]); 6] {
+fn mode_keywords() -> [(DebateMode, &'static [&'static str]); 7] {
     [
+        (
+            DebateMode::CasualBanter,
+            &[
+                "민트초코", "민초", "부먹", "찍먹", "탕수육", "호불호", "취향", "제맛",
+                "디저트", "라면", "치킨", "짜장", "짬뽕", "피자", "에어컨", "보일러",
+                "치약 맛", " vs ", "더 맛있", "간식",
+            ],
+        ),
         (
             DebateMode::Courtroom,
             &["판사", "재판", "법정", "유죄", "무죄", "판결", "배심", "공정"],
@@ -180,6 +195,11 @@ fn mode_template(mode: DebateMode, topic: &str) -> (String, String, Vec<String>)
             "어떤 설계가 어떤 제약 아래 더 낫고, 무엇을 포기하게 되는가.".to_string(),
             v(&["단순함 vs 유연함", "비용 vs 견고함", "사용자 vs 운영"]),
         ),
+        DebateMode::CasualBanter => (
+            format!("'{topic}'! 진지할 거 없어, 반말로 가볍게 가자. 각자 취향 딱 정하고 웃긴 근거로 우겨봐."),
+            "결론은 안 나도 돼 — 누가 더 재밌고 설득력 있게 우기느냐가 전부.".to_string(),
+            v(&["내 취향 vs 네 취향", "경험담 vs 우김", "진지충 금지"]),
+        ),
     }
 }
 
@@ -248,6 +268,14 @@ mod tests {
         let b = infer_debate_plan(&topics);
         assert_eq!(a, b);
         assert_eq!(a.topic, "AI 규제와 오픈소스, 보안 책임");
+    }
+
+    #[test]
+    fn fun_taste_topic_maps_to_casual_banter_with_banmal() {
+        let p = plan_of("민트초코는 맛있는 디저트인가, 치약 맛 나는 음식인가?");
+        assert_eq!(p.mode, DebateMode::CasualBanter);
+        // 반말 지시가 directive에 들어가는지
+        assert!(p.directive_line(0).contains("반말"));
     }
 
     #[test]

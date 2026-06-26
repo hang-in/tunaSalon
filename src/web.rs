@@ -162,7 +162,7 @@ impl WebStartup {
         }
     }
 
-    fn topics(&self) -> &[String] {
+    pub fn topics(&self) -> &[String] {
         &self.topics
     }
 
