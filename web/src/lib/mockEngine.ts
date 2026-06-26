@@ -250,7 +250,8 @@ export function connect(
   onStatus?: (connected: boolean) => void,
   _roomId?: string,
   topics?: string[],
-  _personas?: string[]
+  _personas?: string[],
+  _models?: string[]
 ): { send: (frame: ClientFrame) => void; disconnect: () => void } {
   // Cleanup any previous connection
   if (intervalId) clearInterval(intervalId);

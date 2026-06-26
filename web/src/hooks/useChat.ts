@@ -69,9 +69,11 @@ interface UseChatOptions {
   topics?: string[];
   /** 새 방 수동 구성 참가자 ["blood:mbti:zodiac:role", ...]. 비면 서버가 랜덤 3명을 시딩. */
   personas?: string[];
+  /** 페르소나가 쓸 모델 태그(최대 3). 새 방 시딩에만 적용. */
+  models?: string[];
 }
 
-export function useChat({ enabled = true, roomId, topics = [], personas }: UseChatOptions = {}) {
+export function useChat({ enabled = true, roomId, topics = [], personas, models }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [engineState, setEngineState] = useState<EngineState>(DEFAULT_ENGINE_STATE);
   const [connected, setConnected] = useState(false);
@@ -160,7 +162,7 @@ export function useChat({ enabled = true, roomId, topics = [], personas }: UseCh
           },
         ]);
       }
-    }, (isConnected: boolean) => setConnected(isConnected), roomId, topics, personas);
+    }, (isConnected: boolean) => setConnected(isConnected), roomId, topics, personas, models);
     connRef.current = conn;
     return () => {
       conn.disconnect();

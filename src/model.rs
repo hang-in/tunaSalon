@@ -3,6 +3,19 @@ use std::collections::BTreeMap;
 
 pub type PersonaId = String;
 
+/// 설정 페이지에서 고를 수 있는 클라우드 모델 목록(ollama.com 확인, 2026-06).
+/// backend 이름 = 모델 태그로 풀에 등록되고 PersonaMeta.backend로 라우팅·영속된다.
+/// model.rs(비 feature-gate)에 두어 web/비-web 양쪽에서 공유한다.
+pub const CLOUD_MODELS: [&str; 7] = [
+    "gemma4:31b-cloud",
+    "nemotron-3-super:cloud",
+    "qwen3.5:cloud",
+    "glm-5.1:cloud",
+    "kimi-k2.6:cloud",
+    "deepseek-v4-flash:cloud",
+    "devstral-small-2:24b-cloud",
+];
+
 /// 페르소나별 케미 비대칭 계수.
 /// reactivity:    이 페르소나가 남의 발화에 얼마나 자극받나 (row 스케일).
 /// provocativeness: 이 페르소나가 남을 얼마나 자극하나 (column 스케일).

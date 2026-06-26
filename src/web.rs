@@ -149,6 +149,8 @@ pub struct WebStartup {
     /// 새 방 시딩용 초기 참가자 스펙(수동 구성). 비어 있으면 랜덤 3명으로 시딩한다.
     /// 복원된 방(rooms.db 스냅샷 존재)에는 적용되지 않는다.
     personas: Vec<InitialPersona>,
+    /// 페르소나가 쓸 모델 태그(최대 3). 비면 기본 라우팅. 새 방 시딩에만 적용.
+    models: Vec<String>,
 }
 
 /// 새 방을 만들 때 프런트가 지정한 초기 참가자 한 명의 축.
@@ -165,6 +167,7 @@ impl WebStartup {
         Self {
             topics: normalize_topics(topics),
             personas: Vec::new(),
+            models: Vec::new(),
         }
     }
 
@@ -172,7 +175,14 @@ impl WebStartup {
         Self {
             topics: normalize_topics(topics),
             personas,
+            models: Vec::new(),
         }
+    }
+
+    /// 페르소나 모델 선택을 설정한다(빌더).
+    pub fn with_models(mut self, models: Vec<String>) -> Self {
+        self.models = models;
+        self
     }
 
     pub fn topics(&self) -> &[String] {
@@ -182,6 +192,11 @@ impl WebStartup {
     /// 새 방 초기 참가자 스펙(수동). 비어 있으면 호출측이 랜덤 3명을 시딩한다.
     pub fn personas(&self) -> &[InitialPersona] {
         &self.personas
+    }
+
+    /// 페르소나가 쓸 모델 태그(최대 3). 비면 기본 라우팅.
+    pub fn models(&self) -> &[String] {
+        &self.models
     }
 
     fn opening_prompt(&self) -> Option<String> {
@@ -1121,6 +1136,26 @@ struct WsParams {
     /// 새 방 초기 참가자(수동 구성). "blood:mbti:zodiac:role" 를 ';'로 구분해 최대 3명.
     /// 비거나 없으면 호출측이 랜덤 3명을 시딩한다.
     personas: Option<String>,
+    /// 페르소나가 쓸 LLM 모델 태그 ','로 구분(최대 3). CLOUD_MODELS의 값만 허용.
+    /// 비면 기본 라우팅(gemma/friend).
+    models: Option<String>,
+}
+
+/// `models` 쿼리(",")를 파싱한다. CLOUD_MODELS에 있는 태그만, 최대 3개, 중복 제거.
+fn parse_models_param(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for tag in raw.split(',').map(|s| s.trim()) {
+        if crate::model::CLOUD_MODELS.contains(&tag) && !out.iter().any(|m| m == tag) {
+            out.push(tag.to_string());
+        }
+        if out.len() == 3 {
+            break;
+        }
+    }
+    out
 }
 
 /// `WsParams.personas` 쿼리("blood:mbti:zodiac:role;..." )를 파싱한다. 잘못된 항목은 건너뛴다.
@@ -1292,11 +1327,15 @@ pub fn serve_multi(
             );
             let topics = normalize_topics(params.topic.into_iter().collect());
             let personas = parse_persona_param(params.personas.as_deref());
-            let startup = if topics.is_empty() && personas.is_empty() && room_id == st.default_room_id
+            let models = parse_models_param(params.models.as_deref());
+            let startup = if topics.is_empty()
+                && personas.is_empty()
+                && models.is_empty()
+                && room_id == st.default_room_id
             {
                 st.default_startup.clone()
             } else {
-                WebStartup::debate_with_personas(topics, personas)
+                WebStartup::debate_with_personas(topics, personas).with_models(models)
             };
             let runtime = get_room_runtime(&st, room_id, startup).await;
             ws.on_upgrade(move |socket| handle_runtime_socket(socket, runtime))

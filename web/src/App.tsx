@@ -7,7 +7,9 @@ import { Composer } from "@/components/Composer";
 import { ThreeBackground } from "@/components/ThreeBackground";
 import { CreateRoomDialog } from "@/components/CreateRoomDialog";
 import { HumanProfileDialog } from "@/components/HumanProfileDialog";
-import { MessageSquareText, PanelRightOpen, Plus, Trash2, Users } from "lucide-react";
+import { ModelSettingsDialog } from "@/components/ModelSettingsDialog";
+import { getSelectedModels } from "@/lib/models";
+import { Cpu, MessageSquareText, PanelRightOpen, Plus, Trash2, Users } from "lucide-react";
 
 interface DebateRoom {
   id: string;
@@ -111,6 +113,7 @@ function App() {
   const [activeRoom, setActiveRoom] = useState<DebateRoom | null>(null);
   const [recentRooms, setRecentRooms] = useState<DebateRoom[]>(readRecentRooms);
   const lobbyRooms = useMemo(() => dedupeRooms(recentRooms), [recentRooms]);
+  const [selectedModels, setSelectedModelsState] = useState<string[]>(() => getSelectedModels());
   const {
     messages,
     engineState,
@@ -134,9 +137,11 @@ function App() {
     roomId: activeRoom?.id,
     topics: activeRoom?.topics,
     personas: activeRoom?.personas,
+    models: selectedModels,
   });
   const [builderOpen, setBuilderOpen] = useState(false);
   const [humanDialogOpen, setHumanDialogOpen] = useState(false);
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   // 서버가 12h마다 웹서치+gemma로 생성하는 분야별 추천 주제. 비면 정적 TOPIC_SUGGESTIONS 폴백.
   const [suggestedGroups, setSuggestedGroups] = useState<SuggestedGroup[]>([]);
   useEffect(() => {
@@ -284,10 +289,19 @@ function App() {
               >
                 <MessageSquareText size={20} />
               </div>
-              <div>
+              <div className="flex-1">
                 <h1 className="text-xl font-extrabold tracking-tight">tunaSalon</h1>
                 <p className="text-sm text-[var(--text-secondary)]">주제 토론방 로비</p>
               </div>
+              <button
+                onClick={() => setModelSettingsOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg text-[13px] font-semibold transition-colors"
+                style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
+                title="토론 모델 고르기"
+              >
+                <Cpu size={15} />
+                <span className="hidden sm:inline">모델</span>
+              </button>
             </div>
 
             {lobbyRooms.length > 0 ? (
@@ -454,6 +468,11 @@ function App() {
           onOpenChange={setBuilderOpen}
           topic={topicDraft.trim() || topicPlaceholder}
           onStart={handleCreateRoomWithPersonas}
+        />
+        <ModelSettingsDialog
+          open={modelSettingsOpen}
+          onOpenChange={setModelSettingsOpen}
+          onSaved={setSelectedModelsState}
         />
       </div>
     );

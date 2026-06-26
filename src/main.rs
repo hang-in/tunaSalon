@@ -651,10 +651,18 @@ fn seed_new_room_personas(sess: &mut LiveSession, room_id: &str, startup: &salon
         {
             continue;
         }
-        // 첫 참가자는 cloud, 나머지는 friend(가용 시). friend 다운이면 전부 cloud.
-        let backend = if use_friend && i > 0 { "friend" } else { "cloud" };
+        // 모델 선택(설정 페이지)이 있으면 페르소나 i를 선택 모델 i에 1:1 라우팅.
+        // 없으면 기존 라우팅: 첫 참가자 cloud, 나머지 friend(가용 시), friend 다운이면 전부 cloud.
+        let models = startup.models();
+        let backend = if !models.is_empty() {
+            models[i % models.len()].clone()
+        } else if use_friend && i > 0 {
+            "friend".to_string()
+        } else {
+            "cloud".to_string()
+        };
         let meta = PersonaMeta {
-            backend: backend.to_string(),
+            backend,
             system_prompt: format!("{}{}", assembled.system_prompt, tail),
             modifier: assembled.modifier,
             axes: Some(salon::live::PersonaAxes {
@@ -870,6 +878,27 @@ fn build_demo_room_pool() -> BackendPool {
     );
     cloud_cfg.thinking = debate_thinking;
     pool.add(cloud_cfg, demo_persona_system_prompts());
+
+    // 설정 페이지에서 고를 수 있는 클라우드 모델들을 각각 backend로 등록(이름=모델 태그).
+    // 새 방 시딩이 PersonaMeta.backend로 페르소나를 이 모델들에 1:1 라우팅한다.
+    // thinking=false: 리즈닝 모델의 chain-of-thought가 채팅에 새는 것을 막는다.
+    // 실패 시 gemma4:31b-cloud로 폴백(접근 불가 모델이 선택돼도 침묵하지 않게).
+    for tag in salon::model::CLOUD_MODELS {
+        let mut cfg = BackendConfig::new(
+            tag,
+            tag,
+            "http://localhost:11434",
+            None,
+            1,
+            None,
+            Duration::from_secs(180),
+        );
+        cfg.thinking = false;
+        pool.add(cfg, demo_persona_system_prompts());
+        if tag != "gemma4:31b-cloud" {
+            pool.set_fallback(tag, "gemma4:31b-cloud");
+        }
+    }
 
     // SALON_CLOUD_ONLY: 지인(friend) vLLM 서버가 죽었을 때 cloud만으로 라이브 테스트.
     // friend 백엔드/라우팅/폴백을 통째로 건너뛴다(서버 복구 시 토글만 끄면 원복).
