@@ -263,7 +263,7 @@ function App() {
 
   if (!inRoom) {
     return (
-      <div className="h-screen w-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
+      <div className="h-[100dvh] w-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
         <main className="h-full overflow-y-auto">
           {/* min-h-full 래퍼: 콘텐츠가 짧으면 중앙, 길면 위에서부터 스크롤(모바일 상단 잘림 방지). */}
           <div className="min-h-full flex items-center justify-center px-4 py-8">
@@ -445,7 +445,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden" style={{ background: "var(--bg-base)" }}>
+    <div className="h-[100dvh] w-screen flex flex-col overflow-hidden" style={{ background: "var(--bg-base)" }}>
       {/* Three.js living room background (기본 off, 켜졌을 때만 마운트) */}
       {bg3d && <ThreeBackground intensities={engineState.intensities} visible={showThreeBg} />}
 

@@ -24,6 +24,9 @@
 
   html, body, #root {
     height: 100%;
+    /* 모바일 동적 뷰포트: 주소창 때문에 100vh가 실제 화면보다 커서 페이지가 스크롤되며
+       헤더가 밀려 올라가는 문제 방지. dvh 미지원 브라우저는 위 100% 폴백. */
+    height: 100dvh;
     overflow: hidden;
   }
 
