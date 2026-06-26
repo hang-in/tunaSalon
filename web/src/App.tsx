@@ -454,7 +454,6 @@ function App() {
         topics={engineState.topics}
         connected={connected}
         participantCount={engineState.participants.length}
-        onToggleSidebar={() => setSidebarOpen(true)}
         bg3d={bg3d}
         onToggle3d={() => setBg3d((v) => !v)}
         paused={engineState.paused}
