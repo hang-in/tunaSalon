@@ -8,11 +8,11 @@
 ![LLM optional](https://img.shields.io/badge/LLM-optional%2C%20default--off-8A2BE2)
 ![determinism](https://img.shields.io/badge/output-deterministic-informational)
 
-A terminal chat room where you drop in and small-talk with LLM personas. The catch: the star isn't the personas — it's the **conversation-flow engine** that decides who speaks when, and when the room just goes quiet. v0.5 makes you a first-class participant: type something and the personas turn to react; go quiet and they drift back to their own chatter. v0.6 adds a conversation thermometer — watching whether the room is converging or still alive.
+A browser app where you open a **topic debate room** and LLM personas argue it out — they remember, rebut, and call each other by name. The real star, though, isn't the personas: it's the **conversation-flow engine** underneath that decides who speaks when, and when the room just falls silent. On top of it sits a *producer* that turns each topic into a kind of argument — a courtroom, a policy duel, a moral dilemma — and you can jump in as a first-class participant whenever you like. (It started as a terminal toy for the engine alone; you can still run it that way — `cargo run` opens the live meter.)
 
 Designing speech is easy. Designing silence is hard. This project is a little backwards on purpose.
 
-> **Now in the browser, as a topic debate.** The room has grown a web front-end and become a topic-based LLM **debate app**: pick a topic, a *producer* layer decides what kind of argument it should be, and the personas argue it out — remembering, rebutting, and calling each other by name. The flow engine below is still the heart; the debate is what it now powers. See [Topic debate in the browser](#topic-debate-in-the-browser) near the end.
+> Most of this README walks the engine, layer by layer (v0.1–v0.10). For the product it now powers, jump to [Topic debate in the browser](#topic-debate-in-the-browser).
 
 ---
 
