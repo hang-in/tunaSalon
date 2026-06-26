@@ -120,6 +120,7 @@ export function SidePanel({ engineState, personaConfigs, open, onClose, humanPul
                         isPending={engineState.pending === participant.id}
                         model={participant.model}
                         humanPulse={humanPulse}
+                        axes={participant.axes}
                       />
                       {/* Remove 버튼: persona 카드 우상단, 호버 시 표시 */}
                       {onRemove && (

@@ -1,5 +1,6 @@
 import { memo } from "react";
-import type { PersonaConfig } from "@/types";
+import type { PersonaConfig, Participant } from "@/types";
+import { PersonaAvatar, poseFromLambda } from "@/lib/personaAvatar";
 
 interface PersonaPresenceProps {
   config: PersonaConfig;
@@ -9,20 +10,13 @@ interface PersonaPresenceProps {
   isHuman?: boolean;
   model?: string;
   humanPulse?: boolean;
+  axes?: Participant["axes"];
 }
 
-function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false, model, humanPulse = false }: PersonaPresenceProps) {
+function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false, model, humanPulse = false, axes }: PersonaPresenceProps) {
   const pct = Math.max(0, Math.min(1, lambda));
 
-  // Avatar glyph expression based on λ band
-  const getAvatarContent = () => {
-    if (isHuman) return "나";
-    if (isPending) return "◠";
-    if (pct >= theta) return "☝";
-    if (pct >= theta * 0.7) return "•̀";
-    if (pct < theta * 0.3) return "◡";
-    return "‿";
-  };
+  const pose = poseFromLambda(lambda, theta, isPending);
 
   // λ-band 분류
   const isActive = isPending || pct >= theta;
@@ -80,7 +74,7 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
           {isHuman ? (
             <span style={{ fontSize: 14 }}>🧑</span>
           ) : (
-            <span className="select-none" style={{ lineHeight: 1 }}>{getAvatarContent()}</span>
+            <PersonaAvatar axes={axes} color={config.color} pose={pose} size={34} />
           )}
         </div>
 
