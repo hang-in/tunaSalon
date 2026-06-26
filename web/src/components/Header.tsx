@@ -20,9 +20,9 @@ export function Header({ topics, connected, participantCount, bg3d, onToggle3d, 
     <header
       className="relative shrink-0 h-16 min-h-[64px] z-40 flex items-center justify-between gap-2 px-3 lg:px-6"
       style={{
-        background: "rgba(30, 30, 30, 0.85)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
+        // in-flow 헤더라 블러/반투명 불필요. 솔리드 배경으로 — mobile Firefox의
+        // backdrop-filter 미렌더 버그(헤더가 안 보이던 원인)를 회피한다.
+        background: "var(--bg-surface)",
         borderBottom: "1px solid var(--border-color)",
       }}
     >
