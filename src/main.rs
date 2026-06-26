@@ -705,8 +705,9 @@ fn random_three_axes(room_id: &str) -> Vec<(Blood, Mbti, Zodiac, Role)> {
         let m = mbtis[rng.gen_range(0..mbtis.len())];
         let z = zodiacs[rng.gen_range(0..zodiacs.len())];
         let r = roles[rng.gen_range(0..roles.len())];
-        // 같은 (blood,mbti,zodiac) 조합은 닉네임이 겹치므로 건너뛴다.
-        if out.iter().any(|(ob, om, oz, _)| *ob == b && *om == m && *oz == z) {
+        // 첫 이름(형용사)은 혈액형으로만 결정되므로(A/B/O/AB 4종), 3명의 혈액형을 모두
+        // 다르게 해 첫이름 중복을 막는다. mbti/zodiac은 겹쳐도 둘째 단어부터 달라진다.
+        if out.iter().any(|(ob, _, _, _)| *ob == b) {
             continue;
         }
         out.push((b, m, z, r));
