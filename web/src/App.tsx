@@ -166,12 +166,9 @@ function App() {
   }, [rememberRoom, resetChat]);
 
   const resolveTopics = useCallback(() => {
-    const source = topicDraft.trim() || topicPlaceholder;
-    return source
-      .split(",")
-      .map((topic) => topic.trim())
-      .filter(Boolean)
-      .slice(0, 5);
+    // 토론 주제는 콤마를 포함할 수 있으므로 쪼개지 않고 입력 전체를 한 주제로 둔다.
+    const source = topicDraft.trim() || topicPlaceholder.trim();
+    return source ? [source] : [];
   }, [topicDraft, topicPlaceholder]);
 
   // "만들기": 랜덤 3명으로 시작(personas 미지정 → 서버가 room_id 기반 랜덤 3명 시딩).

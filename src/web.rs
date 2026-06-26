@@ -183,11 +183,13 @@ impl WebStartup {
 }
 
 fn normalize_topics(topics: Vec<String>) -> Vec<String> {
+    // 여러 주제는 줄바꿈으로 구분한다. 콤마는 토론 주제 문장 안에 흔히 들어가므로
+    // (예: "A인가, B인가?") 구분자로 쓰지 않는다.
     topics
         .into_iter()
         .flat_map(|topic| {
             topic
-                .split(',')
+                .split('\n')
                 .map(|part| part.trim().to_string())
                 .collect::<Vec<_>>()
         })
@@ -1799,24 +1801,26 @@ mod tests {
 
     #[test]
     fn web_startup_debate_normalizes_topics() {
+        // 콤마는 주제 문장 안에 보존(쪼개지 않음). 여러 주제는 줄바꿈으로만 분리.
+        // trim + 빈 항목 제거.
         let startup = WebStartup::debate(vec![
             "  AI regulation, open source ".to_string(),
             "".to_string(),
-            "education".to_string(),
+            "education\nethics".to_string(),
         ]);
 
         assert_eq!(
             startup.topics(),
             &[
-                "AI regulation".to_string(),
-                "open source".to_string(),
-                "education".to_string()
+                "AI regulation, open source".to_string(),
+                "education".to_string(),
+                "ethics".to_string()
             ]
         );
         assert!(startup
             .opening_prompt()
             .expect("opening prompt")
-            .contains("AI regulation"));
+            .contains("AI regulation, open source"));
     }
 
     /// State 프레임에 liveliness 키가 number로 직렬화된다.

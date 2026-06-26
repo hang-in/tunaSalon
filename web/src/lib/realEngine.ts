@@ -19,7 +19,8 @@ export function connect(
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const params = new URLSearchParams();
   if (roomId) params.set("room_id", roomId);
-  if (topics?.length) params.set("topic", topics.join(","));
+  // 토픽 구분자는 줄바꿈. 콤마는 주제 문장 안에 들어갈 수 있어 구분자로 못 쓴다.
+  if (topics?.length) params.set("topic", topics.join("\n"));
   // 새 방 수동 구성: "blood:mbti:zodiac:role"를 ';'로 결합(최대 3명). 없으면 서버가 랜덤 3명.
   if (personas?.length) params.set("personas", personas.join(";"));
   const query = params.toString();
