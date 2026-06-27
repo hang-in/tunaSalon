@@ -56,6 +56,18 @@ struct ReportDto {
     conclusion: String,
 }
 
+impl From<crate::roomstore::ReportRecord> for ReportDto {
+    fn from(r: crate::roomstore::ReportRecord) -> Self {
+        Self {
+            seq: r.seq,
+            created_at: r.created_at,
+            topic: r.topic,
+            markdown: r.markdown,
+            conclusion: r.conclusion,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 enum ServerFrame {
@@ -375,6 +387,100 @@ fn human_display_name(human_id: &str, axes: Option<&PersonaAxes>) -> String {
     human_id.to_string()
 }
 
+fn build_state(
+    session: &LiveSession,
+    human_id: &str,
+    paused: bool,
+    tick_ms: u64,
+    reports: &[ReportDto],
+) -> ServerFrame {
+    let intensities: BTreeMap<String, f64> =
+        session.combined_intensities().into_iter().collect();
+    let mut participants: Vec<Participant> = session
+        .personas()
+        .iter()
+        .map(|p| {
+            let meta = session.persona_meta().get(&p.id);
+            let model = meta.map(|m| backend_to_model(&m.backend));
+            let axes = meta.and_then(|m| m.axes.as_ref()).map(|a| ParticipantAxes {
+                blood: a.blood.clone(),
+                mbti: a.mbti.clone(),
+                zodiac: a.zodiac.clone(),
+                role: a.role.clone(),
+            });
+            Participant {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                model,
+                axes,
+            }
+        })
+        .collect();
+    let human_name = human_display_name(human_id, session.human_axes());
+    participants.push(Participant {
+        id: human_id.to_string(),
+        name: human_name.clone(),
+        model: None,
+        axes: session.human_axes().map(|a| ParticipantAxes {
+            blood: a.blood.clone(),
+            mbti: a.mbti.clone(),
+            zodiac: a.zodiac.clone(),
+            role: a.role.clone(),
+        }),
+    });
+    let speaker_name = |speaker: &str| -> String {
+        if speaker == human_id {
+            return human_name.clone();
+        }
+        if speaker == "(진행)" {
+            return "Moderator".to_string();
+        }
+        session
+            .personas()
+            .iter()
+            .find(|p| p.id == speaker)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| speaker.to_string())
+    };
+    let messages = session
+        .state()
+        .history
+        .iter()
+        .filter_map(|event| {
+            let content = event.content.as_deref()?.trim();
+            if content.is_empty() || event.speaker == "(진행)" {
+                return None;
+            }
+            if event.speaker == human_id
+                && content.trim_start().starts_with("토론을 시작합니다.")
+            {
+                return None;
+            }
+            Some(HistoryMessage {
+                speaker: event.speaker.clone(),
+                name: speaker_name(&event.speaker),
+                content: content.to_string(),
+                ts: event.ts,
+            })
+        })
+        .collect::<Vec<_>>();
+    ServerFrame::State {
+        room_id: session.room_id().to_string(),
+        intensities,
+        theta: session.theta(),
+        flow: session.flow().map(|f| f.convergence).unwrap_or(0.0),
+        mu_scale: session.mu_scale(),
+        liveliness: session.liveliness(),
+        pending: session.pending_speaker(),
+        participants,
+        messages,
+        topics: session.topics().to_vec(),
+        paused,
+        tick_ms,
+        reports: reports.to_vec(),
+    }
+}
+
 // 엔진 스레드: blocking LiveSession 구동, frame을 broadcast로 push, cmd를 mpsc로 수신.
 fn run_engine(
     mut session: LiveSession,
@@ -393,13 +499,7 @@ fn run_engine(
         .and_then(|s| s.load_reports(&room_id_str).ok())
         .unwrap_or_default()
         .into_iter()
-        .map(|r| ReportDto {
-            seq: r.seq,
-            created_at: r.created_at,
-            topic: r.topic,
-            markdown: r.markdown,
-            conclusion: r.conclusion,
-        })
+        .map(ReportDto::from)
         .collect();
     let emit = |tx: &broadcast::Sender<String>, frame: &ServerFrame| {
         if let Ok(json) = serde_json::to_string(frame) {
@@ -410,95 +510,6 @@ fn run_engine(
             let _ = tx.send(json); // 구독자 없어도 무시(broadcast)
         }
     };
-
-    let build_state =
-        |session: &LiveSession, human_id: &str, paused: bool, tick_ms: u64, reports: &[ReportDto]| -> ServerFrame {
-            let intensities: BTreeMap<String, f64> =
-                session.combined_intensities().into_iter().collect();
-            let mut participants: Vec<Participant> = session
-                .personas()
-                .iter()
-                .map(|p| {
-                    let meta = session.persona_meta().get(&p.id);
-                    let model = meta.map(|m| backend_to_model(&m.backend));
-                    let axes = meta.and_then(|m| m.axes.as_ref()).map(|a| ParticipantAxes {
-                        blood: a.blood.clone(),
-                        mbti: a.mbti.clone(),
-                        zodiac: a.zodiac.clone(),
-                        role: a.role.clone(),
-                    });
-                    Participant {
-                        id: p.id.clone(),
-                        name: p.name.clone(),
-                        model,
-                        axes,
-                    }
-                })
-                .collect();
-            let human_name = human_display_name(human_id, session.human_axes());
-            participants.push(Participant {
-                id: human_id.to_string(),
-                name: human_name.clone(),
-                model: None,
-                axes: session.human_axes().map(|a| ParticipantAxes {
-                    blood: a.blood.clone(),
-                    mbti: a.mbti.clone(),
-                    zodiac: a.zodiac.clone(),
-                    role: a.role.clone(),
-                }),
-            });
-            let speaker_name = |speaker: &str| -> String {
-                if speaker == human_id {
-                    return human_name.clone();
-                }
-                if speaker == "(진행)" {
-                    return "Moderator".to_string();
-                }
-                session
-                    .personas()
-                    .iter()
-                    .find(|p| p.id == speaker)
-                    .map(|p| p.name.clone())
-                    .unwrap_or_else(|| speaker.to_string())
-            };
-            let messages = session
-                .state()
-                .history
-                .iter()
-                .filter_map(|event| {
-                    let content = event.content.as_deref()?.trim();
-                    if content.is_empty() || event.speaker == "(진행)" {
-                        return None;
-                    }
-                    if event.speaker == human_id
-                        && content.trim_start().starts_with("토론을 시작합니다.")
-                    {
-                        return None;
-                    }
-                    Some(HistoryMessage {
-                        speaker: event.speaker.clone(),
-                        name: speaker_name(&event.speaker),
-                        content: content.to_string(),
-                        ts: event.ts,
-                    })
-                })
-                .collect::<Vec<_>>();
-            ServerFrame::State {
-                room_id: session.room_id().to_string(),
-                intensities,
-                theta: session.theta(),
-                flow: session.flow().map(|f| f.convergence).unwrap_or(0.0),
-                mu_scale: session.mu_scale(),
-                liveliness: session.liveliness(),
-                pending: session.pending_speaker(),
-                participants,
-                messages,
-                topics: session.topics().to_vec(),
-                paused,
-                tick_ms,
-                reports: reports.to_vec(),
-            }
-        };
 
     let mut dirty = false;
     let mut manual_paused = false;
@@ -935,13 +946,16 @@ fn run_engine(
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_secs() as i64)
                             .unwrap_or(0);
-                        cached_reports.push(ReportDto {
-                            seq,
-                            created_at,
-                            topic,
-                            markdown: report.clone(),
-                            conclusion,
-                        });
+                        cached_reports.push(
+                            crate::roomstore::ReportRecord {
+                                seq,
+                                created_at,
+                                topic,
+                                markdown: report.clone(),
+                                conclusion,
+                            }
+                            .into(),
+                        );
                     }
                 }
                 session.set_report(Some(report.clone()));
@@ -1749,6 +1763,7 @@ mod tests {
             topics: vec!["부처님 오신날".to_string()],
             paused: false,
             tick_ms: 4000,
+            reports: vec![],
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
@@ -1788,6 +1803,7 @@ mod tests {
             topics: vec![],
             paused: false,
             tick_ms: 4000,
+            reports: vec![],
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
@@ -1810,6 +1826,7 @@ mod tests {
             topics: vec![],
             paused: true,
             tick_ms: 4000,
+            reports: vec![],
         };
 
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
@@ -1995,6 +2012,7 @@ mod tests {
             topics: vec![],
             paused: false,
             tick_ms: 6000,
+            reports: vec![],
         };
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
@@ -2041,6 +2059,7 @@ mod tests {
             topics: vec![],
             paused: false,
             tick_ms: 6000,
+            reports: vec![],
         };
         let json = serde_json::to_string(&frame).expect("직렬화 실패");
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
@@ -2103,5 +2122,88 @@ mod tests {
         let json = serde_json::to_string(&p).expect("직렬화 실패");
         let v: serde_json::Value = serde_json::from_str(&json).expect("파싱 실패");
         assert!(v.get("axes").is_none(), "axes None -> 키 없어야 함");
+    }
+
+    // ── build_state 단위 테스트 ─────────────────────────────────────────
+
+    fn make_test_session(personas: Vec<crate::model::Persona>, human_id: &str) -> crate::live::LiveSession {
+        use crate::pool::{BackendConfig, BackendPool};
+        use std::sync::Arc;
+        use std::time::Duration;
+        let mut pool = BackendPool::new();
+        pool.add(
+            BackendConfig::new("offline", "m", "http://127.0.0.1:1", None, 1, None, Duration::from_millis(1)),
+            std::collections::BTreeMap::new(),
+        );
+        pool.set_default("offline");
+        let config = crate::model::EngineConfig {
+            beta: 0.5,
+            theta: 0.5,
+            k: 60.0,
+            tick_interval: 1.0,
+            alpha: crate::model::CouplingMatrix::default(),
+            forbid_self_repeat: false,
+        };
+        crate::live::LiveSession::new(config, personas, 42, Arc::new(pool), human_id)
+    }
+
+    /// build_state: "(진행)" 화자 이벤트는 messages 에서 제외된다.
+    #[test]
+    fn build_state_excludes_jinhaeng_speaker() {
+        let mut session = make_test_session(
+            vec![crate::model::Persona { id: "aria".to_string(), name: "Aria".to_string(), base_rate: 0.7 }],
+            "you",
+        );
+        session.restore_history(
+            vec![
+                crate::model::Event { ts: 1.0, speaker: "(진행)".to_string(), mark: 0.0, content: Some("사회자 멘트".to_string()) },
+                crate::model::Event { ts: 2.0, speaker: "aria".to_string(), mark: 0.5, content: Some("안녕".to_string()) },
+            ],
+            2,
+        );
+        let frame = build_state(&session, "you", false, 6000, &[]);
+        if let ServerFrame::State { messages, .. } = frame {
+            assert_eq!(messages.len(), 1, "(진행) 메시지는 제외되어야 함");
+            assert_eq!(messages[0].speaker, "aria");
+        } else {
+            panic!("State 프레임이어야 함");
+        }
+    }
+
+    /// build_state: axes 없는 human speaker 의 name 이 human_id 그대로다.
+    #[test]
+    fn build_state_human_name_equals_human_id_without_axes() {
+        let mut session = make_test_session(vec![], "나");
+        session.restore_history(
+            vec![crate::model::Event { ts: 1.0, speaker: "나".to_string(), mark: 1.0, content: Some("반가워요".to_string()) }],
+            1,
+        );
+        let frame = build_state(&session, "나", false, 6000, &[]);
+        if let ServerFrame::State { messages, .. } = frame {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].name, "나", "human_id='나', axes 없음 → name == human_id");
+        } else {
+            panic!("State 프레임이어야 함");
+        }
+    }
+
+    /// build_state: "토론을 시작합니다." 로 시작하는 human 발화는 messages 에서 제외된다.
+    #[test]
+    fn build_state_filters_toran_sijakhabnida() {
+        let mut session = make_test_session(vec![], "you");
+        session.restore_history(
+            vec![
+                crate::model::Event { ts: 1.0, speaker: "you".to_string(), mark: 1.0, content: Some("토론을 시작합니다. 주제는 AI입니다.".to_string()) },
+                crate::model::Event { ts: 2.0, speaker: "you".to_string(), mark: 1.0, content: Some("안녕하세요".to_string()) },
+            ],
+            2,
+        );
+        let frame = build_state(&session, "you", false, 6000, &[]);
+        if let ServerFrame::State { messages, .. } = frame {
+            assert_eq!(messages.len(), 1, "토론 시작 메시지는 필터되어야 함");
+            assert_eq!(messages[0].content, "안녕하세요");
+        } else {
+            panic!("State 프레임이어야 함");
+        }
     }
 }
