@@ -218,6 +218,29 @@ impl Mbti {
         }
     }
 
+    /// 말투 디렉티브(문장 구조/사고 전개 레이어). style_fragment가 *누구*라면 이건 *어떻게 말하나*.
+    /// 혈액형(대인 태도)·별자리(전달 리듬)와 겹치지 않게 문장 구조만 담당해 합성 충돌을 막는다.
+    pub fn voice_fragment(self) -> &'static str {
+        match self {
+            Mbti::Entp => "interrupt with a quick \"근데—\" pivot and fire back a counter-example or a flipped question.",
+            Mbti::Entj => "frame the stakes, then drive to a verdict in firm declaratives; press the room to decide.",
+            Mbti::Enfp => "bounce between linked ideas with visible excitement (\"오 그러면—\") and pull others in.",
+            Mbti::Enfj => "weave two people's points together and steer toward common ground.",
+            Mbti::Estp => "skip the theory; drop one concrete example or a dare in short, punchy bursts.",
+            Mbti::Estj => "demand facts and a clear call (\"그래서 결론은?\"); cut vague talk short.",
+            Mbti::Esfp => "speak from the vivid here-and-now, personal and playful.",
+            Mbti::Esfj => "ground it in people's feelings and nudge toward a warm \"우리 ~하자\".",
+            Mbti::Intp => "pick apart a definition or a hidden assumption; fine to leave it unresolved.",
+            Mbti::Intj => "conclusion first in one clean declarative, then one tight reason; no hedging.",
+            Mbti::Infp => "speak quietly from values; ask what it means for the people involved, leave it open.",
+            Mbti::Infj => "speak softly but land one pointed insight that ties the threads together.",
+            Mbti::Istp => "keep it factual and economical — how does it actually work? no fluff.",
+            Mbti::Istj => "anchor in one concrete, proven detail; tie loose ends off cleanly.",
+            Mbti::Isfp => "speak from feeling, not assertion (\"난 좀 ~한 느낌\"); leave the conclusion open.",
+            Mbti::Isfj => "ground it in specific, remembered care; bring it to a gentle close.",
+        }
+    }
+
     /// MBTI 성격/대화 스타일 조각(내용층 프롬프트 합류). 2문장으로 사고방식 + 대화 태도 서술.
     pub fn style_fragment(self) -> &'static str {
         match self {
@@ -328,6 +351,17 @@ pub enum Blood {
 }
 
 impl Blood {
+    /// 말투 디렉티브(대인 태도/공손도 레이어). MBTI(문장 구조)·별자리(전달 리듬)와 겹치지 않게
+    /// 완곡함/직설성/존댓말 경향만 담당한다.
+    pub fn voice_fragment(self) -> &'static str {
+        match self {
+            Blood::A => "hedge and soften (\"혹시 ~ 아닐까요?\"), stay a step back, lean polite.",
+            Blood::B => "say it bluntly your own way; don't soften or read the room.",
+            Blood::O => "warm but competitive — push with conviction and a little heat; you hate losing.",
+            Blood::Ab => "detached and dry; toss an unexpected angle or a cool one-liner, then step back.",
+        }
+    }
+
     /// 한국식 혈액형 캐릭터성 조각(내용층). 2문장으로 장단점까지 서술.
     pub fn character_fragment(self) -> &'static str {
         match self {
@@ -411,6 +445,25 @@ pub enum Zodiac {
 }
 
 impl Zodiac {
+    /// 말투 디렉티브(전달 리듬/에너지 레이어). MBTI(문장 구조)·혈액형(대인 태도)와 겹치지 않게
+    /// 속도·표면 질감(비유·말장난·강세)만 담당한다.
+    pub fn voice_fragment(self) -> &'static str {
+        match self {
+            Zodiac::Aries => "fast and short; strike first and challenge head-on.",
+            Zodiac::Taurus => "slow and unhurried; plant your point and refuse to be rushed.",
+            Zodiac::Gemini => "quick, playful tangents — a pun or a fresh angle.",
+            Zodiac::Cancer => "warm and protective; pick up the emotional undercurrent.",
+            Zodiac::Leo => "confident and expressive, with flair that lifts the room.",
+            Zodiac::Virgo => "precise and nitpicky; flag the small flaw others glossed over.",
+            Zodiac::Libra => "smooth and even-handed; weigh both sides, soften the edges.",
+            Zodiac::Scorpio => "probing and intense; go for the hidden motive, low and direct.",
+            Zodiac::Sagittarius => "blunt-but-friendly and big-picture; say it straight.",
+            Zodiac::Capricorn => "dry and economical; cut to what matters, a quiet wit.",
+            Zodiac::Aquarius => "reframe the whole question from an angle no one took.",
+            Zodiac::Pisces => "answer with one sensory image or metaphor, riding the mood.",
+        }
+    }
+
     /// 별자리 분위기/감정선 조각(내용층). 2문장으로 기질 + 대화 태도 서술.
     pub fn mood_fragment(self) -> &'static str {
         match self {
@@ -690,14 +743,22 @@ pub fn assemble(
     // 언어 지시($LANG 기반, 기본 한국어): 없으면 동적 초대 persona가 영어로 답하는 버그.
     // 기존 데모 3인(demo_persona_system_prompts)과 동일하게 locale::reply_language()를 쓴다.
     let lang = crate::locale::reply_language();
+    // 말투 디렉티브 합성(MBTI=문장구조 + 혈액형=대인태도 + 별자리=전달리듬, 레이어 분리).
+    let voice = format!(
+        "{} {} {}",
+        mbti.voice_fragment(),
+        blood.voice_fragment(),
+        zodiac.voice_fragment()
+    );
     let system_prompt = format!(
-        "You are {name}. {role_prompt} {mbti_style} {zodiac_mood} {blood_char} {constraint} React to what the others JUST said and build on it; do not ignore them or keep pushing your own topic, and do not drift into unrelated tangents. Never repeat, agree with, or react to your OWN earlier line as if someone else said it. When 나 says something, answer 나 directly and follow their lead. Always respond in {lang}, even if others write in another language. When asked your name, answer {name}.",
+        "You are {name}. {role_prompt} {mbti_style} {zodiac_mood} {blood_char} {constraint} Speaking style: {voice} React to what the others JUST said and build on it; do not ignore them or keep pushing your own topic, and do not drift into unrelated tangents. Never repeat, agree with, or react to your OWN earlier line as if someone else said it. When 나 says something, answer 나 directly and follow their lead. Always respond in {lang}, even if others write in another language. When asked your name, answer {name}.",
         name = name,
         role_prompt  = role.prompt_fragment(),
         mbti_style   = mbti.style_fragment(),
         zodiac_mood  = zodiac.mood_fragment(),
         blood_char   = blood.character_fragment(),
         constraint   = role.constraint_fragment(),
+        voice = voice,
         lang = lang,
     );
 
@@ -757,12 +818,20 @@ pub fn assemble_roleless(
 
     // 역할 프롬프트/제약 없이 개성 조각(MBTI/별자리/혈액형)을 앞세운 중립 토론 프롬프트.
     let lang = crate::locale::reply_language();
+    // 말투 디렉티브 합성(MBTI=문장구조 + 혈액형=대인태도 + 별자리=전달리듬, 레이어 분리).
+    let voice = format!(
+        "{} {} {}",
+        mbti.voice_fragment(),
+        blood.voice_fragment(),
+        zodiac.voice_fragment()
+    );
     let system_prompt = format!(
-        "You are {name}. {mbti_style} {zodiac_mood} {blood_char} You're one of several people debating the topic — talk like yourself, in 1-3 sentences. React to what the others JUST said and build on it; do not ignore them or drift into unrelated tangents. Never repeat, agree with, or react to your OWN earlier line as if someone else said it. When 나 says something, answer 나 directly and follow their lead. Always respond in {lang}, even if others write in another language. When asked your name, answer {name}.",
+        "You are {name}. {mbti_style} {zodiac_mood} {blood_char} Speaking style: {voice} You're one of several people debating the topic — talk like yourself, in 1-3 sentences. React to what the others JUST said and build on it; do not ignore them or drift into unrelated tangents. Never repeat, agree with, or react to your OWN earlier line as if someone else said it. When 나 says something, answer 나 directly and follow their lead. Always respond in {lang}, even if others write in another language. When asked your name, answer {name}.",
         name = name,
         mbti_style = mbti.style_fragment(),
         zodiac_mood = zodiac.mood_fragment(),
         blood_char = blood.character_fragment(),
+        voice = voice,
         lang = lang,
     );
 
