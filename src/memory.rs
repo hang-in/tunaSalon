@@ -782,25 +782,12 @@ mod sqlite_impl {
 
             // 3. OR-MATCH 구성: 각 토큰을 큰따옴표로 감싸고(내부 " → "") " OR "로 연결
             //    예) ["비", "오"] → `"비" OR "오"`
-            let match_expr: String = tokens
-                .iter()
-                .map(|t| {
-                    // 내부 " 를 "" 로 escape
-                    let escaped = t.replace('"', "\"\"");
-                    format!("\"{}\"", escaped)
-                })
-                .collect::<Vec<_>>()
-                .join(" OR ");
+            let match_expr: String = fts_or_match(&tokens);
 
             // 4. rooms placeholders: ?2, ?3, ...
             //    주의: params! 매크로가 런타임 가변 길이를 지원 안 하므로
             //    동적 SQL + params_from_iter 사용.
-            let placeholders = rooms
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", i + 3))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let placeholders = sql_placeholders(rooms.len(), 3);
 
             let sql = format!(
                 "SELECT m.id, m.room, m.ts, m.speaker, m.content, bm25(memories_fts) AS score
@@ -896,21 +883,9 @@ mod sqlite_impl {
                 if tokens.is_empty() {
                     vec![]
                 } else {
-                    let match_expr: String = tokens
-                        .iter()
-                        .map(|t| {
-                            let escaped = t.replace('"', "\"\"");
-                            format!("\"{}\"", escaped)
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" OR ");
+                    let match_expr: String = fts_or_match(&tokens);
 
-                    let placeholders = rooms
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| format!("?{}", i + 3))
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let placeholders = sql_placeholders(rooms.len(), 3);
 
                     let sql = format!(
                         "SELECT m.id
@@ -954,18 +929,8 @@ mod sqlite_impl {
                 } else {
                     // id들의 room을 일괄 조회해 참여 방인지 필터
                     let raw_ids: Vec<i64> = raw.iter().map(|(id, _)| *id).collect();
-                    let id_placeholders = raw_ids
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| format!("?{}", i + 1))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let room_placeholders = rooms
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| format!("?{}", raw_ids.len() + i + 1))
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let id_placeholders = sql_placeholders(raw_ids.len(), 1);
+                    let room_placeholders = sql_placeholders(rooms.len(), raw_ids.len() + 1);
 
                     let filter_sql = format!(
                         "SELECT id FROM memories WHERE id IN ({id_placeholders}) AND room IN ({room_placeholders})"
@@ -1101,6 +1066,41 @@ mod sqlite_impl {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("MemoryStore(SQLite:memory:)").finish()
         }
+    }
+
+    // ── 순수 문자열 헬퍼 ──────────────────────────────────────────────────────
+
+    /// FTS5 OR-MATCH 식을 생성한다.
+    ///
+    /// 각 토큰의 `"` 를 `""` 로 escape 후 `"tok1" OR "tok2" ...` 형태로 join.
+    /// 빈 토큰 목록이면 빈 문자열을 반환한다.
+    ///
+    /// 호출처: BM25-only recall + hybrid recall BM25 leg.
+    #[cfg(feature = "friend-engine")]
+    pub(super) fn fts_or_match(tokens: &[String]) -> String {
+        tokens
+            .iter()
+            .map(|t| {
+                let escaped = t.replace('"', "\"\"");
+                format!("\"{}\"", escaped)
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    }
+
+    /// SQL positional placeholder 문자열을 생성한다.
+    ///
+    /// `count` 개의 `?N`(1-based, `start`부터)을 `", "` 로 join.
+    /// 예) `sql_placeholders(3, 2)` → `"?2, ?3, ?4"`.
+    /// count=0 이면 빈 문자열을 반환한다.
+    ///
+    /// 호출처: recall BM25 leg(start=3), hybrid vector 필터(start=1 / start=raw_ids.len()+1).
+    #[cfg(feature = "friend-engine")]
+    pub(super) fn sql_placeholders(count: usize, start: usize) -> String {
+        (0..count)
+            .map(|i| format!("?{}", i + start))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     // ── RRF 융합 헬퍼 ─────────────────────────────────────────────────────────
@@ -1658,6 +1658,71 @@ mod tests {
                 tmp_dir.join(format!("tunasalon_sem_roundtrip_{pid}{suf}.db")),
             );
         }
+    }
+
+    // ── fts_or_match / sql_placeholders 단위 테스트 (friend-engine) ──────────
+
+    /// fts_or_match: 기본 escape + " OR " join.
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn fts_or_match_basic() {
+        use super::sqlite_impl::fts_or_match;
+        let tokens = vec!["비".to_string(), "오".to_string()];
+        let result = fts_or_match(&tokens);
+        assert_eq!(result, r#""비" OR "오""#, "두 토큰 OR join");
+    }
+
+    /// fts_or_match: 내부 큰따옴표를 "" 로 escape 한다.
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn fts_or_match_escape_quote() {
+        use super::sqlite_impl::fts_or_match;
+        let tokens = vec!["say \"hello\"".to_string()];
+        let result = fts_or_match(&tokens);
+        // 예상: 내부 " 두 개가 각각 ""로 escpae → 외부 따옴표 포함 "say ""hello"""
+        assert_eq!(result, "\"say \"\"hello\"\"\"", "내부 \" → \"\" escape");
+    }
+
+    /// fts_or_match: 빈 토큰 목록 → 빈 문자열.
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn fts_or_match_empty() {
+        use super::sqlite_impl::fts_or_match;
+        let result = fts_or_match(&[]);
+        assert_eq!(result, "", "빈 입력 → 빈 문자열");
+    }
+
+    /// sql_placeholders: count=3, start=2 → "?2, ?3, ?4".
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn sql_placeholders_basic() {
+        use super::sqlite_impl::sql_placeholders;
+        assert_eq!(sql_placeholders(3, 2), "?2, ?3, ?4");
+    }
+
+    /// sql_placeholders: count=1, start=1 → "?1".
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn sql_placeholders_single() {
+        use super::sqlite_impl::sql_placeholders;
+        assert_eq!(sql_placeholders(1, 1), "?1");
+    }
+
+    /// sql_placeholders: count=0 → 빈 문자열.
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn sql_placeholders_zero() {
+        use super::sqlite_impl::sql_placeholders;
+        assert_eq!(sql_placeholders(0, 5), "", "count=0이면 빈 문자열");
+    }
+
+    /// sql_placeholders: start offset 검증 — recall BM25 leg 기준(start=3).
+    #[cfg(feature = "friend-engine")]
+    #[test]
+    fn sql_placeholders_recall_bm25_offset() {
+        use super::sqlite_impl::sql_placeholders;
+        // rooms 2개, start=3 → ?3, ?4
+        assert_eq!(sql_placeholders(2, 3), "?3, ?4");
     }
 
     // ── rrf_fuse 단위 테스트 (friend-engine-semantic, task-49) ───────────────
