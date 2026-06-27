@@ -6,7 +6,7 @@ pub type PersonaId = String;
 /// 설정 페이지에서 고를 수 있는 클라우드 모델 목록(ollama.com 확인, 2026-06).
 /// backend 이름 = 모델 태그로 풀에 등록되고 PersonaMeta.backend로 라우팅·영속된다.
 /// model.rs(비 feature-gate)에 두어 web/비-web 양쪽에서 공유한다.
-pub const CLOUD_MODELS: [&str; 7] = [
+pub const CLOUD_MODELS: [&str; 9] = [
     "gemma4:31b-cloud",
     "nemotron-3-super:cloud",
     "qwen3.5:cloud",
@@ -14,6 +14,9 @@ pub const CLOUD_MODELS: [&str; 7] = [
     "kimi-k2.6:cloud",
     "deepseek-v4-flash:cloud",
     "devstral-small-2:24b-cloud",
+    // 고급(대형) — 토론 품질 테스트용. 태그는 ollama.com에서 사용자 직접 확인(2026-06-27).
+    "minimax-m3:cloud",
+    "deepseek-v4-pro:cloud",
 ];
 
 /// 페르소나별 케미 비대칭 계수.

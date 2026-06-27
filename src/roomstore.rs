@@ -34,6 +34,16 @@ pub struct RoomSnapshot {
     pub report: Option<String>,
 }
 
+/// 방의 리포트 히스토리 레코드 (room_reports 테이블 1행).
+#[derive(Debug, Clone)]
+pub struct ReportRecord {
+    pub seq: u32,
+    pub created_at: i64,
+    pub topic: String,
+    pub markdown: String,
+    pub conclusion: String,
+}
+
 impl RoomStore {
     /// 파일 경로의 SQLite를 열거나 생성한다.
     ///
@@ -222,6 +232,71 @@ impl RoomStore {
         }
     }
 
+    /// 새 리포트를 room_reports에 삽입하고 부여된 seq를 반환한다.
+    /// seq는 해당 room_id의 최대 seq + 1 (없으면 1부터).
+    pub fn append_report(
+        &self,
+        room_id: &str,
+        topic: &str,
+        markdown: &str,
+        conclusion: &str,
+    ) -> rusqlite::Result<u32> {
+        let next_seq: u32 = {
+            let max: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT MAX(seq) FROM room_reports WHERE room_id = ?1",
+                    params![room_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(None);
+            (max.unwrap_or(0) + 1) as u32
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn.execute(
+            "INSERT INTO room_reports(room_id, seq, created_at, topic, markdown, conclusion) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![room_id, next_seq, now, topic, markdown, conclusion],
+        )?;
+        Ok(next_seq)
+    }
+
+    /// room_id의 모든 리포트를 seq 오름차순으로 반환한다.
+    pub fn load_reports(&self, room_id: &str) -> rusqlite::Result<Vec<ReportRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, created_at, topic, markdown, conclusion \
+             FROM room_reports WHERE room_id = ?1 ORDER BY seq ASC",
+        )?;
+        let records = stmt
+            .query_map(params![room_id], |row| {
+                Ok(ReportRecord {
+                    seq: row.get::<_, i64>(0)? as u32,
+                    created_at: row.get(1)?,
+                    topic: row.get(2)?,
+                    markdown: row.get(3)?,
+                    conclusion: row.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(records)
+    }
+
+    /// room_id의 최근 n개 결론(conclusion 필드)을 seq 오름차순으로 반환한다.
+    pub fn recent_conclusions(&self, room_id: &str, n: usize) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT conclusion FROM room_reports \
+             WHERE room_id = ?1 ORDER BY seq DESC LIMIT ?2",
+        )?;
+        let mut results: Vec<String> = stmt
+            .query_map(params![room_id, n as i64], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        results.reverse(); // DESC → ASC
+        Ok(results)
+    }
+
     /// 방 상태를 복원한다.
     ///
     /// 해당 `room_id` row가 `room_meta`에 없으면 `Ok(None)`.
@@ -390,6 +465,18 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
     }
     // 종료 리포트(마크다운)도 방 단위 1개.
     let _ = conn.execute("ALTER TABLE room_meta ADD COLUMN report TEXT", []);
+    // 단계형 토론 리포트 히스토리 테이블 (멱등 생성).
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS room_reports(
+            room_id    TEXT NOT NULL,
+            seq        INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            topic      TEXT NOT NULL,
+            markdown   TEXT NOT NULL,
+            conclusion TEXT NOT NULL,
+            PRIMARY KEY(room_id, seq)
+        );",
+    )?;
     Ok(())
 }
 

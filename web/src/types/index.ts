@@ -31,6 +31,7 @@ export interface StateFrame {
   topics: string[];
   paused: boolean;
   tick_ms: number;
+  reports?: ReportDto[];
 }
 
 export interface UtteranceFrame {
@@ -55,6 +56,14 @@ export interface SystemFrame {
 export interface ReportFrame {
   type: "report";
   text: string;
+}
+
+export interface ReportDto {
+  seq: number;
+  created_at: number;
+  topic: string;
+  markdown: string;
+  conclusion: string;
 }
 
 export type ServerFrame = StateFrame | UtteranceFrame | RecallFrame | SystemFrame | ReportFrame;

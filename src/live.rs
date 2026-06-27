@@ -1056,7 +1056,7 @@ impl LiveSession {
     /// 진행 지시("(진행)")·placeholder는 제외한 실제 발화만 전사로 넘긴다. 한국어 품질을 위해
     /// gemma 백엔드(thinking=false 태그) 우선. 발화가 너무 적거나 생성 실패면 None.
     /// 블로킹 호출이므로 호출측(web 엔진 스레드)은 방이 idle일 때만 부른다.
-    pub fn summarize_debate(&self) -> Option<String> {
+    pub fn summarize_debate(&self, past_conclusions: &[String]) -> Option<String> {
         let transcript: Vec<Event> = self
             .state
             .history
@@ -1086,8 +1086,21 @@ impl LiveSession {
         };
 
         let topic = self.topics.join(", ");
+        let past_context = if past_conclusions.is_empty() {
+            String::new()
+        } else {
+            let items: Vec<String> = past_conclusions
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("{}. {c}", i + 1))
+                .collect();
+            format!(
+                "이전 토론 결론(맥락 참고용, 평가 대상 아님):\n{}\n\n",
+                items.join("\n")
+            )
+        };
         let prompt = format!(
-            "You are a neutral debate analyst. The discussion above is a FINISHED debate on the topic \"{topic}\". \
+            "{past_context}You are a neutral debate analyst. The discussion above is a FINISHED debate on the topic \"{topic}\". \
              Write a DEBRIEF REPORT in Korean using GitHub-flavored MARKDOWN — this is a report document, NOT a chat reply, \
              so do not address anyone or continue the debate. Lead with the conclusion (두괄식): the report MUST start with the \
              '## 결론' section. Use exactly these sections in this order:\n\
@@ -1214,6 +1227,33 @@ impl LiveSession {
             self.config.beta,
             self.target_rho,
         );
+    }
+}
+
+/// '## 결론' 섹션 본문(다음 `##` 전까지)을 공백으로 이어 반환한다.
+/// 섹션이 없으면 첫 줄 반환.
+pub(crate) fn extract_conclusion_section(markdown: &str) -> String {
+    let mut in_section = false;
+    let mut body = Vec::new();
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## 결론") {
+            in_section = true;
+            continue;
+        }
+        if in_section {
+            if trimmed.starts_with("##") {
+                break;
+            }
+            if !trimmed.is_empty() {
+                body.push(trimmed.to_string());
+            }
+        }
+    }
+    if body.is_empty() {
+        markdown.lines().next().unwrap_or("").to_string()
+    } else {
+        body.join(" ")
     }
 }
 

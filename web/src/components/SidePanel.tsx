@@ -1,8 +1,9 @@
-import { useMemo } from "react";
-import { Activity, Thermometer, Wind, X, UserMinus, Users, Zap } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Activity, FileText, Thermometer, Wind, X, UserMinus, Users, Zap } from "lucide-react";
 import { PersonaPresence } from "./PersonaPresence";
 import { InvitePanel } from "./InvitePanel";
-import type { EngineState, PersonaConfig } from "@/types";
+import { ReportMarkdown } from "@/components/ReportMarkdown";
+import type { EngineState, PersonaConfig, ReportDto } from "@/types";
 
 interface SidePanelProps {
   engineState: EngineState;
@@ -15,9 +16,10 @@ interface SidePanelProps {
   onRemove?: (id: string) => void;
   onPace?: (intervalMs: number) => void;
   onEditHuman?: () => void;
+  reports?: ReportDto[];
 }
 
-export function SidePanel({ engineState, personaConfigs, getPersonaConfig, open, onClose, humanPulse = false, onInvite, onRemove, onPace, onEditHuman }: SidePanelProps) {
+export function SidePanel({ engineState, personaConfigs, getPersonaConfig, open, onClose, humanPulse = false, onInvite, onRemove, onPace, onEditHuman, reports = [] }: SidePanelProps) {
   // Compute silence status
   const isSilent = useMemo(() => {
     const ids = Object.keys(engineState.intensities).filter((id) => id !== "나");
@@ -53,6 +55,8 @@ export function SidePanel({ engineState, personaConfigs, getPersonaConfig, open,
 
   // mu_scale bar width: 0.4~1.0 범위를 0~100%로 매핑
   const muPct = Math.max(0, Math.min(1, (engineState.mu_scale - 0.4) / 0.6));
+
+  const [modalReport, setModalReport] = useState<ReportDto | null>(null);
 
   return (
     <>
@@ -346,8 +350,78 @@ export function SidePanel({ engineState, personaConfigs, getPersonaConfig, open,
               </span>
             </div>
           )}
+
+          {/* Section: 지난 리포트 */}
+          {reports.length > 0 && (
+            <>
+              <div className="h-px my-6" style={{ background: "var(--border-color)" }} />
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText size={14} style={{ color: "var(--accent-warm)" }} />
+                  <h2 className="text-[13px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+                    지난 리포트
+                  </h2>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {reports.map((r) => (
+                    <button
+                      key={r.seq}
+                      onClick={() => setModalReport(r)}
+                      className="w-full text-left px-3 py-2 rounded-lg text-[12px] transition-colors hover:opacity-80"
+                      style={{
+                        background: "var(--bg-base)",
+                        border: "1px solid var(--border-color)",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
+                      <span className="font-semibold" style={{ color: "var(--accent-warm)" }}>
+                        #{r.seq}
+                      </span>{" "}
+                      <span className="truncate">{r.topic || r.conclusion.slice(0, 60)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </aside>
+
+      {/* 리포트 전체 팝업 */}
+      {modalReport && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60"
+          onClick={() => setModalReport(null)}
+        >
+          <div
+            className="relative w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-2xl p-6"
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <FileText size={16} style={{ color: "var(--accent-warm)" }} />
+                <span className="text-[14px] font-bold" style={{ color: "var(--accent-warm)" }}>
+                  토론 리포트 #{modalReport.seq}
+                </span>
+                {modalReport.topic && (
+                  <span className="text-[12px] text-[var(--text-secondary)]">· {modalReport.topic}</span>
+                )}
+              </div>
+              <button
+                onClick={() => setModalReport(null)}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="text-[13.5px]" style={{ color: "var(--text-primary)" }}>
+              <ReportMarkdown content={modalReport.markdown} />
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

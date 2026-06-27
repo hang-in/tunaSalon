@@ -15,6 +15,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { value: "kimi-k2.6:cloud", label: "Kimi K2.6", note: "장문·추론" },
   { value: "deepseek-v4-flash:cloud", label: "DeepSeek V4 Flash", note: "빠른 추론" },
   { value: "devstral-small-2:24b-cloud", label: "Devstral Small 2 24B", note: "경량" },
+  { value: "minimax-m3:cloud", label: "MiniMax M3", note: "고급·대형(테스트)" },
+  { value: "deepseek-v4-pro:cloud", label: "DeepSeek V4 Pro", note: "고급·대형(테스트)" },
 ];
 
 export const MODELS_REQUIRED = 3;

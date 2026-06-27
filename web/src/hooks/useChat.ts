@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { ServerFrame, ChatMessage, EngineState, PersonaConfig } from "@/types";
+import type { ServerFrame, ChatMessage, EngineState, PersonaConfig, ReportDto } from "@/types";
 import { connect as connectReal } from "@/lib/realEngine";
 import { connect as connectMock } from "@/lib/mockEngine";
 import { personaColorSet } from "@/lib/personaAvatar";
@@ -81,6 +81,8 @@ export function useChat({ enabled = true, roomId, topics = [], personas, models 
   const [humanPulse, setHumanPulse] = useState(false);
   const connRef = useRef<ReturnType<typeof connect> | null>(null);
   const msgIdRef = useRef(0);
+  const [reports, setReports] = useState<ReportDto[]>([]);
+  const addedReportSeqsRef = useRef<Set<number>>(new Set());
   const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topicKey = topics.join("\u0000");
 
@@ -119,6 +121,36 @@ export function useChat({ enabled = true, roomId, topics = [], personas, models 
           return [...systemMessages, ...historyMessages];
         });
         setConnected(true);
+        // Past reports from state (재진입 복원)
+        const newReportDtos = (frame.reports ?? []).filter(
+          (r) => !addedReportSeqsRef.current.has(r.seq)
+        );
+        if (newReportDtos.length > 0) {
+          newReportDtos.forEach((r) => addedReportSeqsRef.current.add(r.seq));
+          setReports((prev) => {
+            const seenSeqs = new Set(prev.map((r) => r.seq));
+            const toAdd = newReportDtos.filter((r) => !seenSeqs.has(r.seq));
+            return toAdd.length ? [...prev, ...toAdd] : prev;
+          });
+          setMessages((prev) => {
+            const existingIds = new Set(prev.map((m) => m.id));
+            const reportMsgs: ChatMessage[] = newReportDtos
+              .filter((r) => !existingIds.has(`report-${r.seq}`))
+              .map((r) => ({
+                id: `report-${r.seq}`,
+                type: "report" as const,
+                speaker: "report",
+                name: `토론 리포트 #${r.seq}`,
+                content: r.markdown,
+                ts: 0,
+                isHuman: false,
+              }));
+            if (reportMsgs.length === 0) return prev;
+            // 리포트는 transcript 끝에 누적: 라이브 종료 시 직전 발화 아래(시간순),
+            // 재진입 시 복원된 전체 발화 하단에 묶여 표시(사이드바에서 개별 열람 가능).
+            return [...prev, ...reportMsgs];
+          });
+        }
       } else if (frame.type === "utterance") {
         msgIdRef.current++;
         setMessages((prev) => [
@@ -161,21 +193,9 @@ export function useChat({ enabled = true, roomId, topics = [], personas, models 
             isHuman: false,
           },
         ]);
-      } else if (frame.type === "report") {
-        msgIdRef.current++;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `msg-${msgIdRef.current}`,
-            type: "report",
-            speaker: "report",
-            name: "토론 리포트",
-            content: frame.text,
-            ts: 0,
-            isHuman: false,
-          },
-        ]);
       }
+      // 토론 리포트 카드는 state 프레임의 reports[]로만 렌더(중복 방지) — 위 state 핸들러 참고.
+      // 백엔드의 live "report" 프레임은 무시한다(reports[]가 단일 SSOT).
     }, (isConnected: boolean) => setConnected(isConnected), roomId, topics, personas, models);
     connRef.current = conn;
     return () => {
@@ -192,6 +212,8 @@ export function useChat({ enabled = true, roomId, topics = [], personas, models 
     setMessages([]);
     setEngineState(DEFAULT_ENGINE_STATE);
     setConnected(false);
+    setReports([]);
+    addedReportSeqsRef.current = new Set();
   }, []);
 
   const triggerHumanPulse = useCallback(() => {
@@ -261,6 +283,7 @@ export function useChat({ enabled = true, roomId, topics = [], personas, models 
     messages,
     engineState,
     connected,
+    reports,
     sidebarOpen,
     setSidebarOpen,
     sendMessage,

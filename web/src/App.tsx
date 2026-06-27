@@ -143,6 +143,7 @@ function App() {
     messages,
     engineState,
     connected,
+    reports,
     sidebarOpen,
     setSidebarOpen,
     sendMessage,
@@ -593,6 +594,7 @@ function App() {
           onRemove={sendRemove}
           onPace={sendPace}
           onEditHuman={() => setHumanDialogOpen(true)}
+          reports={reports}
         />
 
         <HumanProfileDialog

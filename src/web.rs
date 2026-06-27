@@ -2,7 +2,7 @@
 //! web 프런트엔드 sink: axum WebSocket으로 엔진 이벤트를 브라우저에 push + 사람 입력 수신.
 //! 엔진은 blocking(전용 스레드), axum은 tokio(async). 둘은 tokio 채널로 브리지.
 
-use crate::live::{LiveSession, PersonaAxes, PersonaMeta};
+use crate::live::{extract_conclusion_section, LiveSession, PersonaAxes, PersonaMeta};
 use crate::persona_kit::{assemble_roleless, Blood, Mbti, Role, Zodiac};
 use crate::roomstore::RoomStore;
 #[cfg(feature = "redis-bus")]
@@ -46,6 +46,16 @@ struct HistoryMessage {
     ts: f64,
 }
 
+/// 클라이언트에 전달하는 리포트 DTO.
+#[derive(Serialize, Clone)]
+struct ReportDto {
+    seq: u32,
+    created_at: i64,
+    topic: String,
+    markdown: String,
+    conclusion: String,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 enum ServerFrame {
@@ -63,6 +73,7 @@ enum ServerFrame {
         topics: Vec<String>,
         paused: bool,
         tick_ms: u64,
+        reports: Vec<ReportDto>,
     },
     #[serde(rename = "utterance")]
     Utterance {
@@ -376,6 +387,20 @@ fn run_engine(
 ) {
     #[cfg(feature = "redis-bus")]
     let room_id = session.room_id().to_string();
+    let room_id_str = session.room_id().to_string();
+    let mut cached_reports: Vec<ReportDto> = store
+        .as_ref()
+        .and_then(|s| s.load_reports(&room_id_str).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| ReportDto {
+            seq: r.seq,
+            created_at: r.created_at,
+            topic: r.topic,
+            markdown: r.markdown,
+            conclusion: r.conclusion,
+        })
+        .collect();
     let emit = |tx: &broadcast::Sender<String>, frame: &ServerFrame| {
         if let Ok(json) = serde_json::to_string(frame) {
             #[cfg(feature = "redis-bus")]
@@ -387,7 +412,7 @@ fn run_engine(
     };
 
     let build_state =
-        |session: &LiveSession, human_id: &str, paused: bool, tick_ms: u64| -> ServerFrame {
+        |session: &LiveSession, human_id: &str, paused: bool, tick_ms: u64, reports: &[ReportDto]| -> ServerFrame {
             let intensities: BTreeMap<String, f64> =
                 session.combined_intensities().into_iter().collect();
             let mut participants: Vec<Participant> = session
@@ -471,6 +496,7 @@ fn run_engine(
                 topics: session.topics().to_vec(),
                 paused,
                 tick_ms,
+                reports: reports.to_vec(),
             }
         };
 
@@ -513,6 +539,7 @@ fn run_engine(
             &human_id,
             effective_paused(manual_paused, client_count, backend_paused),
             tick_period.as_millis() as u64,
+            &cached_reports,
         ),
     );
 
@@ -535,7 +562,7 @@ fn run_engine(
                     );
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     ); // λ 스파이크 즉시 반영
                     dirty = true;
                 }
@@ -551,7 +578,7 @@ fn run_engine(
                     }
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     );
                     dirty = true;
                 }
@@ -588,7 +615,7 @@ fn run_engine(
                     let paused = effective_paused(manual_paused, client_count, backend_paused);
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     );
                 }
                 EngineCmd::SetPaused(p) => {
@@ -602,7 +629,7 @@ fn run_engine(
                     }
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     ); // 즉시 paused 상태 반영
                 }
                 EngineCmd::SetClientCount(count) => {
@@ -628,14 +655,14 @@ fn run_engine(
                     }
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     );
                 }
                 EngineCmd::SetPace(ms) => {
                     tick_period = Duration::from_millis(ms.clamp(1500, 12000));
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     ); // 즉시 반영
                 }
                 EngineCmd::SetHumanProfile {
@@ -655,7 +682,7 @@ fn run_engine(
                     dirty = false;
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     );
                 }
                 EngineCmd::Remove(id) => {
@@ -674,7 +701,7 @@ fn run_engine(
                     );
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     );
                     dirty = true;
                 }
@@ -801,7 +828,7 @@ fn run_engine(
                     );
                     emit(
                         &frame_tx,
-                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                        &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                     );
                     dirty = true;
                 }
@@ -876,7 +903,7 @@ fn run_engine(
                 let paused = effective_paused(manual_paused, client_count, backend_paused);
                 emit(
                     &frame_tx,
-                    &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                    &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
                 );
             }
         }
@@ -893,7 +920,28 @@ fn run_engine(
             dirty = true;
             // 메타 분석가 리포트(블로킹 ~수초, 방이 idle이라 허용). 실패하면 배너만.
             // 생성한 리포트는 세션에 저장하고 rooms.db에 영속(재접속 재표시·로비 요약용).
-            if let Some(report) = session.summarize_debate() {
+            let past_conclusions = store
+                .as_ref()
+                .and_then(|s| s.recent_conclusions(&room_id_str, 2).ok())
+                .unwrap_or_default();
+            if let Some(report) = session.summarize_debate(&past_conclusions) {
+                let conclusion = extract_conclusion_section(&report);
+                let topic = session.topics().join(", ");
+                if let Some(ref s) = store {
+                    if let Ok(seq) = s.append_report(&room_id_str, &topic, &report, &conclusion) {
+                        let created_at = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        cached_reports.push(ReportDto {
+                            seq,
+                            created_at,
+                            topic,
+                            markdown: report.clone(),
+                            conclusion,
+                        });
+                    }
+                }
                 session.set_report(Some(report.clone()));
                 save_room(&store, &session);
                 emit(&frame_tx, &ServerFrame::Report { text: report });
@@ -901,7 +949,7 @@ fn run_engine(
             let paused = effective_paused(manual_paused, client_count, backend_paused);
             emit(
                 &frame_tx,
-                &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
             );
         }
 
@@ -910,7 +958,7 @@ fn run_engine(
             let paused = effective_paused(manual_paused, client_count, backend_paused);
             emit(
                 &frame_tx,
-                &build_state(&session, &human_id, paused, tick_period.as_millis() as u64),
+                &build_state(&session, &human_id, paused, tick_period.as_millis() as u64, &cached_reports),
             );
             last_state = Instant::now();
         }
