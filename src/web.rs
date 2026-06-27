@@ -439,15 +439,7 @@ fn build_state(
         if speaker == human_id {
             return human_name.clone();
         }
-        if speaker == "(진행)" {
-            return "Moderator".to_string();
-        }
-        session
-            .personas()
-            .iter()
-            .find(|p| p.id == speaker)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| speaker.to_string())
+        crate::live::persona_display_name(session.personas(), speaker)
     };
     let messages = session
         .state()
@@ -455,11 +447,11 @@ fn build_state(
         .iter()
         .filter_map(|event| {
             let content = event.content.as_deref()?.trim();
-            if content.is_empty() || event.speaker == "(진행)" {
+            if content.is_empty() || event.speaker == crate::live::MODERATOR_SPEAKER {
                 return None;
             }
             if event.speaker == human_id
-                && content.trim_start().starts_with("토론을 시작합니다.")
+                && content.trim_start().starts_with(crate::debate::DEBATE_OPENING_PREFIX)
             {
                 return None;
             }
@@ -2179,7 +2171,7 @@ mod tests {
         );
         session.restore_history(
             vec![
-                crate::model::Event { ts: 1.0, speaker: "(진행)".to_string(), mark: 0.0, content: Some("사회자 멘트".to_string()) },
+                crate::model::Event { ts: 1.0, speaker: crate::live::MODERATOR_SPEAKER.to_string(), mark: 0.0, content: Some("사회자 멘트".to_string()) },
                 crate::model::Event { ts: 2.0, speaker: "aria".to_string(), mark: 0.5, content: Some("안녕".to_string()) },
             ],
             2,

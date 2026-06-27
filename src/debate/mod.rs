@@ -14,6 +14,9 @@
 //! Stage A(2026-06-26): `live.rs`에 흩어져 있던 producer 순수 로직을 행위 동일하게 이관.
 //! 이후 DebatePlan/숨은목표/evidence card 등은 이 모듈에서 자란다(`docs/plans/salon-debate-producer.md`).
 
+/// 토론 오프닝 멘트 prefix (생성 프롬프트·필터 매칭에 사용).
+pub const DEBATE_OPENING_PREFIX: &str = "토론을 시작합니다.";
+
 mod directive;
 mod evidence;
 mod format;

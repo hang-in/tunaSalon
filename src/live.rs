@@ -29,6 +29,25 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+/// 엔진이 생성하는 진행자 화자 id (history·필터에 사용).
+pub const MODERATOR_SPEAKER: &str = "(진행)";
+/// 진행자 표시 이름 (생성 프롬프트·UI에 사용).
+pub const MODERATOR_DISPLAY: &str = "Moderator";
+
+/// 화자 id → 표시 이름의 공통 규칙: "(진행)"→"Moderator", persona 룩업, 폴백은 speaker 그대로.
+///
+/// human_id / 오프닝 멘트 처리는 호출측이 한다(생성용=human_id, 표시용=닉네임으로 의미가 달라서 통합 안 함).
+pub fn persona_display_name(personas: &[crate::model::Persona], speaker: &str) -> String {
+    if speaker == MODERATOR_SPEAKER {
+        return MODERATOR_DISPLAY.to_string();
+    }
+    personas
+        .iter()
+        .find(|p| p.id == speaker)
+        .map(|p| p.name.clone())
+        .unwrap_or_else(|| speaker.to_string())
+}
+
 /// `tick()` 반환값: 이번 틱에서 엔진이 무엇을 했는지.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TickOutcome {
@@ -305,7 +324,7 @@ impl LiveSession {
         }
         speaker_labels.insert(human_id.to_lowercase());
         speaker_labels.insert("나".to_string());
-        speaker_labels.insert("(진행)".to_string());
+        speaker_labels.insert(MODERATOR_SPEAKER.to_string());
 
         Self {
             config,
@@ -354,21 +373,14 @@ impl LiveSession {
     fn speaker_label_for_generation(&self, speaker: &str, content: Option<&str>) -> String {
         if speaker == self.human_id {
             if content
-                .map(|text| text.trim_start().starts_with("토론을 시작합니다."))
+                .map(|text| text.trim_start().starts_with(crate::debate::DEBATE_OPENING_PREFIX))
                 .unwrap_or(false)
             {
-                return "Moderator".to_string();
+                return MODERATOR_DISPLAY.to_string();
             }
             return self.human_id.clone();
         }
-        if speaker == "(진행)" {
-            return "Moderator".to_string();
-        }
-        self.personas
-            .iter()
-            .find(|persona| persona.id == speaker)
-            .map(|persona| persona.name.clone())
-            .unwrap_or_else(|| speaker.to_string())
+        persona_display_name(&self.personas, speaker)
     }
 
     fn history_for_generation(&self) -> Vec<crate::model::Event> {
@@ -701,7 +713,7 @@ impl LiveSession {
         let combined = segs.join(" ");
         let topic_event = crate::model::Event {
             ts: tick as f64 * self.config.tick_interval,
-            speaker: "(진행)".to_string(),
+            speaker: MODERATOR_SPEAKER.to_string(),
             mark: 0.0,
             content: Some(combined),
         };
@@ -1067,7 +1079,7 @@ impl LiveSession {
             .history
             .iter()
             .filter(|e| {
-                e.speaker != "(진행)"
+                e.speaker != MODERATOR_SPEAKER
                     && e.content.as_ref().is_some_and(|c| !c.trim().is_empty())
             })
             .map(|e| {
@@ -1209,7 +1221,7 @@ impl LiveSession {
         }
         labels.insert(self.human_id.to_lowercase());
         labels.insert("나".to_string());
-        labels.insert("(진행)".to_string());
+        labels.insert(MODERATOR_SPEAKER.to_string());
         self.speaker_labels = labels;
     }
 
