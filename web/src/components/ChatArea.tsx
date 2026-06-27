@@ -4,6 +4,7 @@ import type { ChatMessage, EngineState, PersonaConfig } from "@/types";
 import { bloodLabel, zodiacLabel } from "@/lib/personaLabels";
 import { RichText } from "@/components/RichText";
 import { PersonaAvatar, poseFromLambda } from "@/lib/personaAvatar";
+import { personaDescription } from "@/lib/personaDescription";
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -199,7 +200,10 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
                 {/* Name label + axes 배지 */}
                 {!isHuman && (
                   <span className="flex items-baseline gap-1.5 mb-1 ml-1">
-                    <span className="text-[11px] font-medium text-[var(--text-secondary)]">
+                    <span
+                      className="text-[11px] font-medium text-[var(--text-secondary)] cursor-help"
+                      title={personaDescription(participantAxes)}
+                    >
                       {displayName}
                     </span>
                     {participantAxes && (

@@ -1,6 +1,7 @@
 import { memo } from "react";
 import type { PersonaConfig, Participant } from "@/types";
 import { PersonaAvatar, poseFromLambda } from "@/lib/personaAvatar";
+import { personaDescription } from "@/lib/personaDescription";
 
 interface PersonaPresenceProps {
   config: PersonaConfig;
@@ -81,7 +82,10 @@ function PersonaPresenceRaw({ config, lambda, theta, isPending, isHuman = false,
         {/* Name + model + pending dots */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[12px] font-semibold text-[var(--text-primary)] truncate">
+            <span
+              className={`text-[12px] font-semibold text-[var(--text-primary)] truncate ${axes ? "cursor-help" : ""}`}
+              title={axes ? personaDescription(axes) : undefined}
+            >
               {config.name}
             </span>
             {isPending && (
