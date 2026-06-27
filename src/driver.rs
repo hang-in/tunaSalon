@@ -35,33 +35,19 @@ pub fn run(
         // mu_scale: flow None → 1.0(no-op), flow Some → cooling 계산.
         let mu_scale = meta.cooling(flow_metric);
 
-        state.intensities = HawkesEngine::update_intensities(&state, 1, config, personas, mu_scale);
-        state.excitations = HawkesEngine::decay_excitations(
-            &state.excitations,
-            1,
-            config.beta,
-            config.tick_interval,
-        );
-        let combined_intensities =
-            HawkesEngine::combined_intensities(&state.intensities, &state.excitations, personas);
+        // intensity 전진(μ 갱신 → excitation 감쇠 → combined). rng 무소비, live와 공유.
+        let combined_intensities = advance_intensities(&mut state, config, personas, mu_scale);
         let intensity_snapshot = combined_intensities.clone();
 
         let (gate_passed, candidates, chosen, rrf_reason, utterance_content) =
             match gate::evaluate(&combined_intensities, config.theta) {
                 GateResult::Candidates(candidates) => {
                     // FSM 전이 제약: forbid_self_repeat ON이면 직전 화자를 후보에서 제거한다.
-                    let filtered: Vec<PersonaId> = if config.forbid_self_repeat {
-                        match &state.last_speaker {
-                            Some(last) => candidates
-                                .iter()
-                                .filter(|id| *id != last)
-                                .cloned()
-                                .collect(),
-                            None => candidates.clone(),
-                        }
-                    } else {
-                        candidates.clone()
-                    };
+                    let filtered = filter_self_repeat(
+                        &candidates,
+                        &state.last_speaker,
+                        config.forbid_self_repeat,
+                    );
 
                     if filtered.is_empty() {
                         // 강제 화자가 연속 불가이고 다른 후보 없음 → 침묵으로 처리한다.
@@ -165,7 +151,46 @@ fn initial_state(personas: &[Persona], seed: u64) -> EngineState {
     }
 }
 
-fn suppress_chosen(state: &mut EngineState, personas: &[Persona], chosen: &PersonaId) {
+/// 한 틱의 Hawkes 강도 전진: μ 갱신(mu_scale 적용) → excitation 감쇠 → combined 산출.
+///
+/// rng 무소비·결정적. driver/live가 공유하는 per-tick 결정적 코어(R3①).
+/// mu_scale은 호출부가 계산(flow를 record/twist에 재사용하므로) 후 주입한다.
+/// 골든 불변식: 호출부 인라인과 byte-identical.
+pub(crate) fn advance_intensities(
+    state: &mut EngineState,
+    config: &EngineConfig,
+    personas: &[Persona],
+    mu_scale: f64,
+) -> BTreeMap<PersonaId, f64> {
+    state.intensities = HawkesEngine::update_intensities(&*state, 1, config, personas, mu_scale);
+    state.excitations = HawkesEngine::decay_excitations(
+        &state.excitations,
+        1,
+        config.beta,
+        config.tick_interval,
+    );
+    HawkesEngine::combined_intensities(&state.intensities, &state.excitations, personas)
+}
+
+/// forbid_self_repeat: ON이면 직전 화자를 후보에서 제거(연속 발화 금지), OFF면 후보 그대로.
+///
+/// rng 무소비. driver/live 공유(동일 로직, R3①).
+pub(crate) fn filter_self_repeat(
+    candidates: &[PersonaId],
+    last_speaker: &Option<PersonaId>,
+    forbid_self_repeat: bool,
+) -> Vec<PersonaId> {
+    if forbid_self_repeat {
+        match last_speaker {
+            Some(last) => candidates.iter().filter(|id| *id != last).cloned().collect(),
+            None => candidates.to_vec(),
+        }
+    } else {
+        candidates.to_vec()
+    }
+}
+
+pub(crate) fn suppress_chosen(state: &mut EngineState, personas: &[Persona], chosen: &PersonaId) {
     if let Some(persona) = personas.iter().find(|persona| &persona.id == chosen) {
         state.intensities.insert(
             chosen.clone(),

@@ -493,27 +493,12 @@ impl LiveSession {
         // flow()는 content 있는 최근 발화 기반 수렴도. content 없으면 None → mu_scale=1.0(no-op).
         let flow_now = self.flow();
         let mu_scale = self.meta.cooling(flow_now);
-        self.state.intensities = HawkesEngine::update_intensities(
-            &self.state,
-            1,
+        // 강도 전진(μ 갱신 → excitation 감쇠 → combined). driver와 공유(R3①, rng 무소비).
+        let combined_intensities = crate::driver::advance_intensities(
+            &mut self.state,
             &self.config,
             &self.personas,
             mu_scale,
-        );
-
-        // 2. excitation 감쇠
-        self.state.excitations = HawkesEngine::decay_excitations(
-            &self.state.excitations,
-            1,
-            self.config.beta,
-            self.config.tick_interval,
-        );
-
-        // 3. combined intensities
-        let combined_intensities = HawkesEngine::combined_intensities(
-            &self.state.intensities,
-            &self.state.excitations,
-            &self.personas,
         );
 
         // 4. 게이트 평가
@@ -524,19 +509,12 @@ impl LiveSession {
             }
         };
 
-        // 5. forbid_self_repeat 필터 (driver와 동일)
-        let filtered: Vec<PersonaId> = if self.config.forbid_self_repeat {
-            match &self.state.last_speaker {
-                Some(last) => candidates
-                    .iter()
-                    .filter(|id| *id != last)
-                    .cloned()
-                    .collect(),
-                None => candidates.clone(),
-            }
-        } else {
-            candidates.clone()
-        };
+        // 5. forbid_self_repeat 필터 (driver와 공유, R3①)
+        let filtered = crate::driver::filter_self_repeat(
+            &candidates,
+            &self.state.last_speaker,
+            self.config.forbid_self_repeat,
+        );
 
         if filtered.is_empty() {
             // 강제 화자 연속 불가 + 다른 후보 없음 → 침묵.
@@ -646,13 +624,8 @@ impl LiveSession {
         let placeholder_idx = self.state.history.len();
         self.state.history.push(placeholder_event);
 
-        // suppress, excitation, last_speaker 갱신 (driver::suppress_chosen 인라인).
-        if let Some(persona) = self.personas.iter().find(|p| p.id == chosen) {
-            self.state.intensities.insert(
-                chosen.clone(),
-                HawkesEngine::suppressed_after_speak(persona.base_rate),
-            );
-        }
+        // suppress, excitation, last_speaker 갱신 (driver 헬퍼 공유, R3①).
+        crate::driver::suppress_chosen(&mut self.state, &self.personas, &chosen);
         HawkesEngine::apply_excitation_on_speak(
             &mut self.state.excitations,
             &self.config.alpha,
