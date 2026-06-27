@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo } from "react";
 import { MessageCircle, Sparkles, UserPlus, UserMinus } from "lucide-react";
 import type { ChatMessage, EngineState, PersonaConfig } from "@/types";
-import { bloodLabel, zodiacLabel, roleLabel } from "@/lib/personaLabels";
+import { bloodLabel, zodiacLabel } from "@/lib/personaLabels";
 import { RichText } from "@/components/RichText";
 import { PersonaAvatar, poseFromLambda } from "@/lib/personaAvatar";
 
@@ -208,7 +208,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
                         <span
                           className="hidden sm:inline text-[10px] text-[var(--text-secondary)] opacity-60"
                         >
-                          {participantAxes.mbti} · {bloodLabel(participantAxes.blood)} · {zodiacLabel(participantAxes.zodiac)} · {roleLabel(participantAxes.role)}
+                          {participantAxes.mbti} · {bloodLabel(participantAxes.blood)} · {zodiacLabel(participantAxes.zodiac)}
                         </span>
                         {/* 모바일: MBTI · 혈액형 */}
                         <span

@@ -3,7 +3,7 @@ use salon::driver;
 use salon::headless::HeadlessSink;
 use salon::live::{LiveSession, PersonaMeta};
 use salon::model::{CouplingMatrix, EngineConfig, Persona, PersonaId, PersonaModifier};
-use salon::persona_kit::{assemble, Blood, Mbti, Role, Zodiac};
+use salon::persona_kit::{assemble, assemble_roleless, Blood, Mbti, Role, Zodiac};
 use salon::pool::{BackendConfig, BackendPool};
 use salon::preset::RoomPreset;
 #[cfg(feature = "web")]
@@ -643,8 +643,10 @@ fn seed_new_room_personas(sess: &mut LiveSession, room_id: &str, startup: &salon
     } else {
         debate_common_tail()
     };
+    // 역할 잠정 폐기(2026-06-27 사용자): 개성은 혈액형+별자리+MBTI에서만 형성한다.
+    // role은 아바타 머리모양(axes)용 코스메틱으로만 보관하고 프롬프트/μ에는 쓰지 않는다.
     for (i, (blood, mbti, zodiac, role)) in specs.into_iter().enumerate() {
-        let assembled = assemble(role, mbti, blood, zodiac, "");
+        let assembled = assemble_roleless(mbti, blood, zodiac, "");
         // 닉네임(id) 충돌 시 건너뛴다.
         if sess.persona_meta().contains_key(&assembled.persona.id)
             || sess.personas().iter().any(|p| p.id == assembled.persona.id)

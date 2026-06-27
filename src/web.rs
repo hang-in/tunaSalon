@@ -3,7 +3,7 @@
 //! 엔진은 blocking(전용 스레드), axum은 tokio(async). 둘은 tokio 채널로 브리지.
 
 use crate::live::{LiveSession, PersonaAxes, PersonaMeta};
-use crate::persona_kit::{assemble, Blood, Mbti, Role, Zodiac};
+use crate::persona_kit::{assemble_roleless, Blood, Mbti, Role, Zodiac};
 use crate::roomstore::RoomStore;
 #[cfg(feature = "redis-bus")]
 use crate::session_bus::{RedisBus, RedisBusHandle, SessionBus};
@@ -716,7 +716,8 @@ fn run_engine(
                             continue;
                         }
                     };
-                    let parsed_role = match role {
+                    // 역할은 잠정 폐기라 개성엔 안 쓰이지만, 입력 검증(잘못된 역할 거부)은 유지.
+                    let _parsed_role = match role {
                         Some(ref r) => match Role::from_str(r) {
                             Ok(v) => v,
                             Err(_) => {
@@ -731,9 +732,9 @@ fn run_engine(
                         },
                         None => Role::all()[0],
                     };
-                    // 조립
+                    // 조립(역할 잠정 폐기: 개성은 혈액형+별자리+MBTI만, role은 axes/아바타용).
                     let assembled =
-                        assemble(parsed_role, parsed_mbti, parsed_blood, parsed_zodiac, "");
+                        assemble_roleless(parsed_mbti, parsed_blood, parsed_zodiac, "");
                     // id 충돌 확인
                     if session.persona_meta().contains_key(&assembled.persona.id)
                         || session

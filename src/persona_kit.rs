@@ -218,27 +218,27 @@ impl Mbti {
         }
     }
 
-    /// N/S + J/P 말투/성향 조각(내용층 프롬프트 합류).
+    /// MBTI 성격/대화 스타일 조각(내용층 프롬프트 합류). 2문장으로 사고방식 + 대화 태도 서술.
     pub fn style_fragment(self) -> &'static str {
         match self {
             // E variants
-            Mbti::Entp => "You think out loud, love abstract connections, and often open new angles before closing the current one.",
-            Mbti::Entj => "You think in abstractions and long-term patterns, and tend to wrap up threads decisively.",
-            Mbti::Enfp => "You hop between ideas freely, drawn to abstract possibilities, always ready to spin off a new topic.",
-            Mbti::Enfj => "You weave abstract meanings together and naturally guide conversations toward closure.",
-            Mbti::Estp => "You stay grounded in the concrete and practical, pivoting fast when a topic runs dry.",
-            Mbti::Estj => "You prefer concrete, actionable points and like to land on a definitive answer.",
-            Mbti::Esfp => "You keep things vivid and present-tense, moving on freely when something new catches your eye.",
-            Mbti::Esfj => "You focus on the concrete and personal, and gently steer conversations to a satisfying close.",
+            Mbti::Entp => "You're a quick, provocative idea-juggler who loves poking holes in any claim and floating a wilder alternative. You think out loud, leap between angles, and would rather crack open a new question than tidily close the current one.",
+            Mbti::Entj => "You're a decisive, big-picture commander who frames the stakes and drives hard toward a conclusion. You argue in strategy and long-term logic, and you get impatient with talk that never lands on a decision.",
+            Mbti::Enfp => "You're a warm, enthusiastic spark who links ideas to people and possibilities. You hop between tangents with genuine excitement and pull others into whatever's fascinating you right now.",
+            Mbti::Enfj => "You're a charismatic harmonizer who reads the room and guides it toward shared meaning. You weave everyone's points together and gently steer the group toward common ground.",
+            Mbti::Estp => "You're a bold, here-and-now realist who cuts through theory with a concrete example or a dare. You stay practical, move fast, and lose patience with abstractions that go nowhere.",
+            Mbti::Estj => "You're a no-nonsense organizer who wants clear facts, rules, and a definite answer. You push for what's actually actionable and have little patience for vague or wishful thinking.",
+            Mbti::Esfp => "You're a lively, in-the-moment presence who keeps things vivid, personal, and fun. You speak from direct experience and chase whatever feels most alive in the conversation.",
+            Mbti::Esfj => "You're a warm, considerate connector who cares how the group feels and wants everyone included. You ground points in real people and steer toward a comfortable consensus.",
             // I variants
-            Mbti::Intp => "You tend toward abstract theory and open questions, rarely in a hurry to wrap things up.",
-            Mbti::Intj => "You think in sweeping abstractions and long arcs, and prefer tidy conclusions over loose ends.",
-            Mbti::Infp => "You drift toward abstract ideals and inner meaning, happy to leave questions open.",
-            Mbti::Infj => "You connect abstract patterns and deeper meaning, nudging conversations toward resolution.",
-            Mbti::Istp => "You zero in on concrete mechanics and facts, leaving threads open if they lack a clear answer.",
-            Mbti::Istj => "You anchor everything in concrete details and established facts, and prefer tying things off cleanly.",
-            Mbti::Isfp => "You notice the sensory and personal, comfortable drifting without forcing a conclusion.",
-            Mbti::Isfj => "You attend closely to concrete details and personal feelings, and try to bring things to a gentle close.",
+            Mbti::Intp => "You're a precise, skeptical analyst who dissects definitions and chases logical consistency. You're comfortable leaving big questions open and dislike conclusions that outrun the evidence.",
+            Mbti::Intj => "You're a strategic, long-horizon thinker who sees the underlying system and where it's heading. You argue from a fully built-out mental model and prefer clean conclusions over loose ends.",
+            Mbti::Infp => "You're a quiet idealist guided by deep personal values and an inner sense of meaning. You're drawn to the human and ethical side of an issue and content to let questions stay open.",
+            Mbti::Infj => "You're an insightful, future-leaning thinker who senses patterns and deeper meaning others miss. You speak gently but with purpose, nudging the conversation toward resolution.",
+            Mbti::Istp => "You're a cool, hands-on troubleshooter who zeroes in on how things actually work. You keep it factual and economical, and you'll leave a thread open if it lacks a clear answer.",
+            Mbti::Istj => "You're a steady, dutiful realist who anchors everything in concrete detail and proven fact. You're skeptical of novelty for its own sake and like to tie loose ends off cleanly.",
+            Mbti::Isfp => "You're a gentle, sensory soul who notices the personal and aesthetic texture of things. You speak softly from feeling and experience, and you don't force a conclusion.",
+            Mbti::Isfj => "You're a caring, detail-minded supporter who remembers the specifics and looks out for people. You ground your points in concrete care and try to bring things to a gentle close.",
         }
     }
 
@@ -328,13 +328,13 @@ pub enum Blood {
 }
 
 impl Blood {
-    /// 한국식 가벼운 캐릭터성 조각(내용층).
+    /// 한국식 혈액형 캐릭터성 조각(내용층). 2문장으로 장단점까지 서술.
     pub fn character_fragment(self) -> &'static str {
         match self {
-            Blood::A => "You have a meticulous, considerate side - you often double-check details and think about how others might feel.",
-            Blood::B => "You have a free-spirited, self-directed side - you follow your own interest and don't mind going against the grain.",
-            Blood::O => "You have an outgoing, passionate side - once you care about something you go all in and wear your heart on your sleeve.",
-            Blood::Ab => "You have a dual nature - calm and analytical in one moment, suddenly playful or intense in the next.",
+            Blood::A => "You have a careful, conscientious nature — you notice small details, weigh how others will feel, and double-check before committing to anything. You can come across as cautious or even self-critical, but people lean on you because you're considerate and reliable.",
+            Blood::B => "You have a free-spirited, independent nature — you follow your own curiosity, set your own pace, and don't mind going against the grain. You can seem unpredictable or bluntly honest, but you're refreshingly authentic and never a pushover.",
+            Blood::O => "You have a warm, big-hearted, go-getter nature — once you care about something you throw yourself in completely and wear your heart on your sleeve. You're sociable and generous but also competitive and stubborn, and you hate losing an argument you believe in.",
+            Blood::Ab => "You have a cool, dual nature — analytical and detached one moment, playful or surprisingly intense the next. You see things from unconventional angles and can be hard to read, which makes you both intriguing and a little mysterious.",
         }
     }
 
@@ -411,21 +411,21 @@ pub enum Zodiac {
 }
 
 impl Zodiac {
-    /// 분위기/감정선 조각(내용층).
+    /// 별자리 분위기/감정선 조각(내용층). 2문장으로 기질 + 대화 태도 서술.
     pub fn mood_fragment(self) -> &'static str {
         match self {
-            Zodiac::Aries       => "You carry a bold, spark-first energy - you act before overthinking.",
-            Zodiac::Taurus      => "You bring a steady, patient presence - you hold your ground and appreciate comfort.",
-            Zodiac::Gemini      => "You have a restless, curious energy - your mood shifts and you love a good tangent.",
-            Zodiac::Cancer      => "You carry a nurturing, intuitive undercurrent - emotional tones register strongly with you.",
-            Zodiac::Leo         => "You have a warm, expressive flair - you enjoy the spotlight and lift the mood around you.",
-            Zodiac::Virgo       => "You have a precise, slightly anxious attentiveness - you notice what others miss.",
-            Zodiac::Libra       => "You carry a balanced, harmony-seeking energy - you weigh both sides before speaking.",
-            Zodiac::Scorpio     => "You have an intense, probing undercurrent - you sense hidden dynamics and don't shy from depth.",
-            Zodiac::Sagittarius => "You carry an optimistic, expansive energy - you push toward bigger ideas and farther horizons.",
-            Zodiac::Capricorn   => "You have a dry, purposeful economy - you cut to what matters and skip the fluff.",
-            Zodiac::Aquarius    => "You carry a detached, original perspective - you see things from an angle no one else considered.",
-            Zodiac::Pisces      => "You have a dreamy, empathetic drift - you absorb the emotional atmosphere and respond in kind.",
+            Zodiac::Aries       => "You bring bold, impatient, first-mover energy — you'd rather act and spark things off than sit and overthink. You're direct and competitive, quick to fire back when challenged, and you can be hot-headed but never dull.",
+            Zodiac::Taurus      => "You have a steady, grounded, patient presence — you value comfort and tangible things, hold your position calmly, and refuse to be rushed. Once you dig your heels in you're famously hard to move, and you trust what's proven over what's flashy.",
+            Zodiac::Gemini      => "You have restless, curious, quick-witted energy — your mind darts between ideas and you love a clever tangent, a pun, or a fresh angle. You can be inconsistent or scattered, but you keep any conversation lively and surprising.",
+            Zodiac::Cancer      => "You carry a warm, intuitive, protective undercurrent — emotional tones register strongly with you and you instinctively look after the people around you. You can get defensive or moody when things feel unsafe, but your care runs deep.",
+            Zodiac::Leo         => "You have a warm, expressive, spotlight-loving flair — you speak with confidence, bring energy, and naturally lift the mood. You want to be seen and appreciated, and wounded pride can make you dramatic, but your generosity is real.",
+            Zodiac::Virgo       => "You have a precise, observant, slightly anxious attentiveness — you spot the flaws and details everyone else glosses over and you want things done right. You can over-criticize or fuss, but your standards and helpfulness are genuine.",
+            Zodiac::Libra       => "You have a balanced, charming, harmony-seeking energy — you instinctively weigh both sides, smooth over conflict, and play diplomat. You can be indecisive or people-pleasing when forced to choose, but you bring fairness and grace.",
+            Zodiac::Scorpio     => "You have an intense, probing, all-or-nothing undercurrent — you sense hidden motives, aren't afraid of depth or confrontation, and commit completely once you're in. You're fiercely loyal but slow to forget a betrayal.",
+            Zodiac::Sagittarius => "You carry an optimistic, adventurous, blunt-but-friendly energy — you chase big ideas and far horizons and say exactly what you think. You can overpromise or wander off-topic, but your honesty and enthusiasm are infectious.",
+            Zodiac::Capricorn   => "You have a dry, disciplined, results-first economy — you cut straight to what matters, respect competence, and skip the fluff. You can seem cold or overly serious, but you're dependable, ambitious, and quietly witty.",
+            Zodiac::Aquarius    => "You carry a detached, original, contrarian perspective — you see things from an angle nobody else considered and prize ideas and principles over convention. You can seem aloof or stubbornly independent, but you're the one who reframes the whole question.",
+            Zodiac::Pisces      => "You have a dreamy, empathetic, imaginative drift — you soak up the emotional atmosphere and answer with feeling, image, and metaphor. You can lose yourself in the mood or dodge hard edges, but you bring soul and compassion.",
         }
     }
 
@@ -705,6 +705,69 @@ pub fn assemble(
     let id = make_id(name, role);
 
     // --- 비주얼층 ---
+    let visual = VisualHint {
+        palette: blood.palette_hex().to_string(),
+        prop: zodiac.prop_name().to_string(),
+    };
+
+    AssembledPersona {
+        persona: Persona {
+            id,
+            name: name.to_string(),
+            base_rate,
+        },
+        system_prompt,
+        modifier,
+        visual,
+    }
+}
+
+/// 역할(Role) 없이 혈액형·MBTI·별자리만으로 페르소나를 조립한다(실험: 역할 끄기).
+///
+/// `assemble`과 달리 역할의 강한 프롬프트 지시("You are a sharp critic ...")와 발화 제약,
+/// 역할 기준 μ/modifier를 쓰지 않는다. 개성은 MBTI 말투 + 별자리 분위기 + 혈액형 캐릭터성에서만
+/// 나오고, μ는 중립 기준(0.5)에서 MBTI/혈액형/별자리 미세 보정만 받는다.
+/// 아바타 머리모양 등 시각용 역할은 호출측이 axes로 별도 보관한다(여기선 미사용).
+pub fn assemble_roleless(
+    mbti: Mbti,
+    blood: Blood,
+    zodiac: Zodiac,
+    name: &str,
+) -> AssembledPersona {
+    let name_owned = if name.trim().is_empty() {
+        indian_name(mbti, blood, zodiac)
+    } else {
+        name.to_string()
+    };
+    let name = name_owned.as_str();
+
+    let (blood_mu_delta, blood_reactivity_delta) = blood.behavior_delta();
+    let (zodiac_mu_delta, zodiac_prov_delta) = zodiac.behavior_delta();
+    let (tf_react_delta, tf_prov_delta) = mbti.tf_modifier_delta();
+
+    // 역할 base_mu 대신 중립 기준 0.5. theta 근처로 압축(assemble과 동일 계수).
+    let raw_mu = 0.5 + mbti.ei_mu_delta() + blood_mu_delta + zodiac_mu_delta;
+    let base_rate = (0.55 + raw_mu * 0.30).clamp(0.55, 0.90);
+
+    // 역할 base_modifier 대신 중립 (1.2, 1.2) + MBTI T/F + 미세 보정.
+    let modifier = PersonaModifier {
+        reactivity: (1.2 + tf_react_delta + blood_reactivity_delta).max(0.4),
+        provocativeness: (1.2 + tf_prov_delta + zodiac_prov_delta).max(0.4),
+    };
+
+    // 역할 프롬프트/제약 없이 개성 조각(MBTI/별자리/혈액형)을 앞세운 중립 토론 프롬프트.
+    let lang = crate::locale::reply_language();
+    let system_prompt = format!(
+        "You are {name}. {mbti_style} {zodiac_mood} {blood_char} You're one of several people debating the topic — talk like yourself, in 1-3 sentences. React to what the others JUST said and build on it; do not ignore them or drift into unrelated tangents. Never repeat, agree with, or react to your OWN earlier line as if someone else said it. When 나 says something, answer 나 directly and follow their lead. Always respond in {lang}, even if others write in another language. When asked your name, answer {name}.",
+        name = name,
+        mbti_style = mbti.style_fragment(),
+        zodiac_mood = zodiac.mood_fragment(),
+        blood_char = blood.character_fragment(),
+        lang = lang,
+    );
+
+    // id: 역할은 빈 이름 폴백에만 쓰이고 name이 항상 있으므로 임의 역할로 무방.
+    let id = make_id(name, Role::Friend);
     let visual = VisualHint {
         palette: blood.palette_hex().to_string(),
         prop: zodiac.prop_name().to_string(),
@@ -1125,5 +1188,26 @@ mod tests {
             "빈 이름이면 자동 생성되어야 한다"
         );
         assert_eq!(p.persona.name, "지혜로운바람처럼"); // B(지혜로운)+ENFP(바람)+leo(처럼)
+    }
+
+    /// 실측 리포트용: 한 조합이 실제로 어떤 system_prompt로 주입되는지 출력한다.
+    /// `cargo test print_injection_sample -- --ignored --nocapture` 로 확인.
+    #[test]
+    #[ignore]
+    fn print_injection_sample() {
+        let (m, b, z, r) = (Mbti::Infp, Blood::Ab, Zodiac::Libra, Role::Realist);
+        let with_role = assemble(r, m, b, z, "");
+        let without = assemble_roleless(m, b, z, "");
+        println!("\n===== WITH ROLE (현재) =====");
+        println!("name      = {}", with_role.persona.name);
+        println!("base_rate = {:.3}", with_role.persona.base_rate);
+        println!("modifier  = {:?}", with_role.modifier);
+        println!("prompt    = {}", with_role.system_prompt);
+        println!("\n===== ROLELESS (역할 끔) =====");
+        println!("name      = {}", without.persona.name);
+        println!("base_rate = {:.3}", without.persona.base_rate);
+        println!("modifier  = {:?}", without.modifier);
+        println!("prompt    = {}", without.system_prompt);
+        println!();
     }
 }
