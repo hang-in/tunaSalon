@@ -755,20 +755,7 @@ mod sqlite_impl {
             }
 
             // 1. persona가 참여한 방 목록
-            let rooms: Vec<String> = {
-                let mut stmt = match self
-                    .conn
-                    .prepare("SELECT room FROM participation WHERE persona = ?1")
-                {
-                    Ok(s) => s,
-                    Err(_) => return vec![],
-                };
-                let rows = match stmt.query_map(params![persona], |row| row.get(0)) {
-                    Ok(r) => r,
-                    Err(_) => return vec![],
-                };
-                rows.filter_map(|r| r.ok()).collect()
-            };
+            let rooms = self.participated_rooms(persona);
 
             if rooms.is_empty() {
                 return vec![];
@@ -814,19 +801,7 @@ mod sqlite_impl {
             }
             let param_refs: Vec<&dyn ToSql> = param_vals.iter().map(|b| b.as_ref()).collect();
 
-            let rows = match stmt.query_map(param_refs.as_slice(), |row| {
-                let _id: i64 = row.get(0)?;
-                let room: String = row.get(1)?;
-                let ts: i64 = row.get(2)?;
-                let speaker: String = row.get(3)?;
-                let content: String = row.get(4)?;
-                Ok(MemoryEvent {
-                    room,
-                    ts: ts as u64,
-                    speaker,
-                    content,
-                })
-            }) {
+            let rows = match stmt.query_map(param_refs.as_slice(), |row| row_to_memory_event(row, 1)) {
                 Ok(r) => r,
                 Err(_) => return vec![],
             };
@@ -856,20 +831,7 @@ mod sqlite_impl {
             }
 
             // 1. persona가 참여한 방 목록
-            let rooms: Vec<String> = {
-                let mut stmt = match self
-                    .conn
-                    .prepare("SELECT room FROM participation WHERE persona = ?1")
-                {
-                    Ok(s) => s,
-                    Err(_) => return vec![],
-                };
-                let rows = match stmt.query_map(params![persona], |row| row.get(0)) {
-                    Ok(r) => r,
-                    Err(_) => return vec![],
-                };
-                rows.filter_map(|r| r.ok()).collect()
-            };
+            let rooms = self.participated_rooms(persona);
 
             if rooms.is_empty() {
                 return vec![];
@@ -985,18 +947,7 @@ mod sqlite_impl {
                 let row = self.conn.query_row(
                     "SELECT room, ts, speaker, content FROM memories WHERE id = ?1",
                     params![mem_id],
-                    |row| {
-                        let room: String = row.get(0)?;
-                        let ts: i64 = row.get(1)?;
-                        let speaker: String = row.get(2)?;
-                        let content: String = row.get(3)?;
-                        Ok(MemoryEvent {
-                            room,
-                            ts: ts as u64,
-                            speaker,
-                            content,
-                        })
-                    },
+                    |row| row_to_memory_event(row, 0),
                 );
                 if let Ok(ev) = row {
                     results.push(ev);
@@ -1009,6 +960,22 @@ mod sqlite_impl {
         /// 회상 결과를 회상 슬롯용 문자열로 포맷한다.
         pub fn format_recall(events: &[MemoryEvent]) -> Option<String> {
             format_recall_impl(events)
+        }
+
+        /// `persona`가 참여한 방 목록을 반환한다.
+        ///
+        /// DB 오류 시 빈 Vec. 호출처에서 `rooms.is_empty()` 가드를 유지해야 한다.
+        #[cfg(feature = "friend-engine")]
+        fn participated_rooms(&self, persona: &str) -> Vec<String> {
+            let mut stmt = match self.conn.prepare("SELECT room FROM participation WHERE persona = ?1") {
+                Ok(s) => s,
+                Err(_) => return vec![],
+            };
+            let rows = match stmt.query_map(params![persona], |row| row.get(0)) {
+                Ok(r) => r,
+                Err(_) => return vec![],
+            };
+            rows.filter_map(|r| r.ok()).collect()
         }
 
         // ── 테스트 전용 접근자 ────────────────────────────────────────────────
@@ -1101,6 +1068,24 @@ mod sqlite_impl {
             .map(|i| format!("?{}", i + start))
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// `row`에서 `base` 번째 컬럼부터 room/ts/speaker/content를 읽어 `MemoryEvent`를 만든다.
+    ///
+    /// - BM25-only recall: `base=1` (0번=id, skip).
+    /// - hybrid recall 최종 fetch: `base=0` (SELECT room, ts, speaker, content).
+    #[cfg(feature = "friend-engine")]
+    fn row_to_memory_event(row: &rusqlite::Row, base: usize) -> rusqlite::Result<MemoryEvent> {
+        let room: String = row.get(base)?;
+        let ts: i64 = row.get(base + 1)?;
+        let speaker: String = row.get(base + 2)?;
+        let content: String = row.get(base + 3)?;
+        Ok(MemoryEvent {
+            room,
+            ts: ts as u64,
+            speaker,
+            content,
+        })
     }
 
     // ── RRF 융합 헬퍼 ─────────────────────────────────────────────────────────
