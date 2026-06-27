@@ -11,8 +11,6 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::BTreeMap;
 
-use crate::flow::FLOW_WINDOW;
-
 pub fn run(
     config: &EngineConfig,
     personas: &[Persona],
@@ -29,16 +27,10 @@ pub fn run(
     let meta = MetaController::from_env();
 
     for tick in 0..ticks {
-        // 틱 시작: content 있는 최근 FLOW_WINDOW개 발화로 flow 계산.
-        // FakeBackend → content 항상 None → flow_input 빈 슬라이스 → flow_metric None.
+        // 틱 시작: content 있는 최근 FLOW_WINDOW개 발화로 flow 계산(measure_recent).
+        // FakeBackend → content 항상 None → 빈 슬라이스 → flow_metric None.
         // None → meta.cooling(None) = 1.0 → update_intensities 완전 동일(골든 보존).
-        let content_utterances: Vec<&str> = state
-            .history
-            .iter()
-            .filter_map(|e| e.content.as_deref())
-            .collect();
-        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
-        let flow_metric = flow::measure(&content_utterances[window_start..]);
+        let flow_metric = flow::measure_recent(&state.history);
 
         // mu_scale: flow None → 1.0(no-op), flow Some → cooling 계산.
         let mu_scale = meta.cooling(flow_metric);
@@ -373,10 +365,7 @@ mod tests {
             },
         ];
 
-        let content_utterances: Vec<&str> =
-            events.iter().filter_map(|e| e.content.as_deref()).collect();
-        let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
-        let result = flow::measure(&content_utterances[window_start..]);
+        let result = flow::measure_recent(&events);
 
         assert!(
             result.is_some(),

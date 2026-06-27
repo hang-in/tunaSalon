@@ -1,3 +1,4 @@
+use crate::model::Event;
 use std::collections::BTreeSet;
 
 /// content 있는 최근 발화 최대 N개를 flow 계산에 사용한다.
@@ -113,6 +114,20 @@ pub fn measure(recent: &[&str]) -> Option<FlowMetric> {
     })
 }
 
+/// Event 히스토리에서 content 있는 최근 `FLOW_WINDOW`개 발화로 수렴/발산을 측정한다.
+///
+/// content 없는 발화(FakeBackend/placeholder)는 제외한다. driver(headless 골든 경로)와
+/// live(채팅 사이드바)가 같은 윈도우·같은 로직을 쓰도록 단일화한다(인라인 3곳 통합).
+/// 골든 보존: content 필터 → 마지막 `FLOW_WINDOW`개 → `measure`, 기존 인라인과 동일.
+pub fn measure_recent(history: &[Event]) -> Option<FlowMetric> {
+    let content_utterances: Vec<&str> = history
+        .iter()
+        .filter_map(|e| e.content.as_deref())
+        .collect();
+    let window_start = content_utterances.len().saturating_sub(FLOW_WINDOW);
+    measure(&content_utterances[window_start..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +189,32 @@ mod tests {
         let r1 = measure(&utterances);
         let r2 = measure(&utterances);
         assert_eq!(r1, r2, "동일 입력에 대한 두 번의 호출이 같아야 한다");
+    }
+
+    /// measure_recent: content=None 발화 제외 + 유효 발화 부족 시 None (경로 무관).
+    #[test]
+    fn measure_recent_excludes_none_content() {
+        let ev = |ts: f64, content: Option<&str>| Event {
+            ts,
+            speaker: "a".to_string(),
+            mark: 0.0,
+            content: content.map(str::to_string),
+        };
+        // content 2개(+ None 1개 제외) → Some
+        let h = vec![
+            ev(0.0, Some("alpha beta")),
+            ev(1.0, Some("alpha gamma")),
+            ev(2.0, None),
+        ];
+        assert!(
+            measure_recent(&h).is_some(),
+            "content 발화 2개 이상이면 Some(None 발화 제외)"
+        );
+        // content 1개 + None → 유효 1개 → None
+        let h1 = vec![ev(0.0, Some("solo")), ev(1.0, None)];
+        assert!(measure_recent(&h1).is_none(), "유효 발화 1개는 None");
+        // 빈 히스토리 → None
+        assert!(measure_recent(&[]).is_none(), "빈 히스토리는 None");
     }
 
     /// (5, 어절 경로 전용) Jaccard 손계산 검증: ["a b", "a c"] → {a,b} vs {a,c}.
