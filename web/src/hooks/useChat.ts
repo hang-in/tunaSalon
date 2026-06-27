@@ -161,6 +161,20 @@ export function useChat({ enabled = true, roomId, topics = [], personas, models 
             isHuman: false,
           },
         ]);
+      } else if (frame.type === "report") {
+        msgIdRef.current++;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${msgIdRef.current}`,
+            type: "report",
+            speaker: "report",
+            name: "토론 리포트",
+            content: frame.text,
+            ts: 0,
+            isHuman: false,
+          },
+        ]);
       }
     }, (isConnected: boolean) => setConnected(isConnected), roomId, topics, personas, models);
     connRef.current = conn;

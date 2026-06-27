@@ -73,6 +73,8 @@ enum ServerFrame {
     },
     #[serde(rename = "system")]
     System { text: String },
+    #[serde(rename = "report")]
+    Report { text: String },
 }
 
 #[derive(Deserialize)]
@@ -866,16 +868,20 @@ fn run_engine(
             }
         }
 
-        // 3.5 단계형 토론 종료 배너: 클로징 발화가 도착(pending 해제)한 뒤 1회.
+        // 3.5 단계형 토론 종료: 클로징 발화 도착(pending 해제) 후 1회 — 배너 + 메타 리포트.
         if awaiting_conclusion && !session.is_pending() {
             emit(
                 &frame_tx,
                 &ServerFrame::System {
-                    text: "토론이 마무리됐습니다. 더 이어가려면 메시지를 입력하세요.".to_string(),
+                    text: "토론이 마무리됐습니다. 정리 리포트를 작성합니다… (더 이어가려면 메시지를 입력하세요)".to_string(),
                 },
             );
             awaiting_conclusion = false;
             dirty = true;
+            // 메타 분석가 리포트(블로킹 ~수초, 방이 idle이라 허용). 실패하면 배너만.
+            if let Some(report) = session.summarize_debate() {
+                emit(&frame_tx, &ServerFrame::Report { text: report });
+            }
             let paused = effective_paused(manual_paused, client_count, backend_paused);
             emit(
                 &frame_tx,

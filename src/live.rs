@@ -1037,6 +1037,64 @@ impl LiveSession {
         v
     }
 
+    /// 토론 종료 시 메타 분석가가 전체 전사를 정리해 한글 리포트를 생성한다(채팅 아님).
+    ///
+    /// 진행 지시("(진행)")·placeholder는 제외한 실제 발화만 전사로 넘긴다. 한국어 품질을 위해
+    /// gemma 백엔드(thinking=false 태그) 우선. 발화가 너무 적거나 생성 실패면 None.
+    /// 블로킹 호출이므로 호출측(web 엔진 스레드)은 방이 idle일 때만 부른다.
+    pub fn summarize_debate(&self) -> Option<String> {
+        let transcript: Vec<Event> = self
+            .state
+            .history
+            .iter()
+            .filter(|e| {
+                e.speaker != "(진행)"
+                    && e.content.as_ref().is_some_and(|c| !c.trim().is_empty())
+            })
+            .map(|e| {
+                let mut e = e.clone();
+                e.speaker = self.speaker_label_for_generation(&e.speaker, e.content.as_deref());
+                e
+            })
+            .collect();
+        if transcript.len() < 2 {
+            return None;
+        }
+
+        // 한국어 리포트 품질 우선: thinking=false인 gemma 태그 백엔드 → cloud → 아무거나.
+        let names = self.pool.backend_names();
+        let backend = if names.iter().any(|n| *n == "gemma4:31b-cloud") {
+            "gemma4:31b-cloud"
+        } else if names.iter().any(|n| *n == "cloud") {
+            "cloud"
+        } else {
+            *names.first()?
+        };
+
+        let topic = self.topics.join(", ");
+        let prompt = format!(
+            "You are a neutral debate analyst. The discussion above is a FINISHED debate on the topic \"{topic}\". \
+             Write a concise DEBRIEF REPORT in Korean — this is a report document, NOT a chat reply, so do not address anyone or continue the debate. \
+             Use exactly these sections, each on its own line:\n\
+             【주제】 한 줄 요약.\n\
+             【참가자 입장】 각 참가자마다 \"닉네임: 핵심 주장\" 한 줄씩.\n\
+             【합의점】 참가자들이 동의한 지점(없으면 '뚜렷한 합의 없음').\n\
+             【끝까지 갈린 지점】 합의되지 않은 핵심 쟁점.\n\
+             【정리】 2-3문장으로 객관적 종합(어느 입장이 더 설득력 있었는지, 남은 질문). \
+             Stay objective, do not take a side, do not invent new arguments. Korean only.",
+            topic = topic
+        );
+
+        self.pool.generate_on(
+            backend,
+            &"(분석)".to_string(),
+            &transcript,
+            self.tick_count,
+            None,
+            Some(&prompt),
+        )
+    }
+
     // -------------------------------------------------------------------------
     // 런타임 persona 추가 / 제거 (task B)
     // -------------------------------------------------------------------------

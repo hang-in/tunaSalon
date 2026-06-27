@@ -52,7 +52,12 @@ export interface SystemFrame {
   text: string;
 }
 
-export type ServerFrame = StateFrame | UtteranceFrame | RecallFrame | SystemFrame;
+export interface ReportFrame {
+  type: "report";
+  text: string;
+}
+
+export type ServerFrame = StateFrame | UtteranceFrame | RecallFrame | SystemFrame | ReportFrame;
 
 // ── Data contract: client → server ──────────────────────────────
 
@@ -117,7 +122,7 @@ export interface PersonaConfig {
 
 export interface ChatMessage {
   id: string;
-  type: "utterance" | "recall" | "system";
+  type: "utterance" | "recall" | "system" | "report";
   speaker: string;
   name: string;
   content: string;

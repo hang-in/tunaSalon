@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo } from "react";
-import { MessageCircle, Sparkles, UserPlus, UserMinus } from "lucide-react";
+import { MessageCircle, Sparkles, UserPlus, UserMinus, FileText } from "lucide-react";
 import type { ChatMessage, EngineState, PersonaConfig } from "@/types";
 import { bloodLabel, zodiacLabel } from "@/lib/personaLabels";
 import { RichText } from "@/components/RichText";
@@ -47,7 +47,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
   const grouped = useMemo(() => {
     const groups: { speaker: string; messages: ChatMessage[] }[] = [];
     for (const msg of messages) {
-      if (msg.type === "system" || msg.type === "recall") {
+      if (msg.type === "system" || msg.type === "recall" || msg.type === "report") {
         groups.push({ speaker: "_special_", messages: [msg] });
         continue;
       }
@@ -259,6 +259,30 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
 }
 
 function SpecialMessage({ message }: { message: ChatMessage }) {
+  if (message.type === "report") {
+    return (
+      <div className="my-4">
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ border: "1px solid var(--accent-warm)", background: "var(--bg-surface)" }}
+        >
+          <div
+            className="flex items-center gap-2 px-4 py-2.5"
+            style={{ background: "rgba(229, 164, 74, 0.12)", color: "var(--accent-warm)" }}
+          >
+            <FileText size={15} />
+            <span className="text-[13px] font-bold">토론 리포트</span>
+          </div>
+          <div
+            className="px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {message.content}
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (message.type === "system") {
     const text = message.content;
     const isJoin = text.includes("입장");
