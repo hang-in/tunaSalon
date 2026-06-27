@@ -7,7 +7,7 @@ use crate::persona_kit::{assemble_roleless, Blood, Mbti, Role, Zodiac};
 use crate::roomstore::RoomStore;
 #[cfg(feature = "redis-bus")]
 use crate::session_bus::{RedisBus, RedisBusHandle, SessionBus};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,127 +19,12 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 
 // ── 프레임 스키마 ──────────────────────────────────────────────
 
-/// Participant의 4축 정보 (직렬화 전용).
-#[derive(Serialize, Clone)]
-struct ParticipantAxes {
-    blood: String,
-    mbti: String,
-    zodiac: String,
-    role: String,
-}
-
-#[derive(Serialize, Clone)]
-struct Participant {
-    id: String,
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    axes: Option<ParticipantAxes>,
-}
-
-#[derive(Serialize, Clone)]
-struct HistoryMessage {
-    speaker: String,
-    name: String,
-    content: String,
-    ts: f64,
-}
-
-/// 클라이언트에 전달하는 리포트 DTO.
-#[derive(Serialize, Clone)]
-struct ReportDto {
-    seq: u32,
-    created_at: i64,
-    topic: String,
-    markdown: String,
-    conclusion: String,
-}
-
-impl From<crate::roomstore::ReportRecord> for ReportDto {
-    fn from(r: crate::roomstore::ReportRecord) -> Self {
-        Self {
-            seq: r.seq,
-            created_at: r.created_at,
-            topic: r.topic,
-            markdown: r.markdown,
-            conclusion: r.conclusion,
-        }
-    }
-}
-
-/// GET /api/rooms/{room_id}/report 응답 DTO.
-#[derive(Serialize)]
-struct RoomReportResponse {
-    concluded: bool,
-    summary: String,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type")]
-enum ServerFrame {
-    #[serde(rename = "state")]
-    State {
-        room_id: String,
-        intensities: BTreeMap<String, f64>,
-        theta: f64,
-        flow: f64,
-        mu_scale: f64,
-        liveliness: f64,
-        pending: Option<String>,
-        participants: Vec<Participant>,
-        messages: Vec<HistoryMessage>,
-        topics: Vec<String>,
-        paused: bool,
-        tick_ms: u64,
-        reports: Vec<ReportDto>,
-    },
-    #[serde(rename = "utterance")]
-    Utterance {
-        speaker: String,
-        name: String,
-        content: String,
-        ts: f64,
-    },
-    #[serde(rename = "system")]
-    System { text: String },
-    #[serde(rename = "report")]
-    Report { text: String },
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type")]
-enum ClientFrame {
-    #[serde(rename = "message")]
-    Message { text: String },
-    #[serde(rename = "topic")]
-    Topic { topics: Vec<String> },
-    #[serde(rename = "pause")]
-    Pause { paused: bool },
-    #[serde(rename = "pace")]
-    Pace { interval_ms: u64 },
-    #[serde(rename = "invite")]
-    Invite {
-        blood: String,
-        mbti: String,
-        zodiac: String,
-        #[serde(default)]
-        role: Option<String>,
-    },
-    #[serde(rename = "remove")]
-    Remove { id: String },
-    #[serde(rename = "presence")]
-    Presence { clients: usize },
-    #[serde(rename = "reset")]
-    Reset { topics: Vec<String> },
-    #[serde(rename = "human_profile")]
-    HumanProfile {
-        blood: String,
-        mbti: String,
-        zodiac: String,
-        role: String,
-    },
-}
+// wire DTO/protocol 타입은 dto 서브모듈로 분리(god-file 분해). 직렬화 형식 무변경.
+mod dto;
+use dto::{
+    ClientFrame, HistoryMessage, Participant, ParticipantAxes, ReportDto, RoomReportResponse,
+    ServerFrame,
+};
 
 #[allow(dead_code)]
 enum EngineCmd {
