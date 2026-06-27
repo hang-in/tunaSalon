@@ -138,6 +138,9 @@ function App() {
   const [activeRoom, setActiveRoom] = useState<DebateRoom | null>(null);
   const [recentRooms, setRecentRooms] = useState<DebateRoom[]>(readRecentRooms);
   const lobbyRooms = useMemo(() => dedupeRooms(recentRooms), [recentRooms]);
+  // 서버(room_reports) 기준 결론 여부. recentRooms(localStorage)와 분리해 관리한다 —
+  // recentRooms 를 건드리면 lobbyRooms 가 재계산돼 카드 정렬/배지가 출렁인다.
+  const [serverConcluded, setServerConcluded] = useState<Record<string, string>>({});
   const [selectedModels, setSelectedModelsState] = useState<string[]>(() => getSelectedModels());
   const {
     messages,
@@ -216,41 +219,33 @@ function App() {
     });
   }, [messages, activeRoom, rememberRoom]);
 
-  // 로비 진입 시 서버에서 각 방의 concluded 상태를 동기화한다(서버를 배지 권위로).
-  // 의존성: [inRoom] 만 — recentRooms 를 넣으면 setRecentRooms 재트리거 → 무한루프.
+  // 로비 진입 시 서버(room_reports)에서 각 방의 결론 여부를 동기화한다(서버를 배지 권위로).
+  // recentRooms(localStorage)는 건드리지 않고 serverConcluded(별도 state)만 갱신한다 —
+  // recentRooms 를 바꾸면 lobbyRooms 재계산으로 카드 정렬/배지가 출렁인다. 의존성 [inRoom] 만.
   useEffect(() => {
     if (inRoom) return;
     let cancelled = false;
-
     const rooms = readRecentRooms();
     if (rooms.length === 0) return;
-
-    const updates = new Map<string, DebateRoom>();
 
     Promise.all(
       rooms.map(async (room) => {
         try {
           const res = await fetch(`/api/rooms/${encodeURIComponent(room.id)}/report`);
-          if (!res.ok || cancelled) return;
+          if (!res.ok) return null;
           const data = (await res.json()) as { concluded: boolean; summary: string };
-          if (data.concluded) {
-            updates.set(room.id, {
-              ...room,
-              concluded: true,
-              reportSummary: data.summary || room.reportSummary,
-            });
-          }
+          return data.concluded ? { id: room.id, summary: data.summary } : null;
         } catch {
-          // 네트워크 실패: 기존 상태 유지
+          return null;
         }
       })
-    ).then(() => {
-      if (cancelled || updates.size === 0) return;
-      setRecentRooms((prev) => {
-        const next = prev.map((r) => updates.get(r.id) ?? r);
-        saveRecentRooms(next);
-        return next;
-      });
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      for (const r of results) {
+        if (r) map[r.id] = r.summary;
+      }
+      setServerConcluded(map);
     });
 
     return () => {
@@ -401,7 +396,7 @@ function App() {
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <span className="flex items-center gap-2 min-w-0">
                         <MessageSquareText size={18} className="text-[var(--accent-warm)] shrink-0" />
-                        {room.concluded && (
+                        {(room.concluded || serverConcluded[room.id] !== undefined) && (
                           <span
                             className="text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
                             style={{ background: "rgba(74, 222, 128, 0.12)", color: "#4ade80", border: "1px solid rgba(74, 222, 128, 0.25)" }}
