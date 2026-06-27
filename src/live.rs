@@ -2027,6 +2027,58 @@ mod tests {
         assert!(!session.is_pending(), "restore 후 pending은 None이어야 함");
     }
 
+    /// 복원 시퀀스(main.rs 순서: set_report → set_topics → restore_history)에서
+    /// 리포트 있는 방(=종료)은 Concluded 로 남아야 한다(set_topics 가 phase 를 Opening 으로
+    /// 리셋한 뒤에도 restore_history 가 최종 마킹). 회귀: 종료 토론이 재진입 시 재실행되던 버그.
+    #[test]
+    fn restore_concluded_room_stays_concluded() {
+        use crate::debate::DebatePhase;
+        use crate::model::Event;
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        session.set_report(Some("## 결론\n끝.".to_string()));
+        session.set_topics(vec!["AI 규제와 오픈소스".to_string()]);
+        session.restore_history(
+            vec![Event {
+                ts: 0.0,
+                speaker: "aria".to_string(),
+                mark: 0.0,
+                content: Some("끝났다".to_string()),
+            }],
+            10,
+        );
+        assert_eq!(
+            session.current_phase(),
+            Some(DebatePhase::Concluded),
+            "리포트 있는 방 복원 시 Concluded 유지(dispatch 중단)"
+        );
+    }
+
+    /// 리포트 없는(진행 중) 방은 복원 시 공방(Clash)으로 재개되어야 한다.
+    #[test]
+    fn restore_unconcluded_room_reopens_to_clash() {
+        use crate::debate::DebatePhase;
+        use crate::model::Event;
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        session.set_report(None);
+        session.set_topics(vec!["AI 규제와 오픈소스".to_string()]);
+        session.restore_history(
+            vec![Event {
+                ts: 0.0,
+                speaker: "aria".to_string(),
+                mark: 0.0,
+                content: Some("진행중".to_string()),
+            }],
+            10,
+        );
+        assert_eq!(
+            session.current_phase(),
+            Some(DebatePhase::Clash),
+            "리포트 없는 방 복원 시 공방 재개"
+        );
+    }
+
     /// (task-G-restore-empty) 빈 messages로 restore_history 시 last_speaker = None.
     #[test]
     fn restore_history_empty_messages_sets_no_last_speaker() {
