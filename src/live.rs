@@ -951,10 +951,17 @@ impl LiveSession {
             Some(infer_debate_plan(&self.topics))
         };
         // 단계 컨트롤러도 plan과 동기화. 새 화제 = 새 토론 → 오프닝부터 시작.
-        self.phase = self
-            .debate_plan
-            .as_ref()
-            .map(|plan| PhaseController::new(plan.mode, self.personas.len() as u32));
+        // 단, 이미 종료된 토론(report 존재)은 Concluded 로 생성한다. report 가 종료 여부의
+        // SSOT 이므로, 복원 후 set_topics 가 다시 불려도(run_engine 진입 시) 종료 상태가
+        // 유지된다 — 종료 토론이 재진입 시 처음부터 재실행되던 회귀 방지.
+        let was_concluded = self.report.is_some();
+        self.phase = self.debate_plan.as_ref().map(|plan| {
+            let mut pc = PhaseController::new(plan.mode, self.personas.len() as u32);
+            if was_concluded {
+                pc.mark_concluded();
+            }
+            pc
+        });
         self.just_concluded = false;
     }
 
@@ -2077,6 +2084,53 @@ mod tests {
             Some(DebatePhase::Clash),
             "리포트 없는 방 복원 시 공방 재개"
         );
+    }
+
+    /// report(종료 SSOT)가 설정돼 있으면 set_topics 만으로도 phase 가 Concluded 로 생성된다.
+    /// restore_history 순서에 의존하지 않는 단일 불변식 검증.
+    #[test]
+    fn set_topics_creates_concluded_phase_when_report_present() {
+        use crate::debate::DebatePhase;
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        session.set_report(Some("## 결론\n끝.".to_string()));
+        session.set_topics(vec!["AI 규제와 오픈소스".to_string()]);
+        assert_eq!(
+            session.current_phase(),
+            Some(DebatePhase::Concluded),
+            "report 있는 채로 set_topics 하면 Concluded 로 생성"
+        );
+    }
+
+    /// 회귀: 복원 직후 set_topics 가 다시 불려도(web run_engine 진입 시 startup 주제 재적용)
+    /// 종료 토론은 Concluded 로 남아야 한다. 직전 픽스(factory 순서)가 못 잡던 경로 —
+    /// restore_history 로 Concluded 마킹 후 set_topics 가 phase 를 Opening 으로 덮던 버그.
+    #[test]
+    fn set_topics_after_restore_keeps_concluded() {
+        use crate::debate::DebatePhase;
+        use crate::model::Event;
+        let pool = offline_pool();
+        let mut session = LiveSession::new(config(), personas(), 42, pool, "you");
+        // factory 복원 시퀀스
+        session.set_report(Some("## 결론\n끝.".to_string()));
+        session.set_topics(vec!["AI 규제와 오픈소스".to_string()]);
+        session.restore_history(
+            vec![Event {
+                ts: 0.0,
+                speaker: "aria".to_string(),
+                mark: 0.0,
+                content: Some("끝났다".to_string()),
+            }],
+            10,
+        );
+        // run_engine 진입: startup 주제 재적용(과거 회귀의 트리거)
+        session.set_topics(vec!["AI 규제와 오픈소스".to_string()]);
+        assert_eq!(
+            session.current_phase(),
+            Some(DebatePhase::Concluded),
+            "복원 후 set_topics 재호출에도 종료 토론은 Concluded 유지(재실행 방지)"
+        );
+        assert_eq!(session.tick(), TickOutcome::Silent, "Concluded 방은 tick 침묵");
     }
 
     /// (task-G-restore-empty) 빈 messages로 restore_history 시 last_speaker = None.

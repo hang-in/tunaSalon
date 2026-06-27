@@ -515,7 +515,11 @@ fn run_engine(
         .unwrap_or_else(Instant::now);
     let mut last_save = Instant::now();
 
-    if !startup.topics().is_empty() {
+    // 새 방에만 startup 주제를 적용한다. 복원된 방(history 존재)은 factory 가 이미
+    // topics/phase 를 세팅했으므로, 여기서 set_topics 를 다시 부르면 종료/진행 단계가
+    // Opening 으로 덮여 종료 토론이 재진입 시 재실행된다(회귀). report 가 종료 SSOT 라
+    // set_topics 자체도 Concluded 를 보존하지만(이중 안전), 복원 방엔 애초에 재적용하지 않는다.
+    if session.state().history.is_empty() && !startup.topics().is_empty() {
         session.set_topics(startup.topics().to_vec());
         emit(
             &frame_tx,
@@ -523,10 +527,8 @@ fn run_engine(
                 text: format!("토론 주제: {}", startup.topics().join(", ")),
             },
         );
-        if session.state().history.is_empty() {
-            if let Some(text) = startup.opening_prompt() {
-                emit(&frame_tx, &ServerFrame::System { text });
-            }
+        if let Some(text) = startup.opening_prompt() {
+            emit(&frame_tx, &ServerFrame::System { text });
         }
         dirty = true;
     }
