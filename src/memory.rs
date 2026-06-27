@@ -739,10 +739,8 @@ mod sqlite_impl {
         ///
         /// 알고리즘:
         /// 1. participation 테이블에서 persona가 참여한 방 집합을 구한다.
-        /// 2. query를 morphological_tokens로 토큰화.
-        /// 3. 각 토큰을 큰따옴표로 감싸고(FTS5 키워드 오해 방지) `" OR "`로 연결(OR-MATCH).
-        /// 4. FTS5 MATCH + memories.room IN(방 집합) + bm25() 정렬.
-        /// 5. row → MemoryEvent owned.
+        /// 2. bm25_leg_ids: FTS5 OR-MATCH + room IN + bm25 정렬 → 랭크순 id Vec (R3② 공유).
+        /// 3. fetch_events_by_ids: id 순서대로 사건 fetch → MemoryEvent owned (R3② 공유).
         ///
         /// k=0 / 빈쿼리 / 미참여 → 빈 Vec. 런타임 오류는 빈 Vec으로 조용히 처리.
         ///
@@ -761,52 +759,11 @@ mod sqlite_impl {
                 return vec![];
             }
 
-            // 2. query 토큰화
-            let tokens = crate::tokenize_ko::morphological_tokens(query);
-            if tokens.is_empty() {
-                return vec![];
-            }
-
-            // 3. OR-MATCH 구성: 각 토큰을 큰따옴표로 감싸고(내부 " → "") " OR "로 연결
-            //    예) ["비", "오"] → `"비" OR "오"`
-            let match_expr: String = fts_or_match(&tokens);
-
-            // 4. rooms placeholders: ?2, ?3, ...
-            //    주의: params! 매크로가 런타임 가변 길이를 지원 안 하므로
-            //    동적 SQL + params_from_iter 사용.
-            let placeholders = sql_placeholders(rooms.len(), 3);
-
-            let sql = format!(
-                "SELECT m.id, m.room, m.ts, m.speaker, m.content, bm25(memories_fts) AS score
-                 FROM memories_fts
-                 JOIN memories m ON m.id = memories_fts.mem_id
-                 WHERE memories_fts.tokens MATCH ?1
-                   AND m.room IN ({placeholders})
-                 ORDER BY score ASC, m.ts DESC, m.id DESC
-                 LIMIT ?2"
-            );
-
-            let mut stmt = match self.conn.prepare(&sql) {
-                Ok(s) => s,
-                Err(_) => return vec![],
-            };
-
-            // 파라미터: [match_expr, k, room1, room2, ...]
-            use rusqlite::types::ToSql;
-            let mut param_vals: Vec<Box<dyn ToSql>> = Vec::new();
-            param_vals.push(Box::new(match_expr));
-            param_vals.push(Box::new(k as i64));
-            for r in &rooms {
-                param_vals.push(Box::new(r.clone()));
-            }
-            let param_refs: Vec<&dyn ToSql> = param_vals.iter().map(|b| b.as_ref()).collect();
-
-            let rows = match stmt.query_map(param_refs.as_slice(), |row| row_to_memory_event(row, 1)) {
-                Ok(r) => r,
-                Err(_) => return vec![],
-            };
-
-            rows.filter_map(|r| r.ok()).collect()
+            // 2. BM25 id-leg(랭크순) → 3. per-id fetch. hybrid와 fetch 전략 통일(R3②).
+            //    1단계 full-row SELECT를 id-leg+fetch 2단계로 재구조화 — bm25 정렬·tie-break
+            //    (ts DESC, id DESC) 동일이라 결과 순서 byte-identical.
+            let ids = self.bm25_leg_ids(query, &rooms, k);
+            self.fetch_events_by_ids(&ids)
         }
 
         // ── hybrid recall (friend-engine-semantic only) ───────────────────────
@@ -839,47 +796,8 @@ mod sqlite_impl {
 
             let over_fetch = k * 4;
 
-            // 2. BM25 leg: FTS5 OR-MATCH + 참여 방 필터 → id 랭크 Vec
-            let bm25_ids: Vec<i64> = {
-                let tokens = crate::tokenize_ko::morphological_tokens(query);
-                if tokens.is_empty() {
-                    vec![]
-                } else {
-                    let match_expr: String = fts_or_match(&tokens);
-
-                    let placeholders = sql_placeholders(rooms.len(), 3);
-
-                    let sql = format!(
-                        "SELECT m.id
-                         FROM memories_fts
-                         JOIN memories m ON m.id = memories_fts.mem_id
-                         WHERE memories_fts.tokens MATCH ?1
-                           AND m.room IN ({placeholders})
-                         ORDER BY bm25(memories_fts) ASC, m.ts DESC, m.id DESC
-                         LIMIT ?2"
-                    );
-
-                    match self.conn.prepare(&sql) {
-                        Err(_) => vec![],
-                        Ok(mut stmt) => {
-                            use rusqlite::types::ToSql;
-                            let mut param_vals: Vec<Box<dyn ToSql>> = Vec::new();
-                            param_vals.push(Box::new(match_expr));
-                            param_vals.push(Box::new(over_fetch as i64));
-                            for r in &rooms {
-                                param_vals.push(Box::new(r.clone()));
-                            }
-                            let param_refs: Vec<&dyn ToSql> =
-                                param_vals.iter().map(|b| b.as_ref()).collect();
-
-                            match stmt.query_map(param_refs.as_slice(), |row| row.get(0)) {
-                                Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
-                                Err(_) => vec![],
-                            }
-                        }
-                    }
-                }
-            };
+            // 2. BM25 leg: FTS5 OR-MATCH + 참여 방 필터 → id 랭크 Vec (R3② 공유 헬퍼)
+            let bm25_ids = self.bm25_leg_ids(query, &rooms, over_fetch);
 
             // 3. 벡터 leg: vector_search → 참여 방으로 필터
             #[cfg(not(target_os = "windows"))]
@@ -941,9 +859,59 @@ mod sqlite_impl {
                 return vec![];
             }
 
-            // 5. fused 순서대로 각 id의 사건을 fetch
-            let mut results: Vec<MemoryEvent> = Vec::with_capacity(top_ids.len());
-            for mem_id in &top_ids {
+            // 5. fused 순서대로 각 id의 사건을 fetch (R3② 공유 헬퍼)
+            self.fetch_events_by_ids(&top_ids)
+        }
+
+        /// BM25(어휘) leg: FTS5 OR-MATCH + 참여 방 필터 → bm25 랭크순 mem id Vec.
+        ///
+        /// `ORDER BY bm25 ASC, m.ts DESC, m.id DESC LIMIT limit`. rng 무소비·결정적.
+        /// BM25-only recall과 hybrid recall의 BM25 leg가 공유한다(R3②).
+        /// 빈 토큰 / prepare 실패 / query 실패 → 빈 Vec(조용히).
+        #[cfg(feature = "friend-engine")]
+        fn bm25_leg_ids(&self, query: &str, rooms: &[String], limit: usize) -> Vec<i64> {
+            let tokens = crate::tokenize_ko::morphological_tokens(query);
+            if tokens.is_empty() {
+                return vec![];
+            }
+            let match_expr: String = fts_or_match(&tokens);
+            let placeholders = sql_placeholders(rooms.len(), 3);
+            let sql = format!(
+                "SELECT m.id
+                 FROM memories_fts
+                 JOIN memories m ON m.id = memories_fts.mem_id
+                 WHERE memories_fts.tokens MATCH ?1
+                   AND m.room IN ({placeholders})
+                 ORDER BY bm25(memories_fts) ASC, m.ts DESC, m.id DESC
+                 LIMIT ?2"
+            );
+            let mut stmt = match self.conn.prepare(&sql) {
+                Ok(s) => s,
+                Err(_) => return vec![],
+            };
+            use rusqlite::types::ToSql;
+            let mut param_vals: Vec<Box<dyn ToSql>> = Vec::new();
+            param_vals.push(Box::new(match_expr));
+            param_vals.push(Box::new(limit as i64));
+            for r in rooms {
+                param_vals.push(Box::new(r.clone()));
+            }
+            let param_refs: Vec<&dyn ToSql> = param_vals.iter().map(|b| b.as_ref()).collect();
+            let rows = match stmt.query_map(param_refs.as_slice(), |row| row.get(0)) {
+                Ok(rows) => rows,
+                Err(_) => return vec![],
+            };
+            rows.filter_map(|r| r.ok()).collect()
+        }
+
+        /// mem id 리스트를 입력 순서대로 MemoryEvent로 fetch한다(2단계 fetch).
+        ///
+        /// 각 id를 `SELECT room, ts, speaker, content WHERE id=?` 로 조회. 누락 id는 건너뜀.
+        /// 입력 순서 = 출력 순서(rank 보존). BM25-only/hybrid recall이 공유(R3②).
+        #[cfg(feature = "friend-engine")]
+        fn fetch_events_by_ids(&self, ids: &[i64]) -> Vec<MemoryEvent> {
+            let mut results: Vec<MemoryEvent> = Vec::with_capacity(ids.len());
+            for mem_id in ids {
                 let row = self.conn.query_row(
                     "SELECT room, ts, speaker, content FROM memories WHERE id = ?1",
                     params![mem_id],
@@ -953,7 +921,6 @@ mod sqlite_impl {
                     results.push(ev);
                 }
             }
-
             results
         }
 
