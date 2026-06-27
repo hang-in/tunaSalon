@@ -114,6 +114,12 @@ impl PhaseController {
         self.utterances_in_phase = 0;
     }
 
+    /// 종료 상태로 복원한다(이미 끝난 토론의 재접속 — dispatch 중단, 리포트만 표시).
+    pub fn mark_concluded(&mut self) {
+        self.phase = DebatePhase::Concluded;
+        self.utterances_in_phase = 0;
+    }
+
     /// 생성 워커에 주입할 단계 지시 한 줄. `Concluded`면 빈 문자열.
     pub fn directive(&self) -> &'static str {
         match self.phase {

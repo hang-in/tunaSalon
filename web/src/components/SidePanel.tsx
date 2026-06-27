@@ -367,17 +367,17 @@ export function SidePanel({ engineState, personaConfigs, getPersonaConfig, open,
                     <button
                       key={r.seq}
                       onClick={() => setModalReport(r)}
-                      className="w-full text-left px-3 py-2 rounded-lg text-[12px] transition-colors hover:opacity-80"
+                      className="w-full flex items-center gap-1.5 overflow-hidden text-left px-3 py-2 rounded-lg text-[12px] transition-colors hover:opacity-80"
                       style={{
                         background: "var(--bg-base)",
                         border: "1px solid var(--border-color)",
                         color: "var(--text-secondary)",
                       }}
                     >
-                      <span className="font-semibold" style={{ color: "var(--accent-warm)" }}>
+                      <span className="font-semibold shrink-0" style={{ color: "var(--accent-warm)" }}>
                         #{r.seq}
-                      </span>{" "}
-                      <span className="truncate">{r.topic || r.conclusion.slice(0, 60)}</span>
+                      </span>
+                      <span className="truncate min-w-0">{r.topic || r.conclusion.slice(0, 60)}</span>
                     </button>
                   ))}
                 </div>

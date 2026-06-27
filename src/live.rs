@@ -1014,9 +1014,16 @@ impl LiveSession {
         self.state.history = messages;
         self.tick_count = tick_count;
         self.pending = None;
-        // 복원된 방은 오프닝/입장개진을 재실행하지 않고 공방부터 재개한다(다시 클로징까지 도달 가능).
+        // 종료된 토론(report 있음)은 Concluded 로 복원 → dispatch 중단(리포트만 표시,
+        // 사용자가 발화하면 submit_human 이 공방으로 재개). 진행 중이던 방은 공방부터 재개.
+        // 주의: 호출 전에 set_report 가 선행되어야 한다(main.rs 복원 순서).
+        let was_concluded = self.report.is_some();
         if let Some(pc) = self.phase.as_mut() {
-            pc.reopen_to_clash();
+            if was_concluded {
+                pc.mark_concluded();
+            } else {
+                pc.reopen_to_clash();
+            }
         }
         self.just_concluded = false;
     }

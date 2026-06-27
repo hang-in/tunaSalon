@@ -173,10 +173,11 @@ fn main() {
                                 apply_default_persona_profile(&mut p, &mut m);
                                 sess.add_persona(p, m);
                             }
+                            // set_report 를 먼저: restore_history 가 report 유무로 종료여부를 판단한다.
+                            sess.set_report(snap.report);
                             sess.restore_history(snap.messages, snap.tick_count);
                             sess.set_topics(snap.topics);
                             sess.set_human_axes(snap.human_axes);
-                            sess.set_report(snap.report);
                             eprintln!(
                                 "[tunaSalon] 방 '{}' 복원: {n_personas}명, {n_messages}발화",
                                 room_id
