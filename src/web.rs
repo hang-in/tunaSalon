@@ -2,7 +2,7 @@
 //! web 프런트엔드 sink: axum WebSocket으로 엔진 이벤트를 브라우저에 push + 사람 입력 수신.
 //! 엔진은 blocking(전용 스레드), axum은 tokio(async). 둘은 tokio 채널로 브리지.
 
-use crate::live::{extract_conclusion_section, LiveSession, PersonaAxes, PersonaMeta};
+use crate::live::{LiveSession, PersonaAxes, PersonaMeta};
 use crate::persona_kit::{assemble_roleless, Blood, Mbti, Role, Zodiac};
 use crate::roomstore::RoomStore;
 #[cfg(feature = "redis-bus")]
@@ -937,7 +937,7 @@ fn run_engine(
                 .and_then(|s| s.recent_conclusions(&room_id_str, 2).ok())
                 .unwrap_or_default();
             if let Some(report) = session.summarize_debate(&past_conclusions) {
-                let conclusion = extract_conclusion_section(&report);
+                let conclusion = crate::debate::report::extract_conclusion_section(&report);
                 let topic = session.topics().join(", ");
                 if let Some(ref s) = store {
                     if let Ok(seq) = s.append_report(&room_id_str, &topic, &report, &conclusion) {

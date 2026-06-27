@@ -22,6 +22,7 @@ mod evidence;
 mod format;
 pub mod phase;
 pub mod plan;
+pub mod report;
 mod text;
 
 pub(crate) use directive::{
