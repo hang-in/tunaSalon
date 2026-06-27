@@ -100,8 +100,11 @@ cargo run -- --headless --seed 42 --ticks 120 > /tmp/out.ndjson && diff /tmp/sal
 
 > tunaSalon 이어가기. `docs/plans/salon-refactoring.md` + 스냅샷 `docs/reference/refactoring-review-2026-06-27-web.md` 읽었어.
 > 2026-06-27 done(전부 라이브 배포·확인): 종료토론 재발화(c7cdbc3) + 로비 배지 서버권위(647a6a6)+깜빡임 재수정(29883a3) + R1 3개(flow/memory/web) + R2 W4(센티넬·persona_display_name, 5eae34c)·L4(리포트 debate::report 분리, a06b55e). 다음:
-> ① R2 잔여: M1 hybrid recall leg 통합(결정성 민감, 결정성 테스트 동반) / LiveSession 추가 책임분리(디스패치·입력 도메인).
-> ② R3: per-tick decide_one_tick 통합(결정성 최고 민감 — 별도 세션, 골든 철저).
+> 2026-06-27 R2 추가 done: M1 안전부(participated_rooms/row_to_memory_event, 5a50b2a) · LiveSession 라벨(build_speaker_labels, 8800283).
+> **R3 (새 세션 — 전부 결정성/부수효과 민감, golden·recall 테스트 철저, 한 단위씩):**
+> ① per-tick decide_one_tick 통합 — driver↔live 중복. rng 소비 순서가 골든 불변식이라 최고 민감.
+> ② M1 leg SQL 통합 — BM25-only 1단계 전체 fetch ↔ hybrid 2단계 id-leg+per-id fetch 재구조화(recall rank/결정성).
+> ③ LiveSession 디스패치(worker/mpsc)·입력(human_focus) 모듈 분리 — 부수효과 얽힘.
 > M4(live_store 가드)는 보류 — 안전 수정 없음(pub 필수 + cfg(not(test)) web 테스트 충돌), 스냅샷 참조.
 > 빅뱅·무관정리 금지, golden byte-identical 매 단계. 구현 위임 Sonnet, Opus가 스펙·리뷰·검증.
 
