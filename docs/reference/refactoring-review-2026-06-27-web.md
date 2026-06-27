@@ -29,6 +29,8 @@ god-file: `live.rs` 2322 · `web.rs` 2105 · `memory.rs` 1818 · `pool.rs` 1222 
 2. **web.rs `serve()` 단일방 경로(~235줄)는 호출자 0 = 죽은 코드** + `serve_multi` 구조 중복. 제거 이익 크나 파괴적 → 승인 후.
 3. **R2/R3 보류**: per-tick `decide_one_tick` 통합(결정성·rng), LiveSession 12책임군 분리, hybrid recall leg 통합(결정성), `live_store` 부수효과 좁히기(pub 제약), memory trait(분기 배타라 불필요).
 
+> **[2026-06-27 R2 진행]** W4(화자 센티넬 상수화 + `persona_display_name` 추출, `5eae34c`) · L4(리포트 순수부 `debate::report` 분리 = build_debrief_prompt + extract_conclusion, `a06b55e`) **done** — 골든 byte-identical, 동작 무변경, extract_conclusion dead_code warning 소거. **M4 보류**: `live_store` 가 main.rs(bin) + web.rs(delete_room_storage) 양쪽에서 `pub` 호출이라 가시성을 못 좁히고, `#[cfg(not(test))]` 는 web feature 테스트 빌드(web.rs delete_room_storage)를 깨뜨린다. `default_db_path` 의 `SALON_MEMORY_DB` env 격리 + doc 경고로 실제 위험이 낮아(통합 테스트는 `new()` 사용) 코드 변경 안 함. 남은 R2/R3: M1 hybrid recall leg(결정성)·L3 `decide_one_tick`(R3, 결정성 최고 민감)·LiveSession 추가 분리(디스패치/입력 등).
+
 ---
 
 ## 2. 검증된 Finding (코드 라인 인용 기준)
