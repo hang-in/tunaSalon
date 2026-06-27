@@ -119,6 +119,8 @@ pub struct LiveSession {
     human_id: PersonaId,
     /// 사람(나)이 직접 고른 4축 캐릭터. 엔진엔 영향 없고 시각/정체성용(아바타 렌더). 영속됨.
     human_axes: Option<PersonaAxes>,
+    /// 종료 시 메타 분석가가 만든 마크다운 리포트. 영속·재접속 시 재표시·로비 요약에 사용.
+    report: Option<String>,
     /// 페르소나별 백엔드 라우팅 + system_prompt. with_persona_meta 빌더로 설정.
     /// 빈 맵이면 모든 persona가 기존 generate_one(폴백 체인) 경로를 사용한다.
     persona_meta: BTreeMap<PersonaId, PersonaMeta>,
@@ -323,6 +325,7 @@ impl LiveSession {
             room,
             human_id,
             human_axes: None,
+            report: None,
             persona_meta: BTreeMap::new(),
             topics: Vec::new(),
             debate_plan: None,
@@ -425,11 +428,13 @@ impl LiveSession {
         self.last_human_msg = Some(text.clone());
         self.human_focus = HUMAN_FOCUS_TURNS;
         self.forced_next_speaker = mentioned_persona_id(&text, &self.personas);
-        // 종료된 토론에 사람이 끼어들면 공방으로 재진입(단계 흐름 재개).
-        if let Some(pc) = self.phase.as_mut() {
-            if pc.is_concluded() {
+        // 종료된 토론에 사람이 끼어들면 공방으로 재진입(단계 흐름 재개) + 옛 리포트 폐기.
+        let was_concluded = self.phase.as_ref().is_some_and(|p| p.is_concluded());
+        if was_concluded {
+            if let Some(pc) = self.phase.as_mut() {
                 pc.reopen_to_clash();
             }
+            self.report = None;
         }
         // 회상 스토어에 사람 발화 기록(task-41). 페르소나가 사람 말을 회상할 수 있다.
         self.store.record(MemoryEvent {
@@ -970,6 +975,7 @@ impl LiveSession {
         self.forced_next_speaker = None;
         self.turns_since_summary = 0;
         self.turns_since_twist = 0;
+        self.report = None;
         self.set_topics(topics);
         self.store.clear_room(&self.room);
         for persona in &self.personas {
@@ -1030,6 +1036,14 @@ impl LiveSession {
         self.human_axes.as_ref()
     }
 
+    /// 종료 리포트(마크다운)를 설정/조회한다. 영속·재접속 재표시·로비 요약용.
+    pub fn set_report(&mut self, report: Option<String>) {
+        self.report = report;
+    }
+    pub fn report(&self) -> Option<&str> {
+        self.report.as_deref()
+    }
+
     /// 직전 틱에서 토론이 막 종료됐는지 확인하고 플래그를 소비한다(web가 1회 알림용).
     pub fn take_just_concluded(&mut self) -> bool {
         let v = self.just_concluded;
@@ -1074,14 +1088,20 @@ impl LiveSession {
         let topic = self.topics.join(", ");
         let prompt = format!(
             "You are a neutral debate analyst. The discussion above is a FINISHED debate on the topic \"{topic}\". \
-             Write a concise DEBRIEF REPORT in Korean — this is a report document, NOT a chat reply, so do not address anyone or continue the debate. \
-             Use exactly these sections, each on its own line:\n\
-             【주제】 한 줄 요약.\n\
-             【참가자 입장】 각 참가자마다 \"닉네임: 핵심 주장\" 한 줄씩.\n\
-             【합의점】 참가자들이 동의한 지점(없으면 '뚜렷한 합의 없음').\n\
-             【끝까지 갈린 지점】 합의되지 않은 핵심 쟁점.\n\
-             【정리】 2-3문장으로 객관적 종합(어느 입장이 더 설득력 있었는지, 남은 질문). \
-             Stay objective, do not take a side, do not invent new arguments. Korean only.",
+             Write a DEBRIEF REPORT in Korean using GitHub-flavored MARKDOWN — this is a report document, NOT a chat reply, \
+             so do not address anyone or continue the debate. Lead with the conclusion (두괄식): the report MUST start with the \
+             '## 결론' section. Use exactly these sections in this order:\n\
+             ## 결론\n\
+             (2-3 문장: 한 줄 핵심 결론 먼저 — 무엇으로 귀결됐는지 또는 끝내 갈렸는지, 가장 설득력 있던 논지.)\n\
+             ## 주제\n\
+             (한 줄.)\n\
+             ## 참가자 입장\n\
+             (각 참가자마다 `- **닉네임**: 핵심 주장` 형식 한 줄씩.)\n\
+             ## 합의점\n\
+             (동의한 지점. 없으면 '뚜렷한 합의 없음'.)\n\
+             ## 끝까지 갈린 지점\n\
+             (합의되지 않은 핵심 쟁점.)\n\
+             Stay objective, do not take a side, do not invent new arguments. Use markdown headings, bold, and bullet lists. Korean only.",
             topic = topic
         );
 

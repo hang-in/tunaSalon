@@ -30,6 +30,8 @@ pub struct RoomSnapshot {
     pub tick_count: u64,
     /// 사람(나)이 고른 4축 캐릭터. 없으면 None.
     pub human_axes: Option<PersonaAxes>,
+    /// 종료 시 생성된 마크다운 리포트. 결론 난 방만 Some.
+    pub report: Option<String>,
 }
 
 impl RoomStore {
@@ -96,6 +98,7 @@ impl RoomStore {
         topics: &[String],
         tick_count: u64,
         human_axes: Option<&PersonaAxes>,
+        report: Option<&str>,
     ) -> rusqlite::Result<()> {
         // 트랜잭션 시작
         self.conn.execute("BEGIN", [])?;
@@ -162,8 +165,8 @@ impl RoomStore {
             self.conn.execute(
                 "INSERT INTO room_meta(
                     room_id, topics_json, tick_count, updated_at,
-                    human_blood, human_mbti, human_zodiac, human_role
-                 ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7)",
+                    human_blood, human_mbti, human_zodiac, human_role, report
+                 ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     room_id,
                     topics_json,
@@ -172,6 +175,7 @@ impl RoomStore {
                     human_axes.map(|a| a.mbti.clone()),
                     human_axes.map(|a| a.zodiac.clone()),
                     human_axes.map(|a| a.role.clone()),
+                    report,
                 ],
             )?;
 
@@ -224,12 +228,20 @@ impl RoomStore {
     /// 있으면 participants(ord ASC) / messages(seq ASC) / topics / tick_count를
     /// `RoomSnapshot`으로 조합해 반환한다.
     pub fn load(&self, room_id: &str) -> rusqlite::Result<Option<RoomSnapshot>> {
-        // room_meta 확인 (사람 4축 포함)
-        type MetaRow = (String, i64, Option<String>, Option<String>, Option<String>, Option<String>);
+        // room_meta 확인 (사람 4축 + 리포트 포함)
+        type MetaRow = (
+            String,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
         let meta_row: Option<MetaRow> = {
             let mut stmt = self.conn.prepare(
                 "SELECT topics_json, tick_count,
-                        human_blood, human_mbti, human_zodiac, human_role
+                        human_blood, human_mbti, human_zodiac, human_role, report
                  FROM room_meta WHERE room_id = ?1",
             )?;
             let mut rows = stmt.query(params![room_id])?;
@@ -241,15 +253,17 @@ impl RoomStore {
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 )),
                 None => None,
             }
         };
 
-        let (topics_json, tick_count_raw, h_blood, h_mbti, h_zodiac, h_role) = match meta_row {
-            Some(t) => t,
-            None => return Ok(None),
-        };
+        let (topics_json, tick_count_raw, h_blood, h_mbti, h_zodiac, h_role, report) =
+            match meta_row {
+                Some(t) => t,
+                None => return Ok(None),
+            };
         let human_axes = match (h_blood, h_mbti, h_zodiac, h_role) {
             (Some(blood), Some(mbti), Some(zodiac), Some(role)) => {
                 Some(PersonaAxes { blood, mbti, zodiac, role })
@@ -326,6 +340,7 @@ impl RoomStore {
             topics,
             tick_count: tick_count_raw as u64,
             human_axes,
+            report,
         }))
     }
 }
@@ -373,6 +388,8 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
     for col in ["human_blood", "human_mbti", "human_zodiac", "human_role"] {
         let _ = conn.execute(&format!("ALTER TABLE room_meta ADD COLUMN {col} TEXT"), []);
     }
+    // 종료 리포트(마크다운)도 방 단위 1개.
+    let _ = conn.execute("ALTER TABLE room_meta ADD COLUMN report TEXT", []);
     Ok(())
 }
 
@@ -444,7 +461,7 @@ mod tests {
         persona_meta.insert("noaxes".to_string(), make_meta("cloud", "p2", 1.0, 1.0));
 
         store
-            .save("r", &personas, &persona_meta, &[], &[], 0, None)
+            .save("r", &personas, &persona_meta, &[], &[], 0, None, None)
             .expect("save");
         let snap = store.load("r").expect("load").expect("some");
 
@@ -467,7 +484,7 @@ mod tests {
             role: "strategist".to_string(),
         };
         store
-            .save("hr", &[], &BTreeMap::new(), &[], &[], 0, Some(&human))
+            .save("hr", &[], &BTreeMap::new(), &[], &[], 0, Some(&human), None)
             .expect("save");
         let snap = store.load("hr").expect("load").expect("some");
         let h = snap.human_axes.expect("human_axes Some");
@@ -478,7 +495,7 @@ mod tests {
 
         // 사람 미설정 방은 None.
         store
-            .save("hr2", &[], &BTreeMap::new(), &[], &[], 0, None)
+            .save("hr2", &[], &BTreeMap::new(), &[], &[], 0, None, None)
             .expect("save2");
         assert!(store.load("hr2").unwrap().unwrap().human_axes.is_none());
     }
@@ -513,7 +530,7 @@ mod tests {
         let topics = vec!["러스트".to_string(), "AI".to_string()];
 
         store
-            .save("room1", &personas, &persona_meta, &history, &topics, 42, None)
+            .save("room1", &personas, &persona_meta, &history, &topics, 42, None, None)
             .expect("save 성공");
 
         let snap = store
@@ -569,7 +586,7 @@ mod tests {
         ];
 
         store
-            .save("room2", &personas, &persona_meta, &history, &[], 0, None)
+            .save("room2", &personas, &persona_meta, &history, &[], 0, None, None)
             .expect("save");
 
         let snap = store.load("room2").expect("load").expect("Some");
@@ -603,7 +620,7 @@ mod tests {
         // ghost는 persona_meta에 없음
 
         store
-            .save("room3", &personas, &persona_meta, &[], &[], 0, None)
+            .save("room3", &personas, &persona_meta, &[], &[], 0, None, None)
             .expect("save");
 
         let snap = store.load("room3").expect("load").expect("Some");
@@ -635,6 +652,7 @@ mod tests {
                 &["topic1".to_string()],
                 10,
                 None,
+                None,
             )
             .expect("save 1");
         store
@@ -645,6 +663,7 @@ mod tests {
                 &history2,
                 &["topic2".to_string()],
                 20,
+                None,
                 None,
             )
             .expect("save 2");

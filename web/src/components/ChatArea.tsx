@@ -5,6 +5,7 @@ import { bloodLabel, zodiacLabel } from "@/lib/personaLabels";
 import { RichText } from "@/components/RichText";
 import { PersonaAvatar, poseFromLambda } from "@/lib/personaAvatar";
 import { personaDescription } from "@/lib/personaDescription";
+import { ReportMarkdown } from "@/components/ReportMarkdown";
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -273,11 +274,8 @@ function SpecialMessage({ message }: { message: ChatMessage }) {
             <FileText size={15} />
             <span className="text-[13px] font-bold">토론 리포트</span>
           </div>
-          <div
-            className="px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap"
-            style={{ color: "var(--text-primary)" }}
-          >
-            {message.content}
+          <div className="px-4 py-3 text-[13.5px]" style={{ color: "var(--text-primary)" }}>
+            <ReportMarkdown content={message.content} />
           </div>
         </div>
       </div>

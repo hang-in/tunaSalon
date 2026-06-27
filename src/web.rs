@@ -320,6 +320,7 @@ fn save_room(store: &Option<RoomStore>, session: &LiveSession) {
             session.topics(),
             session.tick_count(),
             session.human_axes(),
+            session.report(),
         ) {
             eprintln!("[tunaSalon] rooms.db 저장 실패(비치명): {e}");
         }
@@ -606,11 +607,23 @@ fn run_engine(
                 }
                 EngineCmd::SetClientCount(count) => {
                     let was_paused = effective_paused(manual_paused, client_count, backend_paused);
+                    let prev = client_count;
                     client_count = count;
                     let paused = effective_paused(manual_paused, client_count, backend_paused);
                     if paused && !was_paused {
                         if session.cancel_pending_generation() {
                             dirty = true;
+                        }
+                    }
+                    // 새 클라이언트가 붙었고(0→1+) 결론 리포트가 있으면 다시 보여준다(재접속 재표시).
+                    if prev == 0 && count > 0 {
+                        if let Some(report) = session.report() {
+                            emit(
+                                &frame_tx,
+                                &ServerFrame::Report {
+                                    text: report.to_string(),
+                                },
+                            );
                         }
                     }
                     emit(
@@ -879,7 +892,10 @@ fn run_engine(
             awaiting_conclusion = false;
             dirty = true;
             // 메타 분석가 리포트(블로킹 ~수초, 방이 idle이라 허용). 실패하면 배너만.
+            // 생성한 리포트는 세션에 저장하고 rooms.db에 영속(재접속 재표시·로비 요약용).
             if let Some(report) = session.summarize_debate() {
+                session.set_report(Some(report.clone()));
+                save_room(&store, &session);
                 emit(&frame_tx, &ServerFrame::Report { text: report });
             }
             let paused = effective_paused(manual_paused, client_count, backend_paused);

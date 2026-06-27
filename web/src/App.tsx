@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@/hooks/useChat";
 import { Header } from "@/components/Header";
 import { ChatArea } from "@/components/ChatArea";
@@ -18,6 +18,29 @@ interface DebateRoom {
   summary?: string;
   /** 새 방 수동 구성 참가자 ["blood:mbti:zodiac:role", ...]. 비면 서버가 랜덤 3명 시딩. */
   personas?: string[];
+  /** 토론이 결론까지 닫혔는지. 로비 카드에 표시. */
+  concluded?: boolean;
+  /** 종료 리포트의 결론 요약(로비 카드 설명). */
+  reportSummary?: string;
+}
+
+/** 리포트 마크다운에서 '## 결론' 섹션을 뽑아 로비 카드용 한 줄 요약으로 만든다. */
+function summaryFromReport(report: string): string {
+  const lines = report.split("\n");
+  const idx = lines.findIndex((l) => /^#{1,6}\s*결론/.test(l.trim()));
+  const body: string[] = [];
+  if (idx >= 0) {
+    for (let i = idx + 1; i < lines.length; i++) {
+      const l = lines[i].trim();
+      if (/^#{1,6}\s/.test(l)) break;
+      if (l) body.push(l);
+    }
+  }
+  const text = (body.length ? body.join(" ") : report)
+    .replace(/[*_`#>-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 140 ? `${text.slice(0, 140)}…` : text;
 }
 
 /** 서버 /api/suggested-topics 응답: 분야별 추천 토론 주제. */
@@ -79,6 +102,8 @@ function saveRecentRooms(rooms: DebateRoom[]) {
 }
 
 function roomSummary(room: DebateRoom): string {
+  // 결론 난 방은 리포트 결론 요약을 보여준다.
+  if (room.reportSummary?.trim()) return room.reportSummary;
   // 제목(=주제)이 이미 카드 상단에 보이므로 설명은 주제를 다시 인용하지 않는다.
   // 저장된 summary는 random/custom 구분 용도로만 읽는다(주제 반복 방지).
   const isCustom = room.summary?.includes("직접 구성");
@@ -175,6 +200,20 @@ function App() {
     rememberRoom(room);
     setInRoom(true);
   }, [rememberRoom, resetChat]);
+
+  // 종료 리포트가 도착하면 그 방을 로비에서 '결론 남'으로 표시하고 리포트 결론을 요약으로 저장.
+  const processedReportRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeRoom) return;
+    const report = [...messages].reverse().find((m) => m.type === "report");
+    if (!report || processedReportRef.current === report.id) return;
+    processedReportRef.current = report.id;
+    rememberRoom({
+      ...activeRoom,
+      concluded: true,
+      reportSummary: summaryFromReport(report.content),
+    });
+  }, [messages, activeRoom, rememberRoom]);
 
   const resolveTopics = useCallback(() => {
     // 토론 주제는 콤마를 포함할 수 있으므로 쪼개지 않고 입력 전체를 한 주제로 둔다.
@@ -317,7 +356,17 @@ function App() {
                     }}
                   >
                     <div className="flex items-center justify-between gap-3 mb-3">
-                      <MessageSquareText size={18} className="text-[var(--accent-warm)] shrink-0" />
+                      <span className="flex items-center gap-2 min-w-0">
+                        <MessageSquareText size={18} className="text-[var(--accent-warm)] shrink-0" />
+                        {room.concluded && (
+                          <span
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
+                            style={{ background: "rgba(74, 222, 128, 0.12)", color: "#4ade80", border: "1px solid rgba(74, 222, 128, 0.25)" }}
+                          >
+                            결론 남
+                          </span>
+                        )}
+                      </span>
                       <button
                         onClick={() => void deleteRoom(room)}
                         className="p-1 rounded-md hover:bg-white/5 transition-colors"
