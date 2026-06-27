@@ -1,6 +1,6 @@
 ---
 type: handoff
-status: planned
+status: in_progress
 updated_at: 2026-06-27
 ---
 
@@ -24,7 +24,9 @@ updated_at: 2026-06-27
 - 고급 cloud 모델 2종 추가: `minimax-m3:cloud`, `deepseek-v4-pro:cloud`(`CLOUD_MODELS`/`MODEL_OPTIONS`).
 - 버그픽스: 언어(systemd `SALON_LANG=ko_KR.UTF-8`) / 중복 리포트 카드(state.reports[] 단일화) / 카드 정렬(transcript 끝) / **재진입 시 종료 토론 재개**(복원 순서 `set_report→set_topics→restore_history` — set_topics가 phase를 Opening으로 덮던 것, 회귀 테스트 2개 추가).
 
-> ⚠️ 마지막 픽스(`374394f`, 복원 순서)는 배포·회귀테스트 통과했으나 **사용자 최종 라이브 확인은 미완**. 다음 세션 시작 시 "종료 토론 방 재진입 → 발화 없이 리포트만" 한 번 확인할 것. 안 되면 거기부터.
+> ⚠️ [2026-06-27 진행] `374394f`는 라이브(web)에서 **실패** — main.rs factory 복원 순서만 고쳤고 web `run_engine`이 진입 시 `set_topics`를 재호출해 Concluded를 Opening으로 덮는 걸 놓침. `c7cdbc3` 재수정: `set_topics`가 `report`(종료 SSOT) 있으면 Concluded 생성 + `run_engine`이 복원방(history有)엔 `set_topics` 스킵 + 단위테스트 2개. **그러나 라이브 여전 재발화 보고** → restart 여부 / redis-bus 복원경로 / 오염방 미확인. **다음 세션 최우선 재조사** ([[debate-restore-rerun-bug]]).
+>
+> [2026-06-27 진행] 리팩토링 R1 3개 done(스냅샷 `docs/reference/refactoring-review-2026-06-27-web.md`, push됨): flow `measure_recent`(67770f9) / memory SQL헬퍼 `fts_or_match`·`sql_placeholders`(b6a7d6c) / web `build_state` 모듈추출+`From<ReportRecord>`(246490d). 전부 골든 byte-identical, 동작 무변경. 남은 R1(L2, 이익 작음)·R2/R3는 스냅샷 참조.
 
 ---
 
@@ -96,12 +98,13 @@ cargo run -- --headless --seed 42 --ticks 120 > /tmp/out.ndjson && diff /tmp/sal
 
 ## 5. 다음 세션 첫 프롬프트 (복붙)
 
-> tunaSalon 리팩토링 시작. `docs/plans/salon-refactoring.md` 읽었어.
-> ① dsp_cad_gcs 규율 문서(developmentConventions.md + refactoring_review_*.md + refactorBoundariesPlan)와
-> tunaSalon 기존 노트(refactoring-review-v9-snapshot.md)를 정독해.
-> ② 직전 픽스(재진입 종료 토론 재개, 374394f) 라이브 한 번 확인.
-> ③ god-file(live.rs/web.rs/memory.rs) 중심으로 진단 → P0/P1/P2 분류 → 리뷰 리포트(valid/회귀/이익 라벨).
-> ④ R1(안전·순수함수 추출) 후보부터 단계화. 빅뱅·무관정리 금지, golden 5/5 무손상 매 단계 확인.
-> 구현 위임은 Sonnet, Opus가 스펙·리뷰·검증.
+> tunaSalon 이어가기. `docs/plans/salon-refactoring.md` + 스냅샷 `docs/reference/refactoring-review-2026-06-27-web.md` 읽었어.
+> 진단·리뷰리포트·R1 3개(flow/memory/web)는 2026-06-27 done(§0 ⚠️). 다음 우선순위:
+> ① **종료 토론 재발화 버그 재조사**(최우선). `c7cdbc3` 수정했으나 라이브 여전 재발화.
+>    먼저 n100 restart 했는지 확인(안 했으면 c7cdbc3 미반영이 원인 — restart 후 재확인).
+>    restart 했는데도면: redis-bus 복원경로(`spawn_redis_command_reader`/event_subscriber) / 이미 발화 쌓인 오염 방 / main.rs factory 외 다른 복원 경로 조사. [[debate-restore-rerun-bug]]
+> ② 그 다음 R1 더(L2: extract_conclusion 이동/dead_code cfg, 이익 작음) 또는 R2 착수
+>    (스냅샷: per-tick decide_one_tick / LiveSession 책임분리 / hybrid recall leg / live_store). R2는 결정성·골든 철저, 별도 세션 권장.
+> 빅뱅·무관정리 금지, golden byte-identical 매 단계. 구현 위임 Sonnet, Opus가 스펙·리뷰·검증.
 
-> 메모리: [[refactoring-discipline]] [[homelab-deploy]] [[delegate-sonnet-not-codex]] [[mac-build-env]]
+> 메모리: [[debate-restore-rerun-bug]] [[refactoring-discipline]] [[homelab-deploy]] [[delegate-sonnet-not-codex]] [[mac-build-env]]
