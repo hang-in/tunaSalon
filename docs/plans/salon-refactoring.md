@@ -101,11 +101,12 @@ cargo run -- --headless --seed 42 --ticks 120 > /tmp/out.ndjson && diff /tmp/sal
 > tunaSalon 이어가기. `docs/plans/salon-refactoring.md` + 스냅샷 `docs/reference/refactoring-review-2026-06-27-web.md` 읽었어.
 > 2026-06-27 done(전부 라이브 배포·확인): 종료토론 재발화(c7cdbc3) + 로비 배지 서버권위(647a6a6)+깜빡임 재수정(29883a3) + R1 3개(flow/memory/web) + R2 W4(센티넬·persona_display_name, 5eae34c)·L4(리포트 debate::report 분리, a06b55e). 다음:
 > 2026-06-27 R2 추가 done: M1 안전부(participated_rooms/row_to_memory_event, 5a50b2a) · LiveSession 라벨(build_speaker_labels, 8800283).
-> **R3 (새 세션 — 전부 결정성/부수효과 민감, golden·recall 테스트 철저, 한 단위씩):**
-> ① per-tick decide_one_tick 통합 — driver↔live 중복. rng 소비 순서가 골든 불변식이라 최고 민감.
-> ② M1 leg SQL 통합 — BM25-only 1단계 전체 fetch ↔ hybrid 2단계 id-leg+per-id fetch 재구조화(recall rank/결정성).
-> ③ LiveSession 디스패치(worker/mpsc)·입력(human_focus) 모듈 분리 — 부수효과 얽힘.
+> **R3 — 2026-06-27 전부 done(Opus 직접 구현·검증, golden/recall fixture byte-identical):**
+> ① per-tick 결정적 코어 추출(5ce17eb) — rng-free 앞부분만 driver 헬퍼로 공유: `advance_intensities`(μ갱신→감쇠→combined) / `filter_self_repeat` / `suppress_chosen` 재사용. **decide_one_tick 전체 통합은 보류** — live 화자선택(forced/summary/closing)이 rng 소비를 분기별로 건너뛰어 골든 불변식 위험. 골든 5/5 byte-identical.
+> ② M1 BM25 leg 통합(b397b78) — BM25-only를 1단계 full-row → 2단계(id-leg+fetch)로 재구조화해 hybrid와 통일: `bm25_leg_ids` / `fetch_events_by_ids` 공유. bm25 정렬·tie-break 동일 → recall fixture(scenario 6케이스×양 빌드) byte-identical 검증.
+> ③ LiveSession 디스패치 캡슐화(e8880d9) — `GenerationWorker`(job_tx/result_rx/worker + spawn/dispatch/try_recv/shutdown)로 transport 분리. **입력(human_focus) 분리는 보류** — last_human_msg/human_focus/forced_next_speaker가 submit_human·tick 전반에 얽혀(field 이동 시 big-bang) 가치 대비 위험 과다. transport 테스트 통과 + 골든 무손상.
 > M4(live_store 가드)는 보류 — 안전 수정 없음(pub 필수 + cfg(not(test)) web 테스트 충돌), 스냅샷 참조.
-> 빅뱅·무관정리 금지, golden byte-identical 매 단계. 구현 위임 Sonnet, Opus가 스펙·리뷰·검증.
+>
+> **다음 후보(미착수)**: ③의 입력 모듈 분리(human_focus) — struct 분해 빅뱅이라 가치 입증 후. god-file 책임 분해(live.rs/web.rs/memory.rs, §3). live_store side-effect 격리(§3, pub 대안 필요).
 
 > 메모리: [[refactoring-discipline]] [[homelab-deploy]] [[delegate-sonnet-not-codex]] [[mac-build-env]]
