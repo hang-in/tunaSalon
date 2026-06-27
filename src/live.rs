@@ -120,6 +120,83 @@ type Job = (
 /// 워커가 돌려보내는 결과: (epoch, placeholder_idx, generated_text).
 type Result = (u64, usize, Option<String>);
 
+/// LLM 생성 워커의 transport(mpsc 채널 + 워커 스레드)를 캡슐화한다(R3③).
+///
+/// LiveSession에서 디스패치(worker/mpsc) 관심사를 분리한다. 엔진 결정성과 무관 —
+/// 생성은 화자선택(rng 소비) 이후에만 일어나므로 골든 불변. job_tx/result_rx/worker
+/// 핸들의 수명·종료를 한곳에서 관리한다.
+struct GenerationWorker {
+    /// 워커로 생성 job을 보내는 송신단. shutdown/Drop 시 닫혀 워커가 종료된다.
+    job_tx: Option<Sender<Job>>,
+    /// 워커에서 결과를 받는 수신단(논블로킹 try_recv).
+    result_rx: Receiver<Result>,
+    /// 워커 스레드 JoinHandle. shutdown 시 join한다.
+    handle: Option<JoinHandle<()>>,
+}
+
+impl GenerationWorker {
+    /// 채널을 만들고 생성 워커 스레드를 spawn한다. `pool`은 워커가 Arc로 소유한다.
+    ///
+    /// 워커 루프: job_rx.recv()가 Err(job_tx drop)면 종료. route Some이면 generate_on
+    /// 우선·실패 시 generate_one 폴백, route None이면 generate_one(기존 동작과 동일).
+    fn spawn(pool: Arc<BackendPool>) -> Self {
+        let (job_tx, job_rx) = mpsc::channel::<Job>();
+        let (result_tx, result_rx) = mpsc::channel::<Result>();
+        let handle = std::thread::spawn(move || {
+            while let Ok((epoch, idx, speaker, history, tick, recall, route)) = job_rx.recv() {
+                let text = if let Some((backend, ref prompt)) = route {
+                    pool.generate_on(
+                        &backend,
+                        &speaker,
+                        &history,
+                        tick,
+                        recall.as_deref(),
+                        Some(prompt),
+                    )
+                    .or_else(|| pool.generate_one(&speaker, &history, tick, recall.as_deref()))
+                } else {
+                    pool.generate_one(&speaker, &history, tick, recall.as_deref())
+                };
+                // 수신단이 닫혔으면 종료.
+                if result_tx.send((epoch, idx, text)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            job_tx: Some(job_tx),
+            result_rx,
+            handle: Some(handle),
+        }
+    }
+
+    /// job을 워커로 보낸다. 채널이 살아있으면(아직 shutdown 안 됨) true.
+    /// send 오류(워커 비정상 종료)는 조용히 무시 — 기존 동작 보존(pending은 호출부가 설정).
+    fn dispatch(&self, job: Job) -> bool {
+        if let Some(ref tx) = self.job_tx {
+            let _ = tx.send(job);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 생성 결과를 논블로킹으로 받는다. 없으면(Empty/Disconnected) None.
+    fn try_recv(&self) -> Option<Result> {
+        self.result_rx.try_recv().ok()
+    }
+
+    /// job_tx를 닫아 워커 루프를 종료시키고 join한다. 이중 호출 안전.
+    fn shutdown(&mut self) {
+        // job_tx drop → 워커 recv가 Err 반환 → 루프 탈출.
+        drop(self.job_tx.take());
+        // 워커 join (hang 없음: job_tx drop 후 워커는 루프 탈출).
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 /// 라이브 세션 코어.
 ///
 /// 엔진 틱 + 사람 입력 + 논블로킹 LLM 생성을 결합한다.
@@ -136,13 +213,9 @@ pub struct LiveSession {
     // Arc 카운트를 유지해 pool이 세션 수명 동안 살아있도록 한다.
     #[allow(dead_code)]
     pool: Arc<BackendPool>,
-    /// 워커로 생성 job을 보내는 송신단.
-    /// Drop 시 job_tx가 닫혀 워커 스레드가 종료된다.
-    job_tx: Option<Sender<Job>>,
-    /// 워커에서 결과를 받는 수신단(논블로킹 try_recv).
-    result_rx: Receiver<Result>,
-    /// 워커 스레드 JoinHandle. shutdown 또는 Drop 시 join한다.
-    worker: Option<JoinHandle<()>>,
+    /// 생성 워커 transport(mpsc 채널 + 워커 스레드). 디스패치 관심사 캡슐화(R3③).
+    /// Drop 시 dispatcher.shutdown()으로 워커가 종료된다.
+    dispatcher: GenerationWorker,
     /// 현재 in-flight 생성의 placeholder Event 인덱스.
     /// None이면 생성 대기 없음; Some(idx)이면 history[idx].content가 아직 None.
     pending: Option<usize>,
@@ -268,40 +341,9 @@ impl LiveSession {
         store: MemoryStore,
         room_id: impl Into<String>,
     ) -> Self {
-        let (job_tx, job_rx) = mpsc::channel::<Job>();
-        let (result_tx, result_rx) = mpsc::channel::<Result>();
-
-        // 워커 스레드: Arc<BackendPool>를 공유해 &self 경로로 generate_one/generate_on 호출.
-        let pool_clone = Arc::clone(&pool);
-        let worker = std::thread::spawn(move || {
-            // job_rx.recv()가 Err를 반환하면(job_tx drop) 루프 종료.
-            while let Ok((epoch, idx, speaker, history, tick, recall, route)) = job_rx.recv() {
-                // recall: Option<String> → as_deref()로 Option<&str> 변환.
-                let text = if let Some((backend, ref prompt)) = route {
-                    // persona_meta 있는 경우: generate_on 우선, 실패 시 generate_one 폴백.
-                    pool_clone
-                        .generate_on(
-                            &backend,
-                            &speaker,
-                            &history,
-                            tick,
-                            recall.as_deref(),
-                            Some(prompt),
-                        )
-                        .or_else(|| {
-                            pool_clone.generate_one(&speaker, &history, tick, recall.as_deref())
-                        })
-                } else {
-                    // persona_meta 없는 경우: 기존과 정확히 동일하게 generate_one.
-                    pool_clone.generate_one(&speaker, &history, tick, recall.as_deref())
-                };
-                // result_tx 오류(수신단 닫힘)는 무시하고 종료.
-                if result_tx.send((epoch, idx, text)).is_err() {
-                    break;
-                }
-            }
-            // 워커 정상 종료.
-        });
+        // 생성 워커 transport: Arc<BackendPool> 클론을 워커가 소유(R3③).
+        // pool 원본은 아래 LiveSession.pool에 보관해 세션 수명 동안 Arc 카운트를 유지한다.
+        let dispatcher = GenerationWorker::spawn(Arc::clone(&pool));
 
         // 초기 엔진 상태: driver::run의 initial_state와 동일.
         let intensities = personas
@@ -343,9 +385,7 @@ impl LiveSession {
             human,
             meta,
             pool,
-            job_tx: Some(job_tx),
-            result_rx,
-            worker: Some(worker),
+            dispatcher,
             pending: None,
             generation_epoch: 0,
             tick_count: 0,
@@ -709,17 +749,17 @@ impl LiveSession {
             .get(&chosen)
             .map(|m| (m.backend.clone(), m.system_prompt.clone()));
 
-        // 워커로 job 전송. 채널이 닫혔으면(워커 비정상 종료) 조용히 무시.
-        if let Some(ref tx) = self.job_tx {
-            let _ = tx.send((
-                self.generation_epoch,
-                placeholder_idx,
-                chosen.clone(),
-                history_snapshot,
-                tick,
-                recall,
-                route,
-            ));
+        // 워커로 job 전송(R3③ dispatcher). 채널 살아있으면 pending 설정.
+        let dispatched = self.dispatcher.dispatch((
+            self.generation_epoch,
+            placeholder_idx,
+            chosen.clone(),
+            history_snapshot,
+            tick,
+            recall,
+            route,
+        ));
+        if dispatched {
             self.pending = Some(placeholder_idx);
         }
 
@@ -747,8 +787,8 @@ impl LiveSession {
     /// content가 Some이면 회상 스토어에 기록한다(task-41).
     /// 결과가 아직 없으면 `None` 반환(즉시).
     pub fn poll_generation(&mut self) -> Option<Event> {
-        match self.result_rx.try_recv() {
-            Ok((epoch, idx, text)) => {
+        match self.dispatcher.try_recv() {
+            Some((epoch, idx, text)) => {
                 if epoch != self.generation_epoch {
                     return None;
                 }
@@ -777,7 +817,7 @@ impl LiveSession {
                 }
                 ev
             }
-            Err(_) => None,
+            None => None,
         }
     }
 
@@ -808,14 +848,10 @@ impl LiveSession {
 
     /// 워커 스레드를 명시적으로 종료하고 join한다.
     ///
-    /// Drop에서도 호출된다. 이중 호출 안전(job_tx/worker는 Option).
+    /// Drop에서도 호출된다. 이중 호출 안전(dispatcher의 job_tx/handle은 Option).
     pub fn shutdown(&mut self) {
-        // job_tx를 drop해 워커 recv가 Err를 반환하도록 한다.
-        drop(self.job_tx.take());
-        // 워커 스레드 join (hang 없음: job_tx drop 후 워커는 루프 탈출).
-        if let Some(handle) = self.worker.take() {
-            let _ = handle.join();
-        }
+        // transport 종료를 dispatcher에 위임(R3③): job_tx drop → 워커 루프 탈출 → join.
+        self.dispatcher.shutdown();
     }
 
     // -------------------------------------------------------------------------
