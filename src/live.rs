@@ -48,6 +48,26 @@ pub fn persona_display_name(personas: &[crate::model::Persona], speaker: &str) -
         .unwrap_or_else(|| speaker.to_string())
 }
 
+/// 화자 라벨 집합(소문자): persona 이름·id·이름의 각 단어 + human_id + "나" + 진행자.
+/// 생성 결과 앞에 모델이 붙이는 `이름:` echo 제거 매칭용. 생성자(with_store)와 rebuild 가 공유.
+fn build_speaker_labels(
+    personas: &[crate::model::Persona],
+    human_id: &str,
+) -> std::collections::BTreeSet<String> {
+    let mut labels = std::collections::BTreeSet::new();
+    for p in personas {
+        labels.insert(p.name.to_lowercase());
+        labels.insert(p.id.to_lowercase());
+        for w in p.name.split_whitespace() {
+            labels.insert(w.to_lowercase());
+        }
+    }
+    labels.insert(human_id.to_lowercase());
+    labels.insert("나".to_string());
+    labels.insert(MODERATOR_SPEAKER.to_string());
+    labels
+}
+
 /// `tick()` 반환값: 이번 틱에서 엔진이 무엇을 했는지.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TickOutcome {
@@ -313,18 +333,7 @@ impl LiveSession {
 
         // 화자 라벨(소문자): 페르소나 이름·id + 이름의 각 단어 + 사람 id + "나" + "(진행)".
         // 생성 결과 앞에 모델이 붙이는 `이름:`/`나:` echo를 제거할 때 매칭에 쓴다.
-        let mut speaker_labels: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
-        for p in &personas {
-            speaker_labels.insert(p.name.to_lowercase());
-            speaker_labels.insert(p.id.to_lowercase());
-            for w in p.name.split_whitespace() {
-                speaker_labels.insert(w.to_lowercase());
-            }
-        }
-        speaker_labels.insert(human_id.to_lowercase());
-        speaker_labels.insert("나".to_string());
-        speaker_labels.insert(MODERATOR_SPEAKER.to_string());
+        let speaker_labels = build_speaker_labels(&personas, &human_id);
 
         Self {
             config,
@@ -1181,18 +1190,7 @@ impl LiveSession {
     /// remove_persona 후에 호출해 공유 단어 라벨이 잘못 제거되지 않게 한다.
     /// with_store의 초기 라벨 구성 코드와 동일 규칙을 따른다.
     fn rebuild_speaker_labels(&mut self) {
-        let mut labels: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for p in &self.personas {
-            labels.insert(p.name.to_lowercase());
-            labels.insert(p.id.to_lowercase());
-            for w in p.name.split_whitespace() {
-                labels.insert(w.to_lowercase());
-            }
-        }
-        labels.insert(self.human_id.to_lowercase());
-        labels.insert("나".to_string());
-        labels.insert(MODERATOR_SPEAKER.to_string());
-        self.speaker_labels = labels;
+        self.speaker_labels = build_speaker_labels(&self.personas, &self.human_id);
     }
 
     /// personas 현재 목록과 persona_meta modifier로 config.alpha를 재계산한다.
