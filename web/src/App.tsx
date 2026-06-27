@@ -216,6 +216,48 @@ function App() {
     });
   }, [messages, activeRoom, rememberRoom]);
 
+  // 로비 진입 시 서버에서 각 방의 concluded 상태를 동기화한다(서버를 배지 권위로).
+  // 의존성: [inRoom] 만 — recentRooms 를 넣으면 setRecentRooms 재트리거 → 무한루프.
+  useEffect(() => {
+    if (inRoom) return;
+    let cancelled = false;
+
+    const rooms = readRecentRooms();
+    if (rooms.length === 0) return;
+
+    const updates = new Map<string, DebateRoom>();
+
+    Promise.all(
+      rooms.map(async (room) => {
+        try {
+          const res = await fetch(`/api/rooms/${encodeURIComponent(room.id)}/report`);
+          if (!res.ok || cancelled) return;
+          const data = (await res.json()) as { concluded: boolean; summary: string };
+          if (data.concluded) {
+            updates.set(room.id, {
+              ...room,
+              concluded: true,
+              reportSummary: data.summary || room.reportSummary,
+            });
+          }
+        } catch {
+          // 네트워크 실패: 기존 상태 유지
+        }
+      })
+    ).then(() => {
+      if (cancelled || updates.size === 0) return;
+      setRecentRooms((prev) => {
+        const next = prev.map((r) => updates.get(r.id) ?? r);
+        saveRecentRooms(next);
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inRoom]);
+
   const resolveTopics = useCallback(() => {
     // 토론 주제는 콤마를 포함할 수 있으므로 쪼개지 않고 입력 전체를 한 주제로 둔다.
     const source = topicDraft.trim() || topicPlaceholder.trim();

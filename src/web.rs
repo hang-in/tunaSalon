@@ -68,6 +68,13 @@ impl From<crate::roomstore::ReportRecord> for ReportDto {
     }
 }
 
+/// GET /api/rooms/{room_id}/report 응답 DTO.
+#[derive(Serialize)]
+struct RoomReportResponse {
+    concluded: bool,
+    summary: String,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 enum ServerFrame {
@@ -1448,6 +1455,21 @@ pub fn serve_multi(
             axum::Json(topics)
         }
 
+        // 방 리포트 조회 — 서버가 배지 권위. concluded=true 면 로비 카드에 배지 표시.
+        async fn room_report_handler(
+            Path(raw_room_id): Path<String>,
+            AxumState(st): AxumState<MultiAppState>,
+        ) -> impl IntoResponse {
+            let room_id = normalize_room_id(&raw_room_id, &st.default_room_id);
+            let reports = RoomStore::default_rooms_db_path()
+                .and_then(|p| RoomStore::open(&p).ok())
+                .and_then(|store| store.load_reports(&room_id).ok())
+                .unwrap_or_default();
+            let concluded = !reports.is_empty();
+            let summary = reports.last().map(|r| r.conclusion.clone()).unwrap_or_default();
+            axum::Json(RoomReportResponse { concluded, summary })
+        }
+
         let dist_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist");
         let index_file = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist/index.html");
         if !std::path::Path::new(index_file).exists() {
@@ -1465,6 +1487,7 @@ pub fn serve_multi(
         let app = Router::new()
             .route("/ws", get(ws_handler))
             .route("/api/rooms/{room_id}", delete(delete_room_handler))
+            .route("/api/rooms/{room_id}/report", get(room_report_handler))
             .route("/api/suggested-topics", get(suggested_topics_handler))
             .fallback_service(serve_dir)
             .with_state(app_state);
