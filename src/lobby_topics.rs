@@ -176,12 +176,32 @@ fn parse_topics_json(raw: &str) -> Option<Vec<CategoryTopics>> {
     }
 }
 
+/// 토픽 비교용 정규화: 영숫자/한글만 남기고 소문자화(공백·문장부호·물음표 무시).
+fn norm_topic(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
+}
+
+/// 생성된 주제 중 최근 추천(avoid)과 정규화 일치하는 것을 제거한다(정확 중복 안전망).
+/// 비슷한 변형은 프롬프트의 회피 지시가 1차로 거른다.
+fn filter_recent(groups: Vec<CategoryTopics>, avoid: &[String]) -> Vec<CategoryTopics> {
+    let recent_norm: std::collections::HashSet<String> =
+        avoid.iter().map(|s| norm_topic(s)).collect();
+    groups
+        .into_iter()
+        .map(|mut c| {
+            c.topics.retain(|t| !recent_norm.contains(&norm_topic(t)));
+            c
+        })
+        .filter(|c| !c.topics.is_empty())
+        .collect()
+}
+
 /// 분야별 추천 토론 주제를 생성한다(블로킹 — 백그라운드/spawn_blocking에서 호출).
 /// 키가 없거나 검색/생성/파싱이 실패하면 None.
 ///
-/// `cycle`은 갱신 회차. 카테고리별 쿼리 풀과 "재미·취향" 앵글을 회차마다 회전시켜
-/// 추천 주제가 매번 비슷하게 굳지 않게 한다(헤드라인·생성 다양화).
-pub fn generate_suggested_topics(cycle: u64) -> Option<Vec<CategoryTopics>> {
+/// `cycle`은 갱신 회차(쿼리 풀·앵글 회전). `avoid`는 최근 이미 추천한 주제로,
+/// 프롬프트에 "다시 만들지 마라"로 주입 + 출력에서 정규화 중복 제거 → 같은 주제 반복 방지.
+pub fn generate_suggested_topics(cycle: u64, avoid: &[String]) -> Option<Vec<CategoryTopics>> {
     let key = resolve_api_key()?;
     let mut blocks = Vec::new();
     for (cat, queries) in CATEGORIES {
@@ -194,6 +214,16 @@ pub fn generate_suggested_topics(cycle: u64) -> Option<Vec<CategoryTopics>> {
         return None;
     }
     let casual_angle = CASUAL_ANGLES[(cycle as usize) % CASUAL_ANGLES.len()];
+    // 최근 추천한 주제(최대 30개)를 프롬프트에 명시해 재생성을 막는다.
+    let avoid_block = if avoid.is_empty() {
+        String::new()
+    } else {
+        let recent: Vec<&str> = avoid.iter().rev().take(30).map(|s| s.as_str()).collect();
+        format!(
+            "\n\n# 최근에 이미 추천한 주제다. 이 주제들과 같거나 살짝 바꾼 변형은 절대 만들지 마라(완전히 다른 주제로):\n- {}",
+            recent.join("\n- ")
+        )
+    };
     let prompt = format!(
         "다음은 분야별 최근 뉴스 헤드라인이다. 각 분야마다 찬반·조건이 갈리는 흥미로운 토론 주제를 \
          정확히 2~3개씩 만들어라. 각 주제는 한국어 한 문장 질문형으로 \
@@ -201,12 +231,50 @@ pub fn generate_suggested_topics(cycle: u64) -> Option<Vec<CategoryTopics>> {
          피하고, 가치가 충돌하는 주제로. 진부하거나 자주 나오는 뻔한 주제는 피하고 새로운 각도로. \
          추가로 검색 결과와 무관하게 \"재미·취향\" 분야를 하나 더 만들어, 진지한 정책이 아니라 가볍고 \
          호불호가 분명히 갈리는 일상 논쟁 주제 2~3개를 넣어라. 이번엔 특히 '{casual_angle}' 쪽으로, \
-         유쾌하게 다툴 만한 것으로. 반드시 아래 JSON 배열만 출력하고 다른 텍스트는 쓰지 마라:\n\
-         [{{\"category\":\"분야명\",\"topics\":[\"주제1\",\"주제2\"]}}]\n\n{}",
+         유쾌하게 다툴 만한 것으로(부먹/찍먹·민초 같은 흔한 건 피하라). \
+         반드시 아래 JSON 배열만 출력하고 다른 텍스트는 쓰지 마라:\n\
+         [{{\"category\":\"분야명\",\"topics\":[\"주제1\",\"주제2\"]}}]{avoid_block}\n\n{}",
         blocks.join("\n\n")
     );
     let raw = gemma_generate(&prompt)?;
-    parse_topics_json(&raw)
+    let parsed = parse_topics_json(&raw)?;
+    let filtered = filter_recent(parsed, avoid);
+    if filtered.is_empty() {
+        None
+    } else {
+        Some(filtered)
+    }
+}
+
+/// 최근 추천 주제 영속 파일 경로. `$SALON_TOPICS_HISTORY` → `$HOME/.local/share/tunaSalon/recent_topics.json`.
+fn recent_topics_path() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("SALON_TOPICS_HISTORY") {
+        if !p.trim().is_empty() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    let home = std::env::var("HOME").ok()?;
+    Some(std::path::PathBuf::from(home).join(".local/share/tunaSalon/recent_topics.json"))
+}
+
+/// 최근 추천 주제를 로드한다(재시작에도 중복 회피가 살아남게). 없으면 빈 Vec.
+pub fn load_recent() -> Vec<String> {
+    recent_topics_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 최근 추천 주제를 저장한다(비치명: 실패해도 무시).
+pub fn save_recent(recent: &[String]) {
+    if let Some(p) = recent_topics_path() {
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string(recent) {
+            let _ = std::fs::write(p, json);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -227,6 +295,36 @@ mod tests {
         assert!(parse_topics_json("no json here").is_none());
         assert!(parse_topics_json("[{\"category\":\"\",\"topics\":[\"x\"]}]").is_none());
         assert!(parse_topics_json("[{\"category\":\"c\",\"topics\":[]}]").is_none());
+    }
+
+    #[test]
+    fn filter_recent_drops_normalized_duplicates() {
+        let groups = vec![CategoryTopics {
+            category: "재미·취향".to_string(),
+            topics: vec![
+                "부먹 vs 찍먹, 진리는?".to_string(), // avoid에 정규화 일치 → 제거
+                "민초는 음식인가?".to_string(),       // 유지
+                "탕수육 소스 논쟁은 끝났을까?".to_string(), // 유지(신규)
+            ],
+        }];
+        // 공백·문장부호가 달라도 정규화로 같은 주제는 제거되어야 한다.
+        let avoid = vec!["부먹vs찍먹 진리는".to_string()];
+        let out = filter_recent(groups, &avoid);
+        assert_eq!(out.len(), 1);
+        let topics = &out[0].topics;
+        assert_eq!(topics.len(), 2, "부먹/찍먹 중복 1개 제거");
+        assert!(!topics.iter().any(|t| t.contains("부먹")));
+        assert!(topics.iter().any(|t| t.contains("탕수육")));
+    }
+
+    #[test]
+    fn filter_recent_drops_category_when_all_duplicate() {
+        let groups = vec![CategoryTopics {
+            category: "재미·취향".to_string(),
+            topics: vec!["민초는 음식인가?".to_string()],
+        }];
+        let avoid = vec!["민초는 음식인가".to_string()];
+        assert!(filter_recent(groups, &avoid).is_empty(), "전부 중복이면 빈 결과");
     }
 
     #[test]

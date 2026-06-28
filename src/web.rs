@@ -1258,15 +1258,29 @@ pub fn serve_multi(
             let cache = topics_cache.clone();
             tokio::spawn(async move {
                 let mut cycle: u64 = 0;
+                // 최근 추천 주제(영속). 재시작에도 살아남아 며칠 전 본 주제가 다시 안 뜨게 한다.
+                let mut recent: Vec<String> = crate::lobby_topics::load_recent();
                 loop {
+                    let avoid = recent.clone();
                     let generated = tokio::task::spawn_blocking(
-                        move || crate::lobby_topics::generate_suggested_topics(cycle),
+                        move || crate::lobby_topics::generate_suggested_topics(cycle, &avoid),
                     )
                     .await
                     .ok()
                     .flatten();
                     match generated {
                         Some(topics) => {
+                            // 새 주제를 최근 목록에 누적(최대 60개) + 영속 → 다음 회차/재시작 중복 회피.
+                            for c in &topics {
+                                for t in &c.topics {
+                                    recent.push(t.clone());
+                                }
+                            }
+                            if recent.len() > 60 {
+                                let drop = recent.len() - 60;
+                                recent.drain(0..drop);
+                            }
+                            crate::lobby_topics::save_recent(&recent);
                             eprintln!("[tunaSalon] 로비 추천 주제 {} 분야 생성", topics.len());
                             *cache.lock().await = Some(topics);
                         }
