@@ -1121,7 +1121,16 @@ impl LiveSession {
         };
 
         let topic = self.topics.join(", ");
-        let prompt = crate::debate::report::build_debrief_prompt(&topic, past_conclusions);
+        // 실제 발언한 화자 명단(표시 라벨, 등장 순서·중복 제거). 사람('나')도 발언했으면 포함됨.
+        // 프롬프트에 명시해 "참가자 입장"이 조용한 참가자/사람을 빠뜨리지 않게 한다.
+        let mut participants: Vec<String> = Vec::new();
+        for e in &transcript {
+            if !participants.contains(&e.speaker) {
+                participants.push(e.speaker.clone());
+            }
+        }
+        let prompt =
+            crate::debate::report::build_debrief_prompt(&topic, past_conclusions, &participants);
 
         self.pool.generate_on(
             backend,

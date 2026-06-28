@@ -7,9 +7,13 @@
 ///
 /// - `topic`: 토론 주제 문자열 (self.topics.join(", ") 결과).
 /// - `past_conclusions`: 이전 라운드 결론 슬라이스. 비었으면 past_context 섹션 없음.
-///
-/// 반환값은 live.rs `summarize_debate` 내 기존 `prompt` 변수와 byte 동일.
-pub fn build_debrief_prompt(topic: &str, past_conclusions: &[String]) -> String {
+/// - `participants`: 실제 발언한 화자 명단(사람 '나' 포함 가능). 결론의 "참가자 입장"이
+///   조용한 참가자/사람을 빠뜨리지 않도록 프롬프트에 전원 명시한다.
+pub fn build_debrief_prompt(
+    topic: &str,
+    past_conclusions: &[String],
+    participants: &[String],
+) -> String {
     let past_context = if past_conclusions.is_empty() {
         String::new()
     } else {
@@ -23,6 +27,16 @@ pub fn build_debrief_prompt(topic: &str, past_conclusions: &[String]) -> String 
             items.join("\n")
         )
     };
+    // 참가자 입장 섹션 지시: 명단이 있으면 전원 각각 한 줄, 없으면 일반 지시.
+    let stance_directive = if participants.is_empty() {
+        "(각 참가자마다 `- **닉네임**: 핵심 주장` 형식 한 줄씩.)".to_string()
+    } else {
+        format!(
+            "(참가자: {}. 위 참가자 전원 각각의 입장을 빠짐없이 `- **닉네임**: 핵심 주장` 형식으로 \
+             한 줄씩 정리하라. 발언이 적었던 참가자나 사람('나')도 한 명도 빼지 말고 반드시 포함하라.)",
+            participants.join(", ")
+        )
+    };
     format!(
         "{past_context}You are a neutral debate analyst. The discussion above is a FINISHED debate on the topic \"{topic}\". \
          Write a DEBRIEF REPORT in Korean using GitHub-flavored MARKDOWN - this is a report document, NOT a chat reply, \
@@ -33,13 +47,14 @@ pub fn build_debrief_prompt(topic: &str, past_conclusions: &[String]) -> String 
          ## 주제\n\
          (한 줄.)\n\
          ## 참가자 입장\n\
-         (각 참가자마다 `- **닉네임**: 핵심 주장` 형식 한 줄씩.)\n\
+         {stance_directive}\n\
          ## 합의점\n\
          (동의한 지점. 없으면 '뚜렷한 합의 없음'.)\n\
          ## 끝까지 갈린 지점\n\
          (합의되지 않은 핵심 쟁점.)\n\
          Stay objective, do not take a side, do not invent new arguments. Use markdown headings, bold, and bullet lists. Korean only.",
-        topic = topic
+        topic = topic,
+        stance_directive = stance_directive
     )
 }
 
