@@ -1,6 +1,6 @@
 //! 토론 리포트 생성의 순수 부분: 프롬프트 빌드 + 결론 추출.
 //!
-//! 네트워크·LLM 호출 없음 — 순수 문자열 변환만. live.rs `summarize_debate`에서
+//! 네트워크·LLM 호출 없음 - 순수 문자열 변환만. live.rs `summarize_debate`에서
 //! 분리(R2 L4). 반환값은 live.rs 기존 코드와 byte 동일.
 
 /// 메타 분석가 debrief 프롬프트를 빌드한다.
@@ -25,11 +25,11 @@ pub fn build_debrief_prompt(topic: &str, past_conclusions: &[String]) -> String 
     };
     format!(
         "{past_context}You are a neutral debate analyst. The discussion above is a FINISHED debate on the topic \"{topic}\". \
-         Write a DEBRIEF REPORT in Korean using GitHub-flavored MARKDOWN — this is a report document, NOT a chat reply, \
+         Write a DEBRIEF REPORT in Korean using GitHub-flavored MARKDOWN - this is a report document, NOT a chat reply, \
          so do not address anyone or continue the debate. Lead with the conclusion (두괄식): the report MUST start with the \
          '## 결론' section. Use exactly these sections in this order:\n\
          ## 결론\n\
-         (2-3 문장: 한 줄 핵심 결론 먼저 — 무엇으로 귀결됐는지 또는 끝내 갈렸는지, 가장 설득력 있던 논지.)\n\
+         (2-3 문장: 한 줄 핵심 결론 먼저 - 무엇으로 귀결됐는지 또는 끝내 갈렸는지, 가장 설득력 있던 논지.)\n\
          ## 주제\n\
          (한 줄.)\n\
          ## 참가자 입장\n\

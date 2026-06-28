@@ -114,7 +114,7 @@ impl PhaseController {
         self.utterances_in_phase = 0;
     }
 
-    /// 종료 상태로 복원한다(이미 끝난 토론의 재접속 — dispatch 중단, 리포트만 표시).
+    /// 종료 상태로 복원한다(이미 끝난 토론의 재접속 - dispatch 중단, 리포트만 표시).
     pub fn mark_concluded(&mut self) {
         self.phase = DebatePhase::Concluded;
         self.utterances_in_phase = 0;

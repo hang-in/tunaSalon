@@ -96,7 +96,7 @@ impl DebatePlan {
             )
         };
         format!(
-            "[토론] 이 쟁점은 {} 성격입니다 — {}{}",
+            "[토론] 이 쟁점은 {} 성격입니다 - {}{}",
             self.mode.label(),
             self.mode.instruction(),
             fault
@@ -104,7 +104,7 @@ impl DebatePlan {
     }
 }
 
-/// 모드별 키워드. (모드, 우선순위 순서대로 나열 — 동점 tie-break에 사용)
+/// 모드별 키워드. (모드, 우선순위 순서대로 나열 - 동점 tie-break에 사용)
 /// 키워드는 공백 제거 없이 원문 substring 매칭.
 fn mode_keywords() -> [(DebateMode, &'static [&'static str]); 7] {
     [
@@ -197,7 +197,7 @@ fn mode_template(mode: DebateMode, topic: &str) -> (String, String, Vec<String>)
         ),
         DebateMode::CasualBanter => (
             format!("'{topic}'! 진지할 거 없어, 반말로 가볍게 가자. 각자 취향 딱 정하고 웃긴 근거로 우겨봐."),
-            "결론은 안 나도 돼 — 누가 더 재밌고 설득력 있게 우기느냐가 전부.".to_string(),
+            "결론은 안 나도 돼 - 누가 더 재밌고 설득력 있게 우기느냐가 전부.".to_string(),
             v(&["내 취향 vs 네 취향", "경험담 vs 우김", "진지충 금지"]),
         ),
     }

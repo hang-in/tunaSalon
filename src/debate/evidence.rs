@@ -1,7 +1,7 @@
 //! 루프 차단용 twist/evidence card(순수). 토론이 고착·과수렴하면 새 국면을 1장 투입한다.
 //!
 //! 모드별 카드 풀에서 결정적으로 고른다(rng 무소비). 토픽별 실데이터 카드(COMPAS 등)는
-//! 후속(토픽 카드 데이터 필요) — Stage E.1은 모드 수준의 반전 프롬프트로 충분히 흔든다.
+//! 후속(토픽 카드 데이터 필요) - Stage E.1은 모드 수준의 반전 프롬프트로 충분히 흔든다.
 //! history_snapshot(복제본)에만 주입되어 state/golden 불변.
 
 use super::plan::DebateMode;
