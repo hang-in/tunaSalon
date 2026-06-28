@@ -5,6 +5,7 @@ import { PersonaAvatar, personaColorSet } from "@/lib/personaAvatar";
 import { personaDescription, personaTagline } from "@/lib/personaDescription";
 import { bloodLabel, zodiacLabel } from "@/lib/personaLabels";
 import { ReportMarkdown } from "@/components/ReportMarkdown";
+import { RichText } from "@/components/RichText";
 
 interface ShareAxes {
   blood: string;
@@ -67,7 +68,7 @@ export function ShareViewPage() {
   return (
     <div className="h-[100dvh] w-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
       <main className="h-full overflow-y-auto">
-        <div className="mx-auto w-full max-w-2xl px-4 py-6" style={{ color: "var(--text-primary)" }}>
+        <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 py-6" style={{ color: "var(--text-primary)" }}>
           {state === "loading" && (
             <div className="flex items-center justify-center gap-2 py-20 text-[var(--text-secondary)]">
               <Loader2 size={18} className="animate-spin" />
@@ -101,6 +102,8 @@ function ShareBody({ data }: { data: ShareData }) {
     return "var(--text-secondary)";
   };
   const isHuman = (speaker: string) => !data.participants.some((p) => p.id === speaker);
+  // 메시지 내 닉네임 멘션 색칠용(메인 채팅과 동일). RichText가 **굵게**도 렌더.
+  const mentions = data.participants.map((p) => ({ name: p.name, color: colorOf(p.id) }));
 
   return (
     <>
@@ -177,7 +180,7 @@ function ShareBody({ data }: { data: ShareData }) {
                 {m.name}
               </span>
               <div
-                className={`max-w-[85%] px-4 py-2.5 text-[15px] leading-relaxed ${
+                className={`max-w-[92%] px-4 py-2.5 text-[15px] leading-relaxed ${
                   human ? "rounded-2xl rounded-br-sm" : "rounded-2xl rounded-bl-sm"
                 }`}
                 style={{
@@ -185,7 +188,7 @@ function ShareBody({ data }: { data: ShareData }) {
                   color: "var(--text-primary)",
                 }}
               >
-                {m.content}
+                <RichText content={m.content} mentions={mentions} />
               </div>
             </div>
           );
