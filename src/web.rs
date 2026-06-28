@@ -1249,16 +1249,18 @@ pub fn serve_multi(
         #[cfg(feature = "redis-bus")]
         let redis_bus = RedisBus::open_from_env();
 
-        // 로비 추천 주제: 서버 시작 시 1회 + 12h마다 백그라운드로 웹서치+gemma 생성.
+        // 로비 추천 주제: 서버 시작 시 1회 + 3h마다 백그라운드로 웹서치+gemma 생성.
+        // cycle마다 쿼리 풀/앵글을 회전해 추천이 정체되지 않게 한다.
         // 블로킹 호출(reqwest)이라 spawn_blocking으로 감싼다. 실패하면 캐시는 비어 프런트가 정적 폴백.
         let topics_cache: Arc<Mutex<Option<Vec<crate::lobby_topics::CategoryTopics>>>> =
             Arc::new(Mutex::new(None));
         {
             let cache = topics_cache.clone();
             tokio::spawn(async move {
+                let mut cycle: u64 = 0;
                 loop {
                     let generated = tokio::task::spawn_blocking(
-                        crate::lobby_topics::generate_suggested_topics,
+                        move || crate::lobby_topics::generate_suggested_topics(cycle),
                     )
                     .await
                     .ok()
@@ -1269,10 +1271,11 @@ pub fn serve_multi(
                             *cache.lock().await = Some(topics);
                         }
                         None => eprintln!(
-                            "[tunaSalon] 로비 추천 주제 생성 실패(키/네트워크) — 정적 폴백 사용"
+                            "[tunaSalon] 로비 추천 주제 생성 실패(키/네트워크) - 정적 폴백 사용"
                         ),
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
+                    cycle = cycle.wrapping_add(1);
+                    tokio::time::sleep(std::time::Duration::from_secs(3 * 60 * 60)).await;
                 }
             });
         }

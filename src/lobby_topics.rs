@@ -15,13 +15,63 @@ pub struct CategoryTopics {
     pub topics: Vec<String>,
 }
 
-/// 검색할 분야(라벨, 검색 쿼리).
-const CATEGORIES: [(&str, &str); 5] = [
-    ("기술·AI", "AI 인공지능 윤리 규제 최신 논쟁 이슈"),
-    ("사회·제도", "한국 사회 제도 정책 논쟁 이슈 최신"),
-    ("윤리·가치", "윤리 가치관 도덕 딜레마 논쟁 최신"),
-    ("관계·일상", "연애 가족 세대 관계 갈등 논쟁 최신"),
-    ("미래·노동", "미래 노동 자동화 일자리 기본소득 논쟁"),
+/// 검색할 분야(라벨, 쿼리 풀). cycle마다 풀에서 다른 쿼리를 골라 헤드라인이 정체되지 않게 한다.
+const CATEGORIES: [(&str, &[&str]); 5] = [
+    (
+        "기술·AI",
+        &[
+            "AI 인공지능 윤리 규제 최신 논쟁 이슈",
+            "생성형 AI 저작권 창작 일자리 논란 최신",
+            "AI 감시 프라이버시 데이터 활용 논쟁 최신",
+            "자율주행 로봇 자동화 안전 책임 논쟁 최신",
+        ],
+    ),
+    (
+        "사회·제도",
+        &[
+            "한국 사회 제도 정책 논쟁 이슈 최신",
+            "교육 입시 경쟁 공정성 논쟁 최신",
+            "주거 부동산 청년 정책 논쟁 최신",
+            "복지 세금 형평성 논쟁 최신",
+        ],
+    ),
+    (
+        "윤리·가치",
+        &[
+            "윤리 가치관 도덕 딜레마 논쟁 최신",
+            "표현의 자유 혐오 규제 논쟁 최신",
+            "생명윤리 의료 선택 논쟁 최신",
+            "환경 동물권 소비 윤리 논쟁 최신",
+        ],
+    ),
+    (
+        "관계·일상",
+        &[
+            "연애 가족 세대 관계 갈등 논쟁 최신",
+            "결혼 비혼 출산 선택 논쟁 최신",
+            "직장 예절 워라밸 세대차 논쟁 최신",
+            "친구 돈 거리두기 관계 논쟁 최신",
+        ],
+    ),
+    (
+        "미래·노동",
+        &[
+            "미래 노동 자동화 일자리 기본소득 논쟁",
+            "주4일제 재택근무 생산성 논쟁 최신",
+            "긱이코노미 플랫폼 노동 논쟁 최신",
+            "정년 연장 청년 고용 논쟁 최신",
+        ],
+    ),
+];
+
+/// "재미·취향" 분야가 매번 같은 주제(민초/부먹)로 굳지 않게 cycle마다 도메인을 바꾼다.
+const CASUAL_ANGLES: [&str; 6] = [
+    "음식 취향과 맛(민초·부먹찍먹·라면 끓이기 같은)",
+    "생활 습관과 집안 환경(에어컨·정리정돈·아침형/저녁형 같은)",
+    "디지털·SNS 예절과 습관(읽씹·단톡방·맞춤법 같은)",
+    "연애·관계의 사소한 규칙(데이트 비용·연락 빈도·기념일 같은)",
+    "여행·여가 취향(계획형/즉흥형·국내/해외·집순이/밖순이 같은)",
+    "사소한 일상 선택(탕수육 소스·치약 짜는 법·물 온도 같은)",
 ];
 
 /// 웹서치/생성에 쓸 API 키를 고른다. `OLLAMA_API_KEY` → `OLLAMA_CLOUD_API_KEY` 순.
@@ -77,7 +127,9 @@ fn gemma_generate(prompt: &str) -> Option<String> {
         .json(&serde_json::json!({
             "model": "gemma4:31b-cloud",
             "prompt": prompt,
-            "stream": false
+            "stream": false,
+            // 높은 temperature로 같은 헤드라인에서도 매번 다른 주제가 나오게(추천 정체 방지).
+            "options": { "temperature": 1.0, "top_p": 0.95 }
         }))
         .send()
         .ok()?;
@@ -126,10 +178,14 @@ fn parse_topics_json(raw: &str) -> Option<Vec<CategoryTopics>> {
 
 /// 분야별 추천 토론 주제를 생성한다(블로킹 — 백그라운드/spawn_blocking에서 호출).
 /// 키가 없거나 검색/생성/파싱이 실패하면 None.
-pub fn generate_suggested_topics() -> Option<Vec<CategoryTopics>> {
+///
+/// `cycle`은 갱신 회차. 카테고리별 쿼리 풀과 "재미·취향" 앵글을 회차마다 회전시켜
+/// 추천 주제가 매번 비슷하게 굳지 않게 한다(헤드라인·생성 다양화).
+pub fn generate_suggested_topics(cycle: u64) -> Option<Vec<CategoryTopics>> {
     let key = resolve_api_key()?;
     let mut blocks = Vec::new();
-    for (cat, query) in CATEGORIES {
+    for (cat, queries) in CATEGORIES {
+        let query = queries[(cycle as usize) % queries.len()];
         if let Some(titles) = web_search(query, &key) {
             blocks.push(format!("[{cat}] 최근 헤드라인:\n- {}", titles.join("\n- ")));
         }
@@ -137,14 +193,15 @@ pub fn generate_suggested_topics() -> Option<Vec<CategoryTopics>> {
     if blocks.is_empty() {
         return None;
     }
+    let casual_angle = CASUAL_ANGLES[(cycle as usize) % CASUAL_ANGLES.len()];
     let prompt = format!(
         "다음은 분야별 최근 뉴스 헤드라인이다. 각 분야마다 찬반·조건이 갈리는 흥미로운 토론 주제를 \
          정확히 2~3개씩 만들어라. 각 주제는 한국어 한 문장 질문형으로 \
          (예: \"AI 판사가 인간 판사보다 공정할 수 있을까?\"). 정치 선동·특정 인물 비방·단순 사실확인은 \
-         피하고, 가치가 충돌하는 주제로. \
+         피하고, 가치가 충돌하는 주제로. 진부하거나 자주 나오는 뻔한 주제는 피하고 새로운 각도로. \
          추가로 검색 결과와 무관하게 \"재미·취향\" 분야를 하나 더 만들어, 진지한 정책이 아니라 가볍고 \
-         호불호가 분명히 갈리는 일상 논쟁 주제 2~3개를 넣어라(예: 음식 취향, 생활 습관, 사소한 선택 등 \
-         유쾌하게 다툴 만한 것). 반드시 아래 JSON 배열만 출력하고 다른 텍스트는 쓰지 마라:\n\
+         호불호가 분명히 갈리는 일상 논쟁 주제 2~3개를 넣어라. 이번엔 특히 '{casual_angle}' 쪽으로, \
+         유쾌하게 다툴 만한 것으로. 반드시 아래 JSON 배열만 출력하고 다른 텍스트는 쓰지 마라:\n\
          [{{\"category\":\"분야명\",\"topics\":[\"주제1\",\"주제2\"]}}]\n\n{}",
         blocks.join("\n\n")
     );

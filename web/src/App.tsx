@@ -181,7 +181,14 @@ function App() {
     fetch("/api/suggested-topics")
       .then((r) => (r.ok ? r.json() : []))
       .then((data: SuggestedGroup[]) => {
-        if (alive && Array.isArray(data)) setSuggestedGroups(data.filter((g) => g?.topics?.length));
+        if (alive && Array.isArray(data)) {
+          // 분야·주제 순서를 섞어 진입마다 같은 배치로 보이지 않게 한다(백엔드 회전과 별개의 체감 보조).
+          const shuffled = data
+            .filter((g) => g?.topics?.length)
+            .map((g) => ({ ...g, topics: [...g.topics].sort(() => Math.random() - 0.5) }))
+            .sort(() => Math.random() - 0.5);
+          setSuggestedGroups(shuffled);
+        }
       })
       .catch(() => {});
     return () => {
