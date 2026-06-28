@@ -33,7 +33,7 @@ notes_ref: ../../.. (memory [[topic-tags]])
 - (G4) `render_chat`에 `topics: &[String]` 인자 추가 → 채팅 pane 제목에 표시(토픽 있으면 `"chat · 화제: a · b"`, 없으면 `"chat"`).
 
 ### Non-goals
-- ❌ env/기본 주제 세트(거절됨). ❌ 수렴-기반 자동 주제 회전(BGE-M3 후 2차). ❌ 백엔드 프롬프트 슬롯 threading(시그니처 변경 회피 — 합성 history로 충분, 약하면 2차에 슬롯화). ❌ `/help` 등 다른 명령(이번 범위 밖, 토픽만).
+- ❌ env/기본 주제 세트(거절됨). ❌ 수렴-기반 자동 주제 회전(BGE-M3 후 2차). ❌ 백엔드 프롬프트 슬롯 threading(시그니처 변경 회피 - 합성 history로 충분, 약하면 2차에 슬롯화). ❌ `/help` 등 다른 명령(이번 범위 밖, 토픽만).
 
 ## 3. Changed files
 
@@ -54,7 +54,7 @@ cargo build
 cargo test
 cargo build --features friend-engine
 cargo test  --features friend-engine
-# 골든 5종(기본 빌드, 명시적 순차 — set -- 금지)
+# 골든 5종(기본 빌드, 명시적 순차 - set -- 금지)
 cargo build
 cargo run -q -- --headless --seed 42 --ticks 120 --theta 0.40 | diff - /tmp/salon_golden/s42_t040.ndjson && echo s42_t040 OK
 cargo run -q -- --headless --seed 42 --ticks 80  --theta 0.65 | diff - /tmp/salon_golden/s42_t065.ndjson && echo s42_t065 OK

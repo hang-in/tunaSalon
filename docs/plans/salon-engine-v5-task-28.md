@@ -59,4 +59,4 @@ cargo build && cargo run -- --headless --seed 42 --ticks 80 --theta 0.65 | diff 
 | 사람 자극이 Hawkes 안정성 깸 | attention은 일시적(이후 decay_excitations로 회복), spectral radius 조건(α) 불변. 큰 mark는 기록용일 뿐 동역학은 flat 자극 |
 | 기존 엔진/골든 오염 | 새 모듈만 추가, driver/hawkes 미변경. 골든 재확인 |
 | reset_factor/attention 값 감각 | const 기본값 + 라이브 관전(task-31)으로 튜닝. 값 자체는 손잡이 |
-| mark 미사용 혼란 | mark는 현재 동역학 미반영(observability·설계 충실용). 자극은 attention flat 보장 — 주석 명시 |
+| mark 미사용 혼란 | mark는 현재 동역학 미반영(observability·설계 충실용). 자극은 attention flat 보장 - 주석 명시 |

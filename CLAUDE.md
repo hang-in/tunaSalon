@@ -1,4 +1,4 @@
-# tunaSalon — Claude Code Handoff Document
+# tunaSalon - Claude Code Handoff Document
 
 ## 1. Project Overview
 

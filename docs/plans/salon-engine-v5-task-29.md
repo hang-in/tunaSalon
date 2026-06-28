@@ -24,12 +24,12 @@ plan `salon-engine-v5.md` subtask 29. v0.5의 **최난점**. 배치 `driver::run
 - `pool.rs`: 기존 `PersonaRuntime::generate`(&mut self)는 실제로 &mut가 불필요(fallback_chain·Backend::generate 모두 &self) → `generate_one(&self, ...)`로 본문 이동, 트레이트는 위임. 이로써 `Arc<BackendPool>`를 워커 스레드에서 공유 호출 가능(Backend는 Send+Sync).
 - `LiveSession`(src/live.rs):
   - 보유: `EngineConfig`, `Vec<Persona>`, `EngineState`, `ChaCha8Rng`(seed 주입), `HumanChannel`, `Arc<BackendPool>`, 생성 워커(job_tx, result_rx, JoinHandle), `pending: Option<PersonaId>`(in-flight 1개), tick 카운터.
-  - `new(config, personas, seed, pool: Arc<BackendPool>, human_speaker_id)`: 워커 스레드 spawn — `loop { recv (idx, speaker, history, tick); let text = pool.generate_one(...); send (idx, text) }`. job_tx drop 시 워커 종료.
-  - `submit_human(&mut self, text: String)`: `HumanChannel::speak(&mut state, &personas, text, ts)` 즉시 호출(pending과 무관 — 사람은 인터럽트). 사람 발화로 전 페르소나 λ 자극 → 다음 선택이 사람에게 반응.
+  - `new(config, personas, seed, pool: Arc<BackendPool>, human_speaker_id)`: 워커 스레드 spawn - `loop { recv (idx, speaker, history, tick); let text = pool.generate_one(...); send (idx, text) }`. job_tx drop 시 워커 종료.
+  - `submit_human(&mut self, text: String)`: `HumanChannel::speak(&mut state, &personas, text, ts)` 즉시 호출(pending과 무관 - 사람은 인터럽트). 사람 발화로 전 페르소나 λ 자극 → 다음 선택이 사람에게 반응.
   - `tick(&mut self) -> TickOutcome`: 엔진 1틱 전진(update_intensities + decay_excitations + combined + gate + rrf select, driver와 동일 로직·rng 순서). **pending이 없고** 화자가 선택되면: (1) 엔진측 speak 갱신 즉시 적용(suppress chosen, apply_excitation_on_speak, last_speaker, history에 placeholder Event content=None push), (2) 생성 job을 워커로 디스패치, pending=Some(chosen). pending이 있으면 새 디스패치 안 함(인과). 반환: Silence / SpeakingDispatched(speaker) / Pending 등.
   - `poll_generation(&mut self) -> Option<Event>`: `result_rx.try_recv()` 논블로킹. 결과 도착 시 해당 placeholder Event의 content를 채우고(history 갱신), pending=None, 그 Event 반환(렌더용). 없으면 None.
   - 모든 메서드는 **즉시 반환**(블록 없음). 생성은 워커에서.
-- 결정성: 엔진 선택(누가/언제)은 seed로 결정적(rng 순서 보존). 라이브 전체는 실시간 타이밍·LLM이라 비결정 — opt-in, headless 골든 불침투.
+- 결정성: 엔진 선택(누가/언제)은 seed로 결정적(rng 순서 보존). 라이브 전체는 실시간 타이밍·LLM이라 비결정 - opt-in, headless 골든 불침투.
 - 가드레일: unwrap/panic 금지(채널 send/recv 실패는 graceful). 워커 종료 깔끔히(Drop). 키 비노출.
 
 ## Dependencies
@@ -62,4 +62,4 @@ cargo build && cargo run -- --headless --seed 42 --ticks 80 --theta 0.65 | diff 
 | 워커 종료 hang/panic | job_tx Drop → recv 종료, JoinHandle. send/recv 실패 graceful(채널 닫힘 = 종료) |
 | 엔진 결정성/골든 오염 | tick의 엔진 로직은 driver와 동일 rng 순서. LiveSession은 별도, headless 불변. 골든 재확인 |
 | placeholder content=None이 잔류(생성 실패) | poll에서 None이면 placeholder content None 유지(내용 없는 발화 = 엔진 결정 유지), pending 해제 |
-| generate_one 추가가 기존 동작 변경 | 트레이트 generate가 위임만 — 동작 동일. 기존 풀 테스트로 회귀 확인 |
+| generate_one 추가가 기존 동작 변경 | 트레이트 generate가 위임만 - 동작 동일. 기존 풀 테스트로 회귀 확인 |

@@ -31,7 +31,7 @@ lift 원본: `/Users/d9ng/privateProject/seCall/crates/secall-core/src/search/hy
 ## Change description
 
 - **v0.9 보존 핵심**: non-semantic recall 미변경(cfg로 분리). hybrid는 semantic 전용. → 기본·`friend-engine` 빌드·골든·v0.9 recall_eval 전부 무변.
-- **참여 격리(양 leg)**: BM25는 SQL `room IN(참여)`로(v0.9). 벡터는 ANN이 방을 모르므로 **검색 후 참여 방으로 필터**(over-fetch k*4 후 격리·절단). INV-2(참여 격리) 양쪽 보장 — recall_eval 격리 케이스로 검증.
+- **참여 격리(양 leg)**: BM25는 SQL `room IN(참여)`로(v0.9). 벡터는 ANN이 방을 모르므로 **검색 후 참여 방으로 필터**(over-fetch k*4 후 격리·절단). INV-2(참여 격리) 양쪽 보장 - recall_eval 격리 케이스로 검증.
 - **결정성**: MockEmbedder(결정적) + FTS5 bm25(결정적) + RRF(결정적, 동점 id 안정). `:memory:`. hybrid recall 2회 동일.
 - **RRF**: seCall 동형(`1/(k+rank+1)` 합산). observer penalty/정규화는 미적용(tunaSalon 무관).
 - 가드: 요청 파일만(memory.rs). recall 시그니처 불변. unwrap/panic 금지(쿼리 실패→빈 Vec). 임베딩 실패→BM25만으로 폴백(graceful).

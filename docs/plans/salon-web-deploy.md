@@ -63,11 +63,11 @@ n100에서 **단일 Rust 바이너리**(`salon --web`, web/dist 동봉)를 syste
 
 ---
 
-## 3. 사전 준비 — n100 (192.168.1.121)
+## 3. 사전 준비 - n100 (192.168.1.121)
 
 > n100은 **fish shell**. 복잡한 bash one-liner는 깨질 수 있으니 단순 명령 또는 `bash -c '...'`.
 
-1. **툴체인 확인/설치**: `rustup`(cargo), `ollama`, node+`pnpm`. (n100에 이미 있는지 먼저 확인 — immich/destiny가 도는 박스라 일부 존재 가능.)
+1. **툴체인 확인/설치**: `rustup`(cargo), `ollama`, node+`pnpm`. (n100에 이미 있는지 먼저 확인 - immich/destiny가 도는 박스라 일부 존재 가능.)
 2. **ollama 클라우드 로그인 (필수·하드 의존)**:
    ```bash
    ollama serve        # systemd 유닛으로 이미 떠 있을 수 있음
@@ -135,9 +135,9 @@ curl -s localhost:5181/ | grep -o '<title>[^<]*</title>'   # SPA 확인
 
 ### 5-1. external/internal Caddyfile에 salon 블록 추가 (destiny와 동형)
 
-`~/privateProject/homelab-proxy/external/Caddyfile` — destiny 블록 근처에:
+`~/privateProject/homelab-proxy/external/Caddyfile` - destiny 블록 근처에:
 ```caddy
-# salon: tunaSalon 웹 — n100(192.168.1.121:5181). basic_auth(나만).
+# salon: tunaSalon 웹 - n100(192.168.1.121:5181). basic_auth(나만).
 salon.d9ng.co.kr {
 	import site_common
 	import geo_kr_only
@@ -148,7 +148,7 @@ salon.d9ng.co.kr {
 }
 ```
 
-`~/privateProject/homelab-proxy/internal/Caddyfile` — destiny 블록 근처에:
+`~/privateProject/homelab-proxy/internal/Caddyfile` - destiny 블록 근처에:
 ```caddy
 http://salon.d9ng.co.kr, https://salon.d9ng.co.kr {
 	import site_common
@@ -171,7 +171,7 @@ git push
 # 급하면 수동: ssh prox-docker "docker exec caddy-internal caddy reload --config /etc/caddy/Caddyfile"
 ```
 
-### 5-3. Cloudflare DNS — `salon` 레코드 1개 (와일드카드 없음)
+### 5-3. Cloudflare DNS - `salon` 레코드 1개 (와일드카드 없음)
 
 `d9ng.co.kr` zone에 **`salon` CNAME → `d9ng.co.kr`, proxied=false** 추가(destiny/sol/docad과 동일 패턴). DNS-01 TLS는 internal caddy가 발급.
 

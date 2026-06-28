@@ -22,7 +22,7 @@ plan `salon-engine-v6.md` subtask 34. task-33의 `flow` 측정을 ObservationRec
 
 ## Change description
 
-- `ObservationRecord.flow: Option<FlowMetric>` — 맨 끝 필드 + `#[serde(default, skip_serializing_if = "Option::is_none")]`. None이면 NDJSON에서 완전 생략 → **FakeBackend(content 전부 None) 기록은 직렬화 바이트 동일**.
+- `ObservationRecord.flow: Option<FlowMetric>` - 맨 끝 필드 + `#[serde(default, skip_serializing_if = "Option::is_none")]`. None이면 NDJSON에서 완전 생략 → **FakeBackend(content 전부 None) 기록은 직렬화 바이트 동일**.
 - flow 계산 헬퍼: history에서 content 있는 발화만 추출 → 최근 N개(예 `const FLOW_WINDOW = 6`) → `src/flow.rs`의 공개 measure 함수 호출. content 발화 2개 미만이면 None.
   - 매 틱 record 빌드 시 계산(침묵 틱도 최근 content 기준). FakeBackend는 content가 항상 None이라 추출 결과 빈 슬라이스 → measure → None.
 - `LiveSession::flow()`: 동일 방식으로 `self.state.history`의 content에서 measure. 채팅 사이드바 게이지용(task-35).
@@ -40,7 +40,7 @@ plan `salon-engine-v6.md` subtask 34. task-33의 `flow` 측정을 ObservationRec
 cargo build
 cargo test
 cargo build && for s in "42 120 0.40 s42_t040" "42 80 0.65 s42_t065" "42 120 0.78 s42_t078" "7 80 0.65 s7_t065" "99 80 0.65 s99_t065"; do :; done
-# (golden은 명시적 순차로, zsh 워드분할 주의 — 아래처럼 한 줄씩)
+# (golden은 명시적 순차로, zsh 워드분할 주의 - 아래처럼 한 줄씩)
 cargo run -- --headless --seed 42 --ticks 120 --theta 0.40 | diff - /tmp/salon_golden/s42_t040.ndjson && echo s42_t040 OK
 cargo run -- --headless --seed 42 --ticks 80  --theta 0.65 | diff - /tmp/salon_golden/s42_t065.ndjson && echo s42_t065 OK
 cargo run -- --headless --seed 42 --ticks 120 --theta 0.78 | diff - /tmp/salon_golden/s42_t078.ndjson && echo s42_t078 OK

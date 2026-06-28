@@ -5,7 +5,7 @@ updated_at: 2026-06-03
 title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 ---
 
-# tunaSalon 리팩토링 검토 보고서 — v0.9 스냅샷
+# tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 
 > 검토 대상: `/Users/d9ng/privateProject/tunaSalon` (Rust 2021, v0.9 done, 222 tests / friend-engine feature 230)
 > 검토 모드: 리팩토링 관점 한정. 기능 추가 / 행동 변경 제안 제외.
@@ -65,7 +65,7 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 
 ## 2. 결합 강도
 
-### 2-1. `[높음]` `driver::run` ↔ `live::LiveSession::tick` — per-tick 알고리즘의 100% 복제
+### 2-1. `[높음]` `driver::run` ↔ `live::LiveSession::tick` - per-tick 알고리즘의 100% 복제
 
 - **위치**: `src/driver.rs:38-114` ↔ `src/live.rs:286-454`
 - **분류**: 결합 강도 / 책임 / 변동성 정렬
@@ -103,10 +103,10 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
   ) -> Decision
   ```
   `driver::run`은 `Decision`을 받아 `ObservationRecord`로 직렬화하고, `LiveSession::tick`은 추가로 `pending`/`human_focus`/워커 디스패치만 얹는다. 골든 보존은 기존 rng 순서를 함수 내부에서 한 번만 표현하면 자동으로 양쪽이 같이 옴.
-- **리스크**: 중간 — 단위 테스트가 두 경로에서 거의 같은 시퀀스를 직접 검사하고 있어(특히 `live.rs`의 `mu_scale_returns_one_for_empty_content_history`, `fake_backend_produces_no_flow_in_records`) 추출 후에도 통과하도록 맞춰야 함. 골든 자체는 결정성 보존이 코어 추출과 정렬되므로 더 강해짐.
+- **리스크**: 중간 - 단위 테스트가 두 경로에서 거의 같은 시퀀스를 직접 검사하고 있어(특히 `live.rs`의 `mu_scale_returns_one_for_empty_content_history`, `fake_backend_produces_no_flow_in_records`) 추출 후에도 통과하도록 맞춰야 함. 골든 자체는 결정성 보존이 코어 추출과 정렬되므로 더 강해짐.
 - **우선순위**: **높음**. v0.10에서 임베딩·ANN이 `decide_one_tick` 호출 직전/직후로 들어올 가능성이 큰데(예: recall 게이팅), 두 함수가 따로 놀면 이중 수정이 강제됨.
 
-### 2-2. `LiveSession`이 `PersonaRuntime`을 직접 안 가짐 — `BackendPool`을 통해 우회
+### 2-2. `LiveSession`이 `PersonaRuntime`을 직접 안 가짐 - `BackendPool`을 통해 우회
 
 - **위치**: `src/live.rs:68-72` (`#[allow(dead_code)] pool: Arc<BackendPool>`)
 - **분류**: 결합 강도 / 모델
@@ -132,21 +132,21 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 
 ## 3. 경계와 거리
 
-### 3-1. `human.rs` ↔ `live.rs` — `HumanChannel::speak` 직접 호출
+### 3-1. `human.rs` ↔ `live.rs` - `HumanChannel::speak` 직접 호출
 
 - **위치**: `src/human.rs:75-100` ↔ `src/live.rs:218-234`
 - **분류**: 경계와 거리 / 결합 강도
 - **결합 태그**: Contract (양호)
 - **현재 평가**: **문제 없음**. `HumanChannel`의 단일 책임(외부 이벤트 → state projection)이 깨끗하다. driver 경로도 같은 `HumanChannel::speak`을 거치므로 INV("headless 골든 경로 불침투")가 잘 유지됨.
 
-### 3-2. `flow.rs` ↔ `memory.rs` (vec_impl) — `flow::tokenize`를 memory가 빌림
+### 3-2. `flow.rs` ↔ `memory.rs` (vec_impl) - `flow::tokenize`를 memory가 빌림
 
 - **위치**: `src/memory.rs:80-90` (vec_impl `recall` 내부) → `src/flow.rs:32-50` (`pub(crate) fn tokenize`)
 - **분류**: 경계와 거리 / 변동성 정렬
 - **결합 태그**: Contract (양호)
 - **현재 평가**: **문제 없음**. SQLite feature on일 때는 `tokenize_ko::morphological_tokens`로 대체되므로 분기처리가 이미 깔끔하다. 다만 `tokenize`가 `flow` 모듈에 살고 있어 "flow의 토크나이저"가 사실은 프로젝트 전역의 라이트 토크나이저다. **v0.10에서 어휘/의미 양쪽에 공통 토크나이저가 필요해질 때 `tokenize.rs`로 분리**.
 
-### 3-3. `preset.rs` ↔ `hawkes.rs` — 안정성 정규화 의존
+### 3-3. `preset.rs` ↔ `hawkes.rs` - 안정성 정규화 의존
 
 - **위치**: `src/preset.rs:114-130`
 - **분류**: 경계와 거리
@@ -192,14 +192,14 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 - **리스크**: 중간. trait 도입은 `LiveSession`의 제네릭 화 또는 `Box<dyn MemoryStore>` 이슈와 직결.
 - **우선순위**: **중간**(v0.10 task-47~50과 동시에 결정). 지금은 안 건드림이 더 안전.
 
-### 4-3. `meta.rs` — `from_env`이 `main.rs`에서 직접 호출되지 않음
+### 4-3. `meta.rs` - `from_env`이 `main.rs`에서 직접 호출되지 않음
 
 - **위치**: `src/meta.rs:32-47`
 - **분류**: 변동성 정렬
 - **결합 태그**: Contract (양호)
 - **현재 평가**: **문제 없음**. 한 곳에서 env를 읽고, 모듈 자체가 순수 결정적(테스트 가능). `from_env`이 main.rs에 누수되지 않음.
 
-### 4-4. `tokenize_ko.rs` — feature-gated 한정
+### 4-4. `tokenize_ko.rs` - feature-gated 한정
 
 - **위치**: `src/tokenize_ko.rs`
 - **분류**: 변동성 정렬
@@ -253,7 +253,7 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 - **분류**: 책임
 - **현재 평가**: **문제 없음**. `initial_state`가 분리돼 있고, 본문은 1-tick 루프 + sink 호출. 책임(틱 실행 + 레코드 emit)이 단일.
 
-### 5-3. `preset.rs::build_config_with_modifiers` — 책임 양호
+### 5-3. `preset.rs::build_config_with_modifiers` - 책임 양호
 
 - **위치**: `src/preset.rs:84-141`
 - **현재 평가**: **문제 없음**. α 행렬 빌드 한 가지 책임. 모디파이어 처리가 단일 함수 안에 깔끔히 들어 있음.
@@ -266,7 +266,7 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 
 - **위치**:
   - `driver.rs:18` (`FLOW_WINDOW: usize = 6`)
-  - `live.rs:506` (`FLOW_WINDOW: usize = 6` — **driver와 동일 상수 두 번**)
+  - `live.rs:506` (`FLOW_WINDOW: usize = 6` - **driver와 동일 상수 두 번**)
   - `live.rs:131` (`HUMAN_FOCUS_TURNS = 4`), `live.rs:338-343` (`RECALL_K: usize = 3`)
   - `main.rs:11-15` (`DEFAULT_SEED`, `DEFAULT_TICKS`, `DEFAULT_BETA`, `DEFAULT_THETA`, `DEFAULT_K`, `DEFAULT_DELAY_MS`, `TICK_INTERVAL`)
   - `chat.rs:36-38` (`TICK_PERIOD`, `POLL_TIMEOUT`, `BAR_WIDTH`)
@@ -288,13 +288,13 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 
 - **위치**: `src/driver.rs:34-37`("FakeBackend → content 항상 None..."), `src/live.rs:280-284` 등 다수.
 - **분류**: 코드 품질
-- **현재 평가**: 의도된 회귀 방지 코멘트. **문제 없음** — 골든 바이트 보존이 핵심 invariant이므로 정당화됨.
+- **현재 평가**: 의도된 회귀 방지 코멘트. **문제 없음** - 골든 바이트 보존이 핵심 invariant이므로 정당화됨.
 
 ### 6-4. `MemoryEvent.content` 빈 문자열 가능성
 
 - **위치**: `src/memory.rs:23-30`
 - **분류**: 코드 품질
-- **현재 평가**: `format_recall_impl`이 빈 `content`도 그대로 직렬화한다. 라이브에서 빈 content가 들어갈 수 있는데(`pending` 자리표시자 직후), `record` 호출처가 그쪽을 막고 있는지 확인 필요 — `live.rs:240-242`는 사람 발화만 `content`를 보장, 도착 발화는 `content.is_some()` 검사 후 기록(`live.rs:464-470`).
+- **현재 평가**: `format_recall_impl`이 빈 `content`도 그대로 직렬화한다. 라이브에서 빈 content가 들어갈 수 있는데(`pending` 자리표시자 직후), `record` 호출처가 그쪽을 막고 있는지 확인 필요 - `live.rs:240-242`는 사람 발화만 `content`를 보장, 도착 발화는 `content.is_some()` 검사 후 기록(`live.rs:464-470`).
 - **제안**: 실행하지 않았으므로 **확인 필요**. 빈 content가 store에 들어가는 경로가 있는지 코드만으로는 단정 어려움.
 - **우선순위**: 낮음.
 
@@ -373,7 +373,7 @@ title: tunaSalon 리팩토링 검토 보고서 - v0.9 스냅샷
 
 ## 부록: 다음 스냅샷 권장 시점
 
-- v0.10 done 직후 (`friend-engine-semantic` feature가 합쳐진 직후 — `MemoryStore` 분기 복잡도 재평가)
+- v0.10 done 직후 (`friend-engine-semantic` feature가 합쳐진 직후 - `MemoryStore` 분기 복잡도 재평가)
 - web 프런트엔드 1차 구현 직후 (sink 추상화 도입 후 결합 재평가)
 - 페르소나 합성 1차 구현 직후 (`chat_personas` ↔ `system_prompts` 결합 재평가)
 

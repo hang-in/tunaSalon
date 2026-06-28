@@ -21,7 +21,7 @@ lift 원본(같은 머신, 정독): `/Users/d9ng/privateProject/seCall/crates/se
 
 ## Changed files
 
-- `Cargo.toml` - 수정. `[features]`에 `friend-engine-semantic = ["friend-engine", "dep:ort", "dep:ndarray", "dep:tokenizers"]` + `coreml = ["ort/coreml"]`. optional deps: `ort = { version = "=2.0.0-rc.10", features = ["load-dynamic", "ndarray"], optional = true }`, `ndarray = { version = "0.16", optional = true }`, `tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"], optional = true }`. (reqwest blocking 이미 있음 — 다운로드에 재사용.)
+- `Cargo.toml` - 수정. `[features]`에 `friend-engine-semantic = ["friend-engine", "dep:ort", "dep:ndarray", "dep:tokenizers"]` + `coreml = ["ort/coreml"]`. optional deps: `ort = { version = "=2.0.0-rc.10", features = ["load-dynamic", "ndarray"], optional = true }`, `ndarray = { version = "0.16", optional = true }`, `tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"], optional = true }`. (reqwest blocking 이미 있음 - 다운로드에 재사용.)
 - `src/embed.rs` - **신규, `#![cfg(feature = "friend-engine-semantic")]`**:
   - `pub trait Embedder { fn embed(&self, text: &str) -> Result<Vec<f32>, String>; fn dim(&self) -> usize; }` (**sync**).
   - `pub struct MockEmbedder { dim }` - 결정적: 텍스트를 토큰화(공백/소문자)해 각 토큰을 dim 버킷에 해시 누적 후 L2 정규화(= 결정적 bag-of-words 벡터, 같은 텍스트→같은 벡터, 토큰 겹치면 코사인↑). 테스트 + ORT 미가용 시 폴백용.
@@ -32,8 +32,8 @@ lift 원본(같은 머신, 정독): `/Users/d9ng/privateProject/seCall/crates/se
 ## Change description
 
 - **sync 변환**: seCall의 `async fn embed`/`embed_batch`/`spawn_blocking`/세션풀을 버리고 `fn embed(&self,&str)->Result<Vec<f32>,String>` 단일 동기 호출. ORT 추론은 원래 blocking이라 tokio 불요.
-- **ORT load-dynamic 주의**: `ort` `load-dynamic`은 런타임에 libonnxruntime이 필요. seCall이 같은 맥에서 동작하므로 환경에 있을 것 — 빌드는 link 없이 통과하나 실행은 lib 필요. 실모델 테스트(`#[ignore]`)가 lib 가용성을 드러냄. 없으면 보고(블로커).
-- **측정(필수)**: `#[ignore]` 테스트 또는 example로 **OrtEmbedder 로드 시간 + 첫 embed 시간 + 대략 RAM**을 stderr로 출력(사용자 맥북 랙 판단용 — 로컬 ollama 금지 맥락). 보고에 수치 포함.
+- **ORT load-dynamic 주의**: `ort` `load-dynamic`은 런타임에 libonnxruntime이 필요. seCall이 같은 맥에서 동작하므로 환경에 있을 것 - 빌드는 link 없이 통과하나 실행은 lib 필요. 실모델 테스트(`#[ignore]`)가 lib 가용성을 드러냄. 없으면 보고(블로커).
+- **측정(필수)**: `#[ignore]` 테스트 또는 example로 **OrtEmbedder 로드 시간 + 첫 embed 시간 + 대략 RAM**을 stderr로 출력(사용자 맥북 랙 판단용 - 로컬 ollama 금지 맥락). 보고에 수치 포함.
 - **골든·기본빌드**: embed.rs는 recall에 미배선 → driver/headless/memory 불변. 기본·`friend-engine` 빌드는 ort 미컴파일(optional+feature). 골든 무관(이 task는 검증만으로 충분, 회귀 없음).
 - 가드: 요청 파일만. unwrap/panic 금지(embed는 Result, 로드 실패는 에러 반환). MockEmbedder는 순수.
 
@@ -45,9 +45,9 @@ cargo build
 cargo test
 cargo build --features friend-engine-semantic
 cargo test  --features friend-engine-semantic        # MockEmbedder 결정성 등(실모델 #[ignore] 제외)
-# 2) 골든 5종(기본 빌드) 무변 — 회귀 없음 확인
+# 2) 골든 5종(기본 빌드) 무변 - 회귀 없음 확인
 cargo run -q -- --headless --seed 42 --ticks 80 --theta 0.65 | diff - /tmp/salon_golden/s42_t065.ndjson && echo s42_t065 OK
-# 3) (위험부, 수동) 실모델 — 모델 있으면 다운로드/로드/측정
+# 3) (위험부, 수동) 실모델 - 모델 있으면 다운로드/로드/측정
 cargo test --features "friend-engine-semantic coreml" -- --ignored ort_embed   # 실 BGE-M3, 모델 다운로드~1.2GB
 ```
 

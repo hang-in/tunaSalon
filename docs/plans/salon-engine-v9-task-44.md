@@ -7,7 +7,7 @@ parent_plan: salon-engine-v9.md
 task_id: "44"
 depends_on: ["43"]
 parallel_group: ""
-status_note: "done 2026-06-03. 리뷰 통과(코드 정독+독립 재검증). feature off=v0.8 Vec(owned), on=:memory: SQLite+FTS5 OR-MATCH BM25. 골든 5/5, 기본 빌드 rusqlite 미컴파일, recall_eval feature-on 9/9(SSOT top-3 유지). 후속(task-45): record()가 INSERT 오류를 silent swallow(let _=) — 파일 영속 단계에서 로깅/트랜잭션 검토."
+status_note: "done 2026-06-03. 리뷰 통과(코드 정독+독립 재검증). feature off=v0.8 Vec(owned), on=:memory: SQLite+FTS5 OR-MATCH BM25. 골든 5/5, 기본 빌드 rusqlite 미컴파일, recall_eval feature-on 9/9(SSOT top-3 유지). 후속(task-45): record()가 INSERT 오류를 silent swallow(let _=) - 파일 영속 단계에서 로깅/트랜잭션 검토."
 ---
 
 # Task 44 - :memory: SQLite + FTS5 BM25 회상 (Stage 1a)
@@ -67,7 +67,7 @@ CREATE VIRTUAL TABLE memories_fts USING fts5(
   6. row → `MemoryEvent{room,ts,speaker,content}` owned. 반환.
 
 ### feature OFF: v0.8 Vec 구현 유지
-- 기존 로직 그대로(참여 격리 + `flow::tokenize` intersection count + ts 내림차순). **단 recall 반환형만 `Vec<MemoryEvent>`(owned)로** — 후보를 `.clone()`해 owned로 반환(상위 k개라 비용 무시). task-43의 `recall_tokens` 헬퍼는 feature off 전용(=`flow::tokenize`)으로 정리; feature on은 Vec 경로를 안 쓰므로 morphological 분기 제거(SQLite가 `morphological_tokens` 직접 사용).
+- 기존 로직 그대로(참여 격리 + `flow::tokenize` intersection count + ts 내림차순). **단 recall 반환형만 `Vec<MemoryEvent>`(owned)로** - 후보를 `.clone()`해 owned로 반환(상위 k개라 비용 무시). task-43의 `recall_tokens` 헬퍼는 feature off 전용(=`flow::tokenize`)으로 정리; feature on은 Vec 경로를 안 쓰므로 morphological 분기 제거(SQLite가 `morphological_tokens` 직접 사용).
 
 ### 불변/가드
 - **골든**: recall은 라이브 경로 전용(v0.8). driver/headless 불침투 → feature 유무·SQLite와 무관하게 골든 바이트 동일. feature off 기본 빌드엔 rusqlite 미컴파일.
@@ -83,7 +83,7 @@ cargo build
 cargo test
 cargo build --features friend-engine
 cargo test  --features friend-engine
-# 골든 5종(기본 빌드, 명시적 순차 — zsh word-split 주의: set -- 금지)
+# 골든 5종(기본 빌드, 명시적 순차 - zsh word-split 주의: set -- 금지)
 cargo build
 cargo run -q -- --headless --seed 42 --ticks 120 --theta 0.40 | diff - /tmp/salon_golden/s42_t040.ndjson && echo s42_t040 OK
 cargo run -q -- --headless --seed 42 --ticks 80  --theta 0.65 | diff - /tmp/salon_golden/s42_t065.ndjson && echo s42_t065 OK
@@ -92,7 +92,7 @@ cargo run -q -- --headless --seed 7   --ticks 80  --theta 0.65 | diff - /tmp/sal
 cargo run -q -- --headless --seed 99  --ticks 80  --theta 0.65 | diff - /tmp/salon_golden/s99_t065.ndjson && echo s99_t065 OK
 ```
 
-- 기본/feature 양쪽 `cargo test` green. **`recall_eval`이 feature on(SQLite+FTS5+형태소)에서도 green** — SSOT가 top-3 안에. 만약 BM25 랭킹으로 어떤 단언이 실패하면 **느슨하게 고치지 말고** 원인 조사(참여 격리·OR-MATCH·tokens 인덱싱 점검). SSOT-in-top3는 형태소+BM25면 유지돼야 함.
+- 기본/feature 양쪽 `cargo test` green. **`recall_eval`이 feature on(SQLite+FTS5+형태소)에서도 green** - SSOT가 top-3 안에. 만약 BM25 랭킹으로 어떤 단언이 실패하면 **느슨하게 고치지 말고** 원인 조사(참여 격리·OR-MATCH·tokens 인덱싱 점검). SSOT-in-top3는 형태소+BM25면 유지돼야 함.
 - 골든 5종 바이트 동일.
 - 신규/갱신 테스트(feature on, `:memory:`):
   - record→recall roundtrip(저장한 사건이 회상됨), 참여 격리(미참여 방 회상 0), 결정성(2회 동일), OR 의미(쿼리 토큰 일부만 겹쳐도 회상), k=0/빈쿼리/미참여 → 빈 Vec.

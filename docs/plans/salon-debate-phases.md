@@ -8,7 +8,7 @@ updated_at: 2026-06-26
 > web 종료 배너. 전체 테스트 통과(phase 9종 포함), 골든 headless main과 byte-identical(무드리프트).
 > 미적용(후속): 프런트 단계 배지(State.phase 필드 + React). getter `current_phase()`는 준비됨.
 
-# salon-debate-phases — 단계형 토론 (오프닝 → 클로징 → 종료)
+# salon-debate-phases - 단계형 토론 (오프닝 → 클로징 → 종료)
 
 ## 0. 한 줄 목표
 
@@ -35,12 +35,12 @@ updated_at: 2026-06-26
 | `Positions` | 각자 입장 1번씩 분명히 | `N` | `N` | `N` | `N` |
 | `Clash` | 닉네임 부르며 동의/반박(현 동작) | `N` | `3*N` | `2*N` | `4*N` |
 | `Closing` | **새 논거 금지**, 각자 최종 입장 정리(정리자 우선) | 1 | 2 | 1 | 2 |
-| `Concluded` | dispatch 중단(방 idle) | — | — | — | — |
+| `Concluded` | dispatch 중단(방 idle) | - | - | - | - |
 
 쿼터 표는 모드별로 `Clash`/`Closing`만 다르다. 나머지는 동일.
 수렴 조기전환 임계 = 기존 `CONVERGENCE_TWIST_THRESHOLD`(0.6) 재사용.
 
-## 3. 새 모듈 — `src/debate/phase.rs` (순수·결정적)
+## 3. 새 모듈 - `src/debate/phase.rs` (순수·결정적)
 
 `src/debate/`는 framework-independent(live/web/net import 0). 이 규율 유지. rng·IO·상태변이 없음
 (advance만 내부 카운터 증가). 골든 무영향(아래 §6).
@@ -159,19 +159,19 @@ impl PhaseController {
 ## 4. LiveSession 배선 (`src/live.rs`)
 
 - **필드 추가**(`:127` `debate_plan` 옆):
-  `phase: Option<PhaseController>` — `debate_plan`이 Some일 때만 Some로 초기화
+  `phase: Option<PhaseController>` - `debate_plan`이 Some일 때만 Some로 초기화
   (`PhaseController::new(plan.mode, personas.len() as u32)`). plan 없으면 None → 단계 비활성.
 - **`with_debate_plan`/plan을 세팅하는 빌더**에서 `phase`도 함께 채운다. (현재 plan은
   topics→`infer_debate_plan`으로 설정되는 지점과 동일하게.)
 - **add/remove_persona**: `phase`가 Some면 `set_persona_count(personas.len())`.
 
-### 4.1 tick() — 종료 시 dispatch 차단 (`:440~`)
+### 4.1 tick() - 종료 시 dispatch 차단 (`:440~`)
 `tick()` 진입 직후, `self.phase`가 `Some(pc)`이고 `pc.is_concluded()`면:
 - 화자 선택·dispatch를 건너뛰고 `TickOutcome::Silent` 반환(방 idle, 토큰 0).
 - 단 Hawkes 강도 갱신/감쇠는 돌려도 무방하나, 단순화를 위해 **즉시 Silent return** 권장
   (어차피 종료 상태). `tick_count`는 증가시킨다(기존 라인 유지).
 
-### 4.2 dispatch — 단계 지시 주입 (`:647~662`)
+### 4.2 dispatch - 단계 지시 주입 (`:647~662`)
 `segs` 조립에서 `plan.directive_line(tick)` push **직후**:
 ```rust
 if let Some(pc) = self.phase.as_ref() {
@@ -182,10 +182,10 @@ if let Some(pc) = self.phase.as_ref() {
 순서: `[토론 프레임]` `[단계 지시]` `[진행 지시]` `[새 국면]` `[형식]`.
 
 ### 4.3 클로징 화자 = 정리자 우선 (`:500~517` 화자 선택)
-`phase == Closing`이면 `summary_persona_id`를 우선 화자로(이미 SUMMARY_CADENCE 경로 존재 —
+`phase == Closing`이면 `summary_persona_id`를 우선 화자로(이미 SUMMARY_CADENCE 경로 존재 -
 Closing 단계에서는 cadence 무시하고 정리자 우선). 정리자가 직전 화자면 RRF 폴백(기존 패턴 동일).
 
-### 4.4 단계 전진 — 디스패치 카운트 (`dispatch` 끝, `TickOutcome::Dispatched` 직전)
+### 4.4 단계 전진 - 디스패치 카운트 (`dispatch` 끝, `TickOutcome::Dispatched` 직전)
 실제 생성 job을 보낸 뒤(`:691` 이후):
 ```rust
 if let Some(pc) = self.phase.as_mut() {
@@ -194,7 +194,7 @@ if let Some(pc) = self.phase.as_mut() {
 }
 ```
 `flow_now`는 dispatch 상단에서 이미 계산됨(`:633` 인근). content 없으면 None → 카운트만.
-`just_concluded: bool` 필드 추가(또는 `TickOutcome`에 `Concluded(PersonaId)` 변형 추가 —
+`just_concluded: bool` 필드 추가(또는 `TickOutcome`에 `Concluded(PersonaId)` 변형 추가 -
 **권장: TickOutcome 변형**이 web 분기에 깔끔. 아래 §5 참고).
 
 ### 4.5 사람 발화 재진입 (`submit_human`)
@@ -202,7 +202,7 @@ if let Some(pc) = self.phase.as_mut() {
 그 외에는 기존 `human_focus` 로직 그대로(단계 유지).
 
 ### 4.6 복원 (`restore_history`)
-저장 로그로 복원 시(`:958`), `phase`가 Some면 `Clash`로 시작(카운터 0)하도록 세팅 —
+저장 로그로 복원 시(`:958`), `phase`가 Some면 `Clash`로 시작(카운터 0)하도록 세팅 -
 복원된 방도 다시 클로징까지 도달 가능. (Opening/Positions를 재실행하지 않기 위함.)
 
 ## 5. web 배선 (`src/web.rs`)
@@ -221,7 +221,7 @@ if let Some(pc) = self.phase.as_mut() {
 - `phase`는 **`debate_plan`이 Some일 때만** 활성. driver/headless 경로(`driver.rs`)는 plan을
   쓰지 않으므로 **전혀 영향 없음**. 골든 5종은 driver 경로 → 무손상.
 - live에서도 plan이 None이면(예: chat_demo 일부 경로) phase None → 기존 동작 보존.
-- 단계 지시는 `history_snapshot`(생성 워커 전용)에만 들어간다 — `state.history`/flow/recall
+- 단계 지시는 `history_snapshot`(생성 워커 전용)에만 들어간다 - `state.history`/flow/recall
   불변(기존 INV-2와 동일).
 - `phase.rs`는 rng 무소비. dispatch 카운트는 화자선택 *이후*라 RRF 시퀀스 불변.
 - 검증: `cargo build -q` 후 `--headless --seed 42 --ticks 200` 2회 byte-identical 확인.

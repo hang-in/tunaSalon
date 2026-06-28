@@ -23,8 +23,8 @@ plan `salon-engine-v4.md` subtask 25. 동시성을 실제로 쓰는 도구. (1) 
 
 ## Change description
 
-- persona_collapse: 의미 유지(같은 모델·다른 persona prompt → 톤 비교)하되 동시. `BackendPool::new()` + `add(BackendConfig::new("cloud", "gemma4:31b-cloud", "http://localhost:11434", None, 3, None, timeout), demo_prompts())` + `set_default("cloud")`. jobs=[(persona, opening_history) ...] → `generate_batch`. 서버 미가동/미응답이면 해당 줄 None("(no response)") — panic 없음.
-- mixed_bench(신규): 두 백엔드 등록 —
+- persona_collapse: 의미 유지(같은 모델·다른 persona prompt → 톤 비교)하되 동시. `BackendPool::new()` + `add(BackendConfig::new("cloud", "gemma4:31b-cloud", "http://localhost:11434", None, 3, None, timeout), demo_prompts())` + `set_default("cloud")`. jobs=[(persona, opening_history) ...] → `generate_batch`. 서버 미가동/미응답이면 해당 줄 None("(no response)") - panic 없음.
+- mixed_bench(신규): 두 백엔드 등록 -
   - cloud: `BackendConfig::new("cloud", env SALON_CLOUD_MODEL 기본 "gemma4:31b-cloud", "http://localhost:11434", None, 3, None, t)`
   - friend: `BackendConfig::new_openai("friend", env SALON_FRIEND_MODEL 기본 "qwen3.6-35b-fast", env SALON_FRIEND_ENDPOINT 기본 "http://yongseek.iptime.org:8008", None, 1, Some(256), t)`
   - `add(.., demo_prompts())` 둘 다, `set_default("cloud")`, `add_route(<한 페르소나>, "friend")`.

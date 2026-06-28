@@ -51,7 +51,7 @@ cargo run -- --headless --seed 99  --ticks 80  --theta 0.65 | diff - /tmp/salon_
 - `cargo test` green(generate 시그니처 갱신 후 pool/ollama/openai/live 테스트 + 호출처 None). 신규 테스트(네트워크 없이):
   - (1) ollama/openai `build_request_body`/assemble가 recall=Some이면 회상 섹션 포함, None이면 생략.
   - (2) LiveSession이 submit_human + 도착 발화를 store에 record(오프라인 stub로 record 호출 확인), 미참여 격리 유지.
-  - (3) `PersonaRuntime::generate`(driver 경로)는 recall 미주입(None) — 기존 동작.
+  - (3) `PersonaRuntime::generate`(driver 경로)는 recall 미주입(None) - 기존 동작.
 - **골든 5종 바이트 동일**(driver/PersonaRuntime 경로 불변 → 핵심). 안 맞으면 driver 경로에 recall이 샌 것.
 
 ## Risks
