@@ -22,8 +22,8 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 // wire DTO/protocol 타입은 dto 서브모듈로 분리(god-file 분해). 직렬화 형식 무변경.
 mod dto;
 use dto::{
-    ClientFrame, HistoryMessage, Participant, ParticipantAxes, ReportDto, RoomReportResponse,
-    ServerFrame,
+    ClientFrame, HistoryMessage, Participant, ParticipantAxes, ReportDto, RoomListItemDto,
+    RoomReportResponse, ServerFrame,
 };
 
 #[allow(dead_code)]
@@ -1347,6 +1347,18 @@ pub fn serve_multi(
             axum::Json(RoomReportResponse { concluded, summary })
         }
 
+        // GET /api/rooms - 영속된 모든 방을 최신순으로("이전 토론" 페이지용).
+        async fn rooms_list_handler() -> impl IntoResponse {
+            let rooms: Vec<RoomListItemDto> = RoomStore::default_rooms_db_path()
+                .and_then(|p| RoomStore::open(&p).ok())
+                .and_then(|store| store.list_rooms().ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(RoomListItemDto::from)
+                .collect();
+            axum::Json(rooms)
+        }
+
         let dist_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist");
         let index_file = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist/index.html");
         if !std::path::Path::new(index_file).exists() {
@@ -1363,6 +1375,7 @@ pub fn serve_multi(
             .not_found_service(ServeFile::new(index_file));
         let app = Router::new()
             .route("/ws", get(ws_handler))
+            .route("/api/rooms", get(rooms_list_handler))
             .route("/api/rooms/{room_id}", delete(delete_room_handler))
             .route("/api/rooms/{room_id}/report", get(room_report_handler))
             .route("/api/suggested-topics", get(suggested_topics_handler))

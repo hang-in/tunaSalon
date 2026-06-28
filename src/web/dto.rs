@@ -62,6 +62,28 @@ pub(super) struct RoomReportResponse {
     pub(super) summary: String,
 }
 
+/// GET /api/rooms 응답 항목("이전 토론" 목록).
+#[derive(Serialize)]
+pub(super) struct RoomListItemDto {
+    pub(super) room_id: String,
+    pub(super) topics: Vec<String>,
+    pub(super) updated_at: i64,
+    pub(super) concluded: bool,
+    pub(super) report_count: i64,
+}
+
+impl From<crate::roomstore::RoomListItem> for RoomListItemDto {
+    fn from(r: crate::roomstore::RoomListItem) -> Self {
+        Self {
+            room_id: r.room_id,
+            topics: r.topics,
+            updated_at: r.updated_at,
+            concluded: r.concluded,
+            report_count: r.report_count,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 pub(super) enum ServerFrame {

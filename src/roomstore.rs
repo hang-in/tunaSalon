@@ -44,6 +44,16 @@ pub struct ReportRecord {
     pub conclusion: String,
 }
 
+/// "이전 토론" 목록 항목 (room_meta 1행 + 리포트 수). 메시지/참가자 전량 미포함(경량).
+#[derive(Debug, Clone)]
+pub struct RoomListItem {
+    pub room_id: String,
+    pub topics: Vec<String>,
+    pub updated_at: i64,
+    pub concluded: bool,
+    pub report_count: i64,
+}
+
 impl RoomStore {
     /// 파일 경로의 SQLite를 열거나 생성한다.
     ///
@@ -97,7 +107,7 @@ impl RoomStore {
     /// - `participants`: `personas` 순회, ord = 인덱스.
     ///   `persona_meta.get(&p.id)` 없는 persona는 건너뛴다.
     /// - `messages`: `history` 에서 content = Some 인 것만 seq(0부터) 부여.
-    /// - `room_meta`: topics = JSON, tick_count = 전달값, updated_at = 0.
+    /// - `room_meta`: topics = JSON, tick_count = 전달값, updated_at = 저장 시점 unix 초.
     #[allow(clippy::too_many_arguments)]
     pub fn save(
         &self,
@@ -172,15 +182,21 @@ impl RoomStore {
 
             // room_meta 삽입 (사람 4축 포함)
             let topics_json = serde_json::to_string(topics).unwrap_or_else(|_| "[]".to_string());
+            // updated_at: 저장 시점 unix 초("이전 토론" 목록 최신순 정렬·날짜 표시용).
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
             self.conn.execute(
                 "INSERT INTO room_meta(
                     room_id, topics_json, tick_count, updated_at,
                     human_blood, human_mbti, human_zodiac, human_role, report
-                 ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     room_id,
                     topics_json,
                     tick_count as i64,
+                    now,
                     human_axes.map(|a| a.blood.clone()),
                     human_axes.map(|a| a.mbti.clone()),
                     human_axes.map(|a| a.zodiac.clone()),
@@ -295,6 +311,32 @@ impl RoomStore {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         results.reverse(); // DESC → ASC
         Ok(results)
+    }
+
+    /// 영속된 모든 방의 경량 메타를 최신 활동순으로 반환한다("이전 토론" 목록용).
+    ///
+    /// room_meta 1행당 1개. 메시지/참가자 전량은 로드하지 않는다(목록 화면용 경량 쿼리).
+    /// concluded = report(종료 SSOT) 존재 여부. report_count = 누적 단계 리포트 수.
+    pub fn list_rooms(&self) -> rusqlite::Result<Vec<RoomListItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.room_id, m.topics_json, m.updated_at,
+                    (m.report IS NOT NULL) AS concluded,
+                    (SELECT COUNT(*) FROM room_reports r WHERE r.room_id = m.room_id) AS report_count
+             FROM room_meta m
+             ORDER BY m.updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let topics_json: String = row.get(1)?;
+            let topics: Vec<String> = serde_json::from_str(&topics_json).unwrap_or_default();
+            Ok(RoomListItem {
+                room_id: row.get(0)?,
+                topics,
+                updated_at: row.get(2)?,
+                concluded: row.get::<_, i64>(3)? != 0,
+                report_count: row.get(4)?,
+            })
+        })?;
+        rows.collect()
     }
 
     /// 방 상태를 복원한다.
@@ -655,6 +697,39 @@ mod tests {
         assert_eq!(p1.id, "bjorn");
         assert_eq!(m1.backend, "friend");
         assert!((m1.modifier.provocativeness - 1.1).abs() < 1e-10);
+    }
+
+    /// list_rooms: 저장된 모든 방을 메타와 함께 반환(concluded/report_count 포함).
+    #[test]
+    fn list_rooms_returns_all_with_meta() {
+        let store = make_store();
+        let personas = vec![make_persona("aria", "Aria", 0.8)];
+        let meta = BTreeMap::new();
+        let history = vec![make_event(0.0, "aria", 0.5, Some("hi"))];
+
+        // room1: 진행 중(report None, 리포트 0개)
+        store
+            .save("room1", &personas, &meta, &history, &["러스트".to_string()], 1, None, None)
+            .expect("save room1");
+        // room2: 종료(report Some) + 단계 리포트 2개
+        store
+            .save("room2", &personas, &meta, &history, &["민초".to_string()], 1, None, Some("종료 리포트"))
+            .expect("save room2");
+        store.append_report("room2", "민초", "# md", "결론1").expect("rep1");
+        store.append_report("room2", "민초", "# md", "결론2").expect("rep2");
+
+        let rooms = store.list_rooms().expect("list_rooms 성공");
+        assert_eq!(rooms.len(), 2);
+
+        let r1 = rooms.iter().find(|r| r.room_id == "room1").expect("room1 있어야");
+        assert_eq!(r1.topics, vec!["러스트".to_string()]);
+        assert!(!r1.concluded);
+        assert_eq!(r1.report_count, 0);
+
+        let r2 = rooms.iter().find(|r| r.room_id == "room2").expect("room2 있어야");
+        assert_eq!(r2.topics, vec!["민초".to_string()]);
+        assert!(r2.concluded);
+        assert_eq!(r2.report_count, 2);
     }
 
     /// (2) content=None placeholder는 messages에서 제외된다.

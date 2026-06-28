@@ -8,8 +8,9 @@ import { ThreeBackground } from "@/components/ThreeBackground";
 import { CreateRoomDialog } from "@/components/CreateRoomDialog";
 import { HumanProfileDialog } from "@/components/HumanProfileDialog";
 import { ModelSettingsDialog } from "@/components/ModelSettingsDialog";
+import { ArchivePage, type RoomListItem } from "@/components/ArchivePage";
 import { getSelectedModels } from "@/lib/models";
-import { Cpu, MessageSquareText, PanelRightOpen, Plus, Trash2, Users } from "lucide-react";
+import { Archive, Cpu, MessageSquareText, PanelRightOpen, Plus, Trash2, Users } from "lucide-react";
 
 interface DebateRoom {
   id: string;
@@ -136,6 +137,7 @@ function App() {
   const [topicPlaceholder] = useState(randomTopicSuggestion);
   const [topicDraft, setTopicDraft] = useState("");
   const [activeRoom, setActiveRoom] = useState<DebateRoom | null>(null);
+  const [showArchive, setShowArchive] = useState(false);
   const [recentRooms, setRecentRooms] = useState<DebateRoom[]>(readRecentRooms);
   const lobbyRooms = useMemo(() => dedupeRooms(recentRooms), [recentRooms]);
   // 서버(room_reports) 기준 결론 여부. recentRooms(localStorage)와 분리해 관리한다 —
@@ -350,6 +352,22 @@ function App() {
   const showThreeBg = messages.length < 6;
 
   if (!inRoom) {
+    if (showArchive) {
+      return (
+        <ArchivePage
+          onBack={() => setShowArchive(false)}
+          onEnter={(item: RoomListItem) => {
+            setShowArchive(false);
+            openRoom({
+              id: item.room_id,
+              title: item.topics[0]?.trim() || item.room_id,
+              topics: item.topics,
+              concluded: item.concluded,
+            });
+          }}
+        />
+      );
+    }
     return (
       <div className="h-[100dvh] w-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
         <main className="h-full overflow-y-auto">
@@ -370,6 +388,15 @@ function App() {
                 <h1 className="text-xl font-extrabold tracking-tight">tunaSalon</h1>
                 <p className="text-sm text-[var(--text-secondary)]">주제 토론방 로비</p>
               </div>
+              <button
+                onClick={() => setShowArchive(true)}
+                className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg text-[13px] font-semibold transition-colors"
+                style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
+                title="이전 토론 전체 보기"
+              >
+                <Archive size={15} />
+                <span className="hidden sm:inline">이전 토론</span>
+              </button>
               <button
                 onClick={() => setModelSettingsOpen(true)}
                 className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg text-[13px] font-semibold transition-colors"
