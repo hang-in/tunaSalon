@@ -8,7 +8,7 @@
 
 use crate::live::{PersonaAxes, PersonaMeta};
 use crate::model::{Event, Persona, PersonaModifier};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -339,6 +339,48 @@ impl RoomStore {
         rows.collect()
     }
 
+    /// 방의 외부 공유 토큰을 발급한다(읽기전용 공개 링크용). 멱등 - 같은 방은 같은 토큰.
+    ///
+    /// 이미 발급된 토큰이 있으면 그것을 반환하고, 없으면 랜덤 32-hex 토큰을 새로 만든다.
+    pub fn create_share(&self, room_id: &str) -> rusqlite::Result<String> {
+        if let Some(existing) = self
+            .conn
+            .query_row(
+                "SELECT token FROM room_shares WHERE room_id = ?1 LIMIT 1",
+                params![room_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return Ok(existing);
+        }
+        let token = format!(
+            "{:016x}{:016x}",
+            rand::random::<u64>(),
+            rand::random::<u64>()
+        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn.execute(
+            "INSERT INTO room_shares(token, room_id, created_at) VALUES (?1, ?2, ?3)",
+            params![token, room_id, now],
+        )?;
+        Ok(token)
+    }
+
+    /// 공유 토큰을 room_id로 해석한다. 없으면 None.
+    pub fn resolve_share(&self, token: &str) -> rusqlite::Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT room_id FROM room_shares WHERE token = ?1",
+                params![token],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+    }
+
     /// 방 상태를 복원한다.
     ///
     /// 해당 `room_id` row가 `room_meta`에 없으면 `Ok(None)`.
@@ -518,6 +560,15 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
             conclusion TEXT NOT NULL,
             PRIMARY KEY(room_id, seq)
         );",
+    )?;
+    // 외부 공유 토큰 (읽기전용 공개 링크). token이 공개키, room_id는 비공개.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS room_shares(
+            token      TEXT PRIMARY KEY,
+            room_id    TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_room_shares_room ON room_shares(room_id);",
     )?;
     Ok(())
 }
@@ -730,6 +781,21 @@ mod tests {
         assert_eq!(r2.topics, vec!["민초".to_string()]);
         assert!(r2.concluded);
         assert_eq!(r2.report_count, 2);
+    }
+
+    /// 공유 토큰: 멱등 발급 + 해석 roundtrip + 무효 토큰 None.
+    #[test]
+    fn share_token_roundtrip_and_idempotent() {
+        let store = make_store();
+        let t1 = store.create_share("room1").expect("create");
+        let t2 = store.create_share("room1").expect("멱등");
+        assert_eq!(t1, t2, "같은 방은 같은 토큰을 재사용");
+        assert_eq!(store.resolve_share(&t1).unwrap(), Some("room1".to_string()));
+        assert_eq!(store.resolve_share("nonexistent").unwrap(), None);
+
+        let t3 = store.create_share("room2").expect("create2");
+        assert_ne!(t1, t3, "다른 방은 다른 토큰");
+        assert_eq!(store.resolve_share(&t3).unwrap(), Some("room2".to_string()));
     }
 
     /// (2) content=None placeholder는 messages에서 제외된다.

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Users, Tag, Box, HelpCircle, X, Pause, Play, LogOut, RotateCcw, Trash2, ArrowLeft } from "lucide-react";
+import { Users, Tag, Box, HelpCircle, X, Pause, Play, LogOut, RotateCcw, Trash2, ArrowLeft, Share2 } from "lucide-react";
 
 interface HeaderProps {
   topics: string[];
@@ -12,9 +12,10 @@ interface HeaderProps {
   onLeave: () => void;
   onReset: () => void;
   onDelete: () => void;
+  onShare: () => void;
 }
 
-export function Header({ topics, connected, participantCount, bg3d, onToggle3d, paused, onTogglePause, onLeave, onReset, onDelete }: HeaderProps) {
+export function Header({ topics, connected, participantCount, bg3d, onToggle3d, paused, onTogglePause, onLeave, onReset, onDelete, onShare }: HeaderProps) {
   const [helpOpen, setHelpOpen] = useState(false);
   return (
     <header
@@ -201,6 +202,14 @@ export function Header({ topics, connected, participantCount, bg3d, onToggle3d, 
           <Users size={13} />
           <span className="text-xs font-medium">{participantCount}</span>
         </div>
+        <button
+          onClick={onShare}
+          className="flex p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          aria-label="토론 공유"
+          title="읽기전용 공유 링크 복사"
+        >
+          <Share2 size={16} className="text-[var(--text-secondary)]" />
+        </button>
         <button
           onClick={onReset}
           className="flex p-1.5 rounded-lg hover:bg-white/5 transition-colors"

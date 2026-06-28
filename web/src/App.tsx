@@ -138,6 +138,7 @@ function App() {
   const [topicDraft, setTopicDraft] = useState("");
   const [activeRoom, setActiveRoom] = useState<DebateRoom | null>(null);
   const [showArchive, setShowArchive] = useState(false);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
   const [recentRooms, setRecentRooms] = useState<DebateRoom[]>(readRecentRooms);
   const lobbyRooms = useMemo(() => dedupeRooms(recentRooms), [recentRooms]);
   // 서버(room_reports) 기준 결론 여부. recentRooms(localStorage)와 분리해 관리한다 —
@@ -320,6 +321,28 @@ function App() {
   const handleDeleteActiveRoom = useCallback(() => {
     if (activeRoom) void deleteRoom(activeRoom);
   }, [activeRoom, deleteRoom]);
+
+  // 읽기전용 공유 링크 발급 + 클립보드 복사(PC/모바일). 토큰 발급은 멱등.
+  const shareRoom = useCallback(async () => {
+    if (!activeRoom) return;
+    try {
+      const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoom.id)}/share`, {
+        method: "POST",
+      });
+      const data = (await res.json()) as { token?: string } | null;
+      if (!data?.token) throw new Error("no token");
+      const link = `${window.location.origin}/share/${data.token}`;
+      try {
+        await navigator.clipboard.writeText(link);
+        setShareNotice("공유 링크를 복사했습니다");
+      } catch {
+        setShareNotice(link); // 복사 실패 시 링크를 그대로 노출
+      }
+    } catch {
+      setShareNotice("공유 링크 생성에 실패했습니다");
+    }
+    window.setTimeout(() => setShareNotice(null), 4000);
+  }, [activeRoom]);
 
   const handleResetDebate = useCallback(() => {
     const topics = engineState.topics.length > 0 ? engineState.topics : activeRoom?.topics ?? [];
@@ -609,7 +632,24 @@ function App() {
         onLeave={handleLeaveRoom}
         onReset={handleResetDebate}
         onDelete={handleDeleteActiveRoom}
+        onShare={shareRoom}
       />
+
+      {/* 공유 링크 토스트 */}
+      {shareNotice && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-[90vw]">
+          <div
+            className="px-4 py-2.5 rounded-lg text-sm shadow-lg break-all"
+            style={{
+              background: "var(--bg-elevated)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-color)",
+            }}
+          >
+            {shareNotice}
+          </div>
+        </div>
+      )}
 
       {/* P2-1: 연결 끊김 배너 (in-flow — 헤더 아래에 자연스럽게 쌓임) */}
       {!connected && (

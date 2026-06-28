@@ -22,8 +22,8 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 // wire DTO/protocol 타입은 dto 서브모듈로 분리(god-file 분해). 직렬화 형식 무변경.
 mod dto;
 use dto::{
-    ClientFrame, HistoryMessage, Participant, ParticipantAxes, ReportDto, RoomListItemDto,
-    RoomReportResponse, ServerFrame,
+    ClientFrame, CreateShareResponse, HistoryMessage, Participant, ParticipantAxes, ReportDto,
+    RoomListItemDto, RoomReportResponse, ServerFrame, ShareViewDto,
 };
 
 #[allow(dead_code)]
@@ -1241,7 +1241,7 @@ pub fn serve_multi(
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
         use axum::{
-            routing::{delete, get},
+            routing::{delete, get, post},
             Router,
         };
         use tower_http::services::{ServeDir, ServeFile};
@@ -1359,6 +1359,74 @@ pub fn serve_multi(
             axum::Json(rooms)
         }
 
+        // POST /api/rooms/{room_id}/share - 외부 공유 토큰 발급(멱등). 소유자만 호출(basic_auth 뒤).
+        async fn create_share_handler(
+            Path(raw_room_id): Path<String>,
+            AxumState(st): AxumState<MultiAppState>,
+        ) -> impl IntoResponse {
+            let room_id = normalize_room_id(&raw_room_id, &st.default_room_id);
+            let token = RoomStore::default_rooms_db_path()
+                .and_then(|p| RoomStore::open(&p).ok())
+                .and_then(|store| store.create_share(&room_id).ok());
+            axum::Json(token.map(|token| CreateShareResponse { token }))
+        }
+
+        // GET /api/share/{token} - 읽기전용 토론 전사(공개; Caddy가 basic_auth 예외).
+        // 토큰 무효/방 없음 → null.
+        async fn share_view_handler(Path(token): Path<String>) -> impl IntoResponse {
+            let view = (|| {
+                let store =
+                    RoomStore::default_rooms_db_path().and_then(|p| RoomStore::open(&p).ok())?;
+                let room_id = store.resolve_share(&token).ok().flatten()?;
+                let snap = store.load(&room_id).ok().flatten()?;
+                let reports = store.load_reports(&room_id).unwrap_or_default();
+                let participants: Vec<Participant> = snap
+                    .participants
+                    .iter()
+                    .map(|(p, m)| Participant {
+                        id: p.id.clone(),
+                        name: p.name.clone(),
+                        model: Some(backend_to_model(&m.backend)),
+                        axes: m.axes.clone().map(|a| ParticipantAxes {
+                            blood: a.blood,
+                            mbti: a.mbti,
+                            zodiac: a.zodiac,
+                            role: a.role,
+                        }),
+                    })
+                    .collect();
+                let messages: Vec<HistoryMessage> = snap
+                    .messages
+                    .iter()
+                    .filter_map(|e| {
+                        let content = e.content.clone()?;
+                        let name = snap
+                            .participants
+                            .iter()
+                            .find(|(p, _)| p.id == e.speaker)
+                            .map(|(p, _)| p.name.clone())
+                            .unwrap_or_else(|| {
+                                human_display_name(&e.speaker, snap.human_axes.as_ref())
+                            });
+                        Some(HistoryMessage {
+                            speaker: e.speaker.clone(),
+                            name,
+                            content,
+                            ts: e.ts,
+                        })
+                    })
+                    .collect();
+                let reports: Vec<ReportDto> = reports.into_iter().map(ReportDto::from).collect();
+                Some(ShareViewDto {
+                    topics: snap.topics,
+                    participants,
+                    messages,
+                    reports,
+                })
+            })();
+            axum::Json(view)
+        }
+
         let dist_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist");
         let index_file = concat!(env!("CARGO_MANIFEST_DIR"), "/web/dist/index.html");
         if !std::path::Path::new(index_file).exists() {
@@ -1378,6 +1446,8 @@ pub fn serve_multi(
             .route("/api/rooms", get(rooms_list_handler))
             .route("/api/rooms/{room_id}", delete(delete_room_handler))
             .route("/api/rooms/{room_id}/report", get(room_report_handler))
+            .route("/api/rooms/{room_id}/share", post(create_share_handler))
+            .route("/api/share/{token}", get(share_view_handler))
             .route("/api/suggested-topics", get(suggested_topics_handler))
             .fallback_service(serve_dir)
             .with_state(app_state);

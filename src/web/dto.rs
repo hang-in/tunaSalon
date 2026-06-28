@@ -84,6 +84,21 @@ impl From<crate::roomstore::RoomListItem> for RoomListItemDto {
     }
 }
 
+/// POST /api/rooms/{room_id}/share 응답(발급된 공유 토큰).
+#[derive(Serialize)]
+pub(super) struct CreateShareResponse {
+    pub(super) token: String,
+}
+
+/// GET /api/share/{token} 응답(읽기전용 토론 전사). 토큰 무효면 서버는 null 반환.
+#[derive(Serialize)]
+pub(super) struct ShareViewDto {
+    pub(super) topics: Vec<String>,
+    pub(super) participants: Vec<Participant>,
+    pub(super) messages: Vec<HistoryMessage>,
+    pub(super) reports: Vec<ReportDto>,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 pub(super) enum ServerFrame {
