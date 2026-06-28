@@ -409,7 +409,10 @@ function App() {
               </div>
               <div className="flex-1">
                 <h1 className="text-xl font-extrabold tracking-tight">tunaSalon</h1>
-                <p className="text-sm text-[var(--text-secondary)]">주제 토론방 로비</p>
+                <p className="text-sm text-[var(--text-secondary)]">
+                  주제 토론방 로비
+                  <span className="ml-2 text-[10px] opacity-70">{__BUILD_VERSION__}</span>
+                </p>
               </div>
               <button
                 onClick={() => setShowArchive(true)}

@@ -6,6 +6,8 @@ export interface RoomListItem {
   room_id: string;
   topics: string[];
   updated_at: number; // unix 초
+  created_at?: number; // 방 최초 생성(구 데이터는 없음)
+  concluded_at?: number; // 마지막 결론 시각(결론 없으면 없음)
   concluded: boolean;
   report_count: number;
 }
@@ -15,6 +17,15 @@ interface ArchivePageProps {
   onEnter: (item: RoomListItem) => void;
   /** 로비로 돌아가기. */
   onBack: () => void;
+}
+
+/** unix 초 -> "YYYY.MM.DD". 0/없으면 빈 문자열. */
+function fmtDate(unixSec?: number): string {
+  if (!unixSec) return "";
+  const d = new Date(unixSec * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}.${mm}.${dd}`;
 }
 
 /** unix 초 -> "N분/시간/일 전" 또는 날짜. updated_at=0(구 데이터)이면 빈 문자열. */
@@ -133,6 +144,15 @@ export function ArchivePage({ onEnter, onBack }: ArchivePageProps) {
                         )}
                       </div>
                       <h2 className="text-base font-bold leading-snug mb-2">{title}</h2>
+                      {/* 시작 / 결론 날짜 */}
+                      {(fmtDate(item.created_at) || item.concluded_at) && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--text-secondary)] mb-1">
+                          {fmtDate(item.created_at) && <span>시작 {fmtDate(item.created_at)}</span>}
+                          {item.concluded_at && (
+                            <span style={{ color: "#4ade80" }}>결론 {fmtDate(item.concluded_at)}</span>
+                          )}
+                        </div>
+                      )}
                       {item.report_count > 0 && (
                         <p className="text-xs text-[var(--text-secondary)]">
                           리포트 {item.report_count}개

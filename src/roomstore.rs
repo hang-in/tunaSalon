@@ -50,6 +50,10 @@ pub struct RoomListItem {
     pub room_id: String,
     pub topics: Vec<String>,
     pub updated_at: i64,
+    /// 방 최초 생성 unix 초. 구 데이터(컬럼 추가 전 저장)는 None.
+    pub created_at: Option<i64>,
+    /// 마지막 리포트(결론) 생성 unix 초. 결론 없으면 None.
+    pub concluded_at: Option<i64>,
     pub concluded: bool,
     pub report_count: i64,
 }
@@ -124,6 +128,22 @@ impl RoomStore {
         self.conn.execute("BEGIN", [])?;
 
         let result = (|| -> rusqlite::Result<()> {
+            // 저장 시점 unix 초. created_at은 DELETE 전에 기존 값을 읽어 보존(최초 생성 시각 유지).
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let created_at = self
+                .conn
+                .query_row(
+                    "SELECT created_at FROM room_meta WHERE room_id = ?1",
+                    params![room_id],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .optional()?
+                .flatten()
+                .unwrap_or(now);
+
             // 기존 row 삭제
             self.conn.execute(
                 "DELETE FROM room_participants WHERE room_id = ?1",
@@ -180,18 +200,13 @@ impl RoomStore {
                 }
             }
 
-            // room_meta 삽입 (사람 4축 포함)
+            // room_meta 삽입 (사람 4축 포함). updated_at=now(최신순 정렬), created_at=보존값.
             let topics_json = serde_json::to_string(topics).unwrap_or_else(|_| "[]".to_string());
-            // updated_at: 저장 시점 unix 초("이전 토론" 목록 최신순 정렬·날짜 표시용).
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
             self.conn.execute(
                 "INSERT INTO room_meta(
                     room_id, topics_json, tick_count, updated_at,
-                    human_blood, human_mbti, human_zodiac, human_role, report
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    human_blood, human_mbti, human_zodiac, human_role, report, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     room_id,
                     topics_json,
@@ -202,6 +217,7 @@ impl RoomStore {
                     human_axes.map(|a| a.zodiac.clone()),
                     human_axes.map(|a| a.role.clone()),
                     report,
+                    created_at,
                 ],
             )?;
 
@@ -321,7 +337,9 @@ impl RoomStore {
         let mut stmt = self.conn.prepare(
             "SELECT m.room_id, m.topics_json, m.updated_at,
                     (m.report IS NOT NULL) AS concluded,
-                    (SELECT COUNT(*) FROM room_reports r WHERE r.room_id = m.room_id) AS report_count
+                    (SELECT COUNT(*) FROM room_reports r WHERE r.room_id = m.room_id) AS report_count,
+                    m.created_at,
+                    (SELECT MAX(created_at) FROM room_reports r WHERE r.room_id = m.room_id) AS concluded_at
              FROM room_meta m
              ORDER BY m.updated_at DESC",
         )?;
@@ -334,6 +352,8 @@ impl RoomStore {
                 updated_at: row.get(2)?,
                 concluded: row.get::<_, i64>(3)? != 0,
                 report_count: row.get(4)?,
+                created_at: row.get(5)?,
+                concluded_at: row.get(6)?,
             })
         })?;
         rows.collect()
@@ -549,6 +569,8 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
     }
     // 종료 리포트(마크다운)도 방 단위 1개.
     let _ = conn.execute("ALTER TABLE room_meta ADD COLUMN report TEXT", []);
+    // 방 최초 생성 시각(unix 초). 재저장(DELETE+INSERT) 시 save가 기존 값을 보존한다.
+    let _ = conn.execute("ALTER TABLE room_meta ADD COLUMN created_at INTEGER", []);
     // 단계형 토론 리포트 히스토리 테이블 (멱등 생성).
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS room_reports(
@@ -776,11 +798,15 @@ mod tests {
         assert_eq!(r1.topics, vec!["러스트".to_string()]);
         assert!(!r1.concluded);
         assert_eq!(r1.report_count, 0);
+        assert!(r1.created_at.is_some(), "created_at 기록돼야");
+        assert!(r1.concluded_at.is_none(), "결론 없으면 concluded_at None");
 
         let r2 = rooms.iter().find(|r| r.room_id == "room2").expect("room2 있어야");
         assert_eq!(r2.topics, vec!["민초".to_string()]);
         assert!(r2.concluded);
         assert_eq!(r2.report_count, 2);
+        assert!(r2.created_at.is_some(), "created_at 기록돼야");
+        assert!(r2.concluded_at.is_some(), "리포트 있으면 concluded_at Some");
     }
 
     /// 공유 토큰: 멱등 발급 + 해석 roundtrip + 무효 토큰 None.

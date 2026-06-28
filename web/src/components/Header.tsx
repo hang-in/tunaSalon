@@ -58,8 +58,8 @@ export function Header({ topics, connected, participantCount, bg3d, onToggle3d, 
         <h1 className="text-lg font-extrabold tracking-tight text-[var(--text-primary)]">
           tunaSalon
         </h1>
-        {/* 빌드 버전(git hash + 날짜) — 배포 반영 여부 확인용 */}
-        <span className="text-[10px] text-[var(--text-secondary)] opacity-60 shrink-0 hidden sm:inline">
+        {/* 빌드 버전(git hash + 날짜) - 배포 반영 여부 확인용. 모바일에서도 항상 표시. */}
+        <span className="text-[10px] text-[var(--text-secondary)] opacity-70 shrink-0 whitespace-nowrap">
           {__BUILD_VERSION__}
         </span>
       </div>

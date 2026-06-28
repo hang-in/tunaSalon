@@ -68,6 +68,10 @@ pub(super) struct RoomListItemDto {
     pub(super) room_id: String,
     pub(super) topics: Vec<String>,
     pub(super) updated_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) created_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) concluded_at: Option<i64>,
     pub(super) concluded: bool,
     pub(super) report_count: i64,
 }
@@ -78,6 +82,8 @@ impl From<crate::roomstore::RoomListItem> for RoomListItemDto {
             room_id: r.room_id,
             topics: r.topics,
             updated_at: r.updated_at,
+            created_at: r.created_at,
+            concluded_at: r.concluded_at,
             concluded: r.concluded,
             report_count: r.report_count,
         }
