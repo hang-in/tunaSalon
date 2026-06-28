@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { Loader2, MessageCircle } from "lucide-react";
-import { personaColorSet } from "@/lib/personaAvatar";
+import { PersonaAvatar, personaColorSet } from "@/lib/personaAvatar";
+import { personaDescription, personaTagline } from "@/lib/personaDescription";
+import { bloodLabel, zodiacLabel } from "@/lib/personaLabels";
+import { ReportMarkdown } from "@/components/ReportMarkdown";
 
 interface ShareAxes {
   blood: string;
@@ -121,13 +124,41 @@ function ShareBody({ data }: { data: ShareData }) {
             ))}
           </div>
         )}
-        {/* 참가자 */}
+        {/* 참가자: 아바타 + 색상 이름 + 4축 배지 + 성향(롤오버=상세) */}
         {data.participants.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
             {data.participants.map((p) => (
-              <span key={p.id} className="text-[11px] font-medium" style={{ color: colorOf(p.id) }}>
-                {p.name}
-              </span>
+              <div
+                key={p.id}
+                className="flex items-center gap-2.5 rounded-lg p-2.5 cursor-help"
+                style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)" }}
+                title={personaDescription(p.axes)}
+              >
+                <div
+                  className="shrink-0 w-9 h-9 rounded-full overflow-hidden flex items-center justify-center"
+                  style={{ background: `${colorOf(p.id)}22` }}
+                >
+                  <PersonaAvatar axes={p.axes} color={colorOf(p.id)} pose="calm" size={36} />
+                </div>
+                <div className="min-w-0">
+                  <div
+                    className="text-[13px] font-semibold leading-tight"
+                    style={{ color: colorOf(p.id) }}
+                  >
+                    {p.name}
+                  </div>
+                  {p.axes && (
+                    <div className="text-[10px] text-[var(--text-secondary)] opacity-80">
+                      {p.axes.mbti} · {bloodLabel(p.axes.blood)} · {zodiacLabel(p.axes.zodiac)}
+                    </div>
+                  )}
+                  {personaTagline(p.axes) && (
+                    <div className="text-[11px] text-[var(--text-secondary)] truncate">
+                      {personaTagline(p.axes)}
+                    </div>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -177,8 +208,10 @@ function ShareBody({ data }: { data: ShareData }) {
                 className="rounded-lg p-4"
                 style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)" }}
               >
-                {r.topic && <p className="text-xs text-[var(--text-secondary)] mb-1.5">{r.topic}</p>}
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.conclusion}</p>
+                {r.topic && <p className="text-xs text-[var(--text-secondary)] mb-2">{r.topic}</p>}
+                <div className="text-sm leading-relaxed">
+                  <ReportMarkdown content={r.markdown || r.conclusion} />
+                </div>
               </div>
             ))}
           </div>

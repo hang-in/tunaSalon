@@ -62,3 +62,9 @@ export function personaDescription(axes?: DescAxes): string {
   const lines = [MBTI_KO[mbti], BLOOD_KO[blood], ZODIAC_KO[zodiac]].filter(Boolean);
   return lines.length ? `${head}\n• ${lines.join("\n• ")}` : head;
 }
+
+/** 한 줄 성향 요약(MBTI 기준 대표 성향). axes 없으면 빈 문자열. */
+export function personaTagline(axes?: DescAxes): string {
+  if (!axes) return "";
+  return MBTI_KO[(axes.mbti ?? "").toUpperCase()] ?? "";
+}
