@@ -376,11 +376,11 @@ tunaSalon이 다루는 문제는 조금 다릅니다.
 
 ## 참고 문서
 
-- [HISTORY.ko.md](HISTORY.ko.md) — v0.1~v0.10 엔진과 제품 트랙 walkthrough
-- [docs/reference/salon-engine-design.md](docs/reference/salon-engine-design.md) — 엔진 설계 상세
-- Multivariate Hawkes process — self-exciting point process 기반 발언 욕구 모델
-- Reciprocal Rank Fusion — 여러 신호를 합친 화자 선택
-- AutoGen GroupChat 패턴 — LLM 그룹 대화 패턴 참고
+- [HISTORY.ko.md](HISTORY.ko.md) - v0.1~v0.10 엔진과 제품 트랙 walkthrough
+- [docs/reference/salon-engine-design.md](docs/reference/salon-engine-design.md) - 엔진 설계 상세
+- Multivariate Hawkes process - self-exciting point process 기반 발언 욕구 모델
+- Reciprocal Rank Fusion - 여러 신호를 합친 화자 선택
+- AutoGen GroupChat 패턴 - LLM 그룹 대화 패턴 참고
 
 ---
 
