@@ -10,7 +10,7 @@ import { ReportMarkdown } from "@/components/ReportMarkdown";
 interface ChatAreaProps {
   messages: ChatMessage[];
   engineState: EngineState;
-  getPersonaConfig: (id: string) => PersonaConfig;
+  getPersonaConfig: (id: string, blood?: string) => PersonaConfig;
   connected: boolean;
 }
 
@@ -40,7 +40,7 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
     () =>
       engineState.participants
         .filter((p) => p.id !== "나")
-        .map((p) => ({ name: p.name, color: getPersonaConfig(p.id).color })),
+        .map((p) => ({ name: p.name, color: getPersonaConfig(p.id, p.axes?.blood).color })),
     [engineState.participants, getPersonaConfig]
   );
 
@@ -141,7 +141,12 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
           }
 
           const isHuman = group.messages[0]?.isHuman ?? false;
-          const config = getPersonaConfig(group.speaker);
+          // 이 participant의 axes 정보 (동적 persona만 존재).
+          const participantAxes = engineState.participants.find(
+            (p) => p.id === group.speaker
+          )?.axes;
+          // blood를 넘겨 사이드바 참가자 카드와 같은 색(혈액형 팔레트)을 쓴다.
+          const config = getPersonaConfig(group.speaker, participantAxes?.blood);
           // 화자 표시 이름: 서버가 보낸 message.name(동적 persona 실제 이름) 우선.
           // config.name은 하드코딩 3명만 정확하고 동적 persona는 폴백이라 쓰지 않는다.
           const displayName = group.messages[0]?.name || config.name;
@@ -149,11 +154,6 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
           // 이 speaker의 마지막 그룹인지 판정(pending 깜빡임을 마지막 그룹에만 적용).
           const isLastGroupOfSpeaker =
             gi === grouped.map((g) => g.speaker).lastIndexOf(group.speaker);
-
-          // 이 participant의 axes 정보 (동적 persona만 존재).
-          const participantAxes = engineState.participants.find(
-            (p) => p.id === group.speaker
-          )?.axes;
 
           return (
             <div
@@ -202,7 +202,8 @@ export function ChatArea({ messages, engineState, getPersonaConfig, connected }:
                 {!isHuman && (
                   <span className="flex items-baseline gap-1.5 mb-1 ml-1">
                     <span
-                      className="text-[11px] font-medium text-[var(--text-secondary)] cursor-help"
+                      className="text-[11px] cursor-help"
+                      style={{ color: config.color }}
                       title={personaDescription(participantAxes)}
                     >
                       {displayName}

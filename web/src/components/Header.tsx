@@ -57,6 +57,10 @@ export function Header({ topics, connected, participantCount, bg3d, onToggle3d, 
         <h1 className="text-lg font-extrabold tracking-tight text-[var(--text-primary)]">
           tunaSalon
         </h1>
+        {/* 빌드 버전(git hash + 날짜) — 배포 반영 여부 확인용 */}
+        <span className="text-[10px] text-[var(--text-secondary)] opacity-60 shrink-0 hidden sm:inline">
+          {__BUILD_VERSION__}
+        </span>
       </div>
 
       {/* Center: Topic chips */}
