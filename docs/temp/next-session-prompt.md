@@ -1,53 +1,42 @@
 ---
-title: 다음 세션 첫 대화 복붙 프롬프트 (web 제품 트랙 라이브 튜닝 + 영속 4축)
-type: reference
-status: active
-updated_at: 2026-06-03
+type: handoff
+status: in_progress
+updated_at: 2026-06-29
 ---
 
-# 다음 세션 킥오프 프롬프트
+# tunaSalon 핸드오프 (다음 세션)
 
-아래 블록을 새 세션 첫 메시지로 복붙하세요. (이번 세션에서 web 제품 트랙을 대거 구현: 동적 persona 초대 + 단일방 영속 + 형태소 flow + 활기 게이지 + 4축 배지 + pace 조절 + LLM fast/no-think + base_rate 튜닝까지. `--web` 라이브로 사용자가 직접 테스트하며 버그를 잡는 중.)
+> 표기 규칙: 존댓말, em-dash 금지(일반 대시/콜론), 라이브 도메인 비노출(소스공개·서비스 비공개).
+> 구현 위임은 Sonnet 서브에이전트(codex 비사용), Opus가 스펙·리뷰·검증.
 
----
+## 0. 현재 상태 (origin/main = bf83a1f)
 
-```
-tunaSalon 이어서 작업한다. 먼저 CLAUDE.md + 메모리(web-ux-flow, friend-server-vllm, ort-embedding-viable) + docs/plans/salon-web-ux.md + git log --oneline -30 을 읽고 현황을 파악해.
+v0.1~v0.10 엔진 위에서 브라우저 토론 앱이 라이브로 돕니다(홈랩 n100, basic_auth). 기본 빌드/headless 골든은 무손상. 테스트: default 306 / friend-engine 319 / semantic 347 / web 356.
 
-현재 상태(web 제품 트랙, 라이브 검증 중):
-- 동적 persona 초대: LiveSession add/remove_persona + persona_meta(backend/system_prompt/modifier/axes) + pool.generate_on + 케미 alpha 동적 재계산(recompute_alpha, spectral radius 정규화). web invite/remove 프레임. persona_kit assemble(4축 조립) + 인디언식 자동 이름.
-- 단일방 영속: RoomStore(rooms.db, web feature, friend engine memory.db와 독립) 저장/복원. 단 system_prompt 텍스트만 저장 -> 코드 바꾸면 기존 방 미반영(매번 rooms.db 비움) + 4축 미저장이라 복원 시 배지 사라짐.
-- 형태소 flow: morphology feature(Lindera, friend-engine/web 의존). 한국어 어간 통일로 흐름/냉각 게이지가 한국어에서 작동(단 발산 대화는 수렴도 낮음=정상).
-- 활기 게이지(liveliness): 최근 발화 빈도. 흐름/냉각 위에 추가.
-- 4축 배지(채팅), pace 런타임 조절(기본 6s), 입장/퇴장 알림, 화자 이름/색 동적(message.name + id해시), pending 마지막 그룹만, 닉네임 공백 제거, persona 자기 이름+대화 가드레일+한국어 프롬프트.
-- LLM: friend=qwen3.6-35b-fast + thinking off(reasoning ~70s 제거), cloud(gemma) thinking off. vllm-swap 주의(모델 전환 첫 발화 ~2.5분, timeout 180s).
-- base_rate 1차 튜닝: 동적 persona가 역할/MBTI 편차로 한 명만 발화하던 것 -> base_rate 선형 압축(0.55+raw*0.30) + reactivity 하한 0.4. 모든 초대 persona가 theta 근처로.
+## 1. 이번 세션에 한 것 (2026-06-28~29)
 
-검증: 골든 5/5, default ~226 / web ~233 / friend-engine ~277, smoke green.
+**리팩토링 R3 (엔진 코어, golden/recall byte-identical 검증):**
+- ① per-tick 결정적 코어 추출(5ce17eb): driver/live 공유 `advance_intensities`/`filter_self_repeat`/`suppress_chosen`. decide_one_tick 전체 통합은 보류(rng 분기 위험).
+- ② recall BM25 leg 통합(b397b78): `bm25_leg_ids`/`fetch_events_by_ids`, BM25-only를 2단계로 재구조화.
+- ③ LiveSession 디스패치 캡슐화(e8880d9): `GenerationWorker`. 입력(human_focus) 분리는 보류(big-bang).
+- god-file 분해: web DTO -> `web/dto.rs`(43aa494), memory `sqlite_impl` -> `memory/sqlite_impl.rs`(d1368c5).
 
-다음 우선순위:
-1. **영속 4축 저장 + 복원 재assemble**(최우선). rooms.db에 4축(blood/mbti/zodiac/role) 저장하고 복원 시 assemble로 재조립 -> (a)코드(assemble) 변경이 기존 방에 자동 반영(rooms.db 매번 비우는 번거로움 해결) (b)복원해도 4축 배지 유지. PersonaMeta.axes는 이미 있음(roomstore 스키마 + save/load에 4축 추가).
-2. base_rate 라이브 튜닝 계속: 아직 한 명 독점이면 압축 더(계수 조정), 너무 다 떠들면 편차 살림. persona_kit assemble base_rate 공식(0.55/0.30) + reactivity 하한.
-3. 흐름 게이지: 발산 대화에서 정적(정상). 활기 게이지로 보완했으나, 흐름을 발산↔수렴 양방향 표시로 개선 검토.
-4. 멀티룸(방 선택/생성/전환, WS room id, LiveSession 다중), 본인 프로필 + 프리셋 8개.
-5. 웹서치(tool use): persona가 검색 결과를 대화에 끌어오기(별도 큰 트랙).
+**web 제품 스프린트 (전부 web feature, 골든 무관):**
+- 페르소나 4축 말투 디렉티브(0705bb7): `voice_fragment`(MBTI=문장구조/혈액형=대인태도/별자리=전달리듬, 레이어 분리).
+- 토론 톤 "친구끼리 가볍게"(d1fc03e): 분석 초점 유지, 레지스터만 완화.
+- 채팅방 버전 표시 + 발화자 이름 색상 통일(1033e5c): vite `__BUILD_VERSION__`(git hash), 색상은 사이드바 혈액형 팔레트와 통일.
+- 이전 토론 아카이브(dc7e478): `roomstore.list_rooms` + `GET /api/rooms` + ArchivePage. 카드 시작/결론 날짜(47ded83, room_meta.created_at 추가).
+- 읽기전용 공유(168073a + 3094ae1 + b17e080): `room_shares`(token) + `POST /api/rooms/{id}/share` + `GET /api/share/{token}`(공개) + ShareView(아바타/4축/성향/MD/RichText). **Caddy 예외 적용·검증됨**(homelab-proxy 9ee57e8: `/share/* /api/share/* /assets/*` basic_auth 제외, geo_kr_only 유지 = 한국만).
+- 결론 리포트에 발언자 전원 명시(b95966d): `build_debrief_prompt`에 participants 전달(사람 포함).
+- 추천 주제 정체 완화(709fd3a + bf83a1f): 쿼리 풀 회전 + casual 앵글 회전 + gemma temperature 1.0 + 3h 갱신 + **중복 회피**(최근 추천 프롬프트 회피 + 출력 필터 + `recent_topics.json` 영속).
+- 문서 리모델링: README 한국어 canonical + 영문 번역(4c42611, 사용자 재구성 49e1ca8, 영문 정렬 e818e92), HISTORY 웹 챕터 추가(ff6500e), **추적 .md 전체 em-dash 제거**(a10ba00).
 
-확정 결정(다시 묻지 말 것):
-- 영속 = 서버 SQLite(rooms.db, web 독립). 모델 = friend qwen3.6-35b-fast / cloud gemma, 둘 다 thinking off. 자동배분 cloud 1/qwen 2.
-- 동적 초대 설계 = 방향 B(pool은 Arc 고정 컨테이너, LiveSession persona_meta로 라우팅/프롬프트 전권 + generate_on).
-- 라이브 튜닝은 사용자가 --web으로 직접 테스트하며 피드백(엔진 손잡이: base_rate/reactivity/target_rho/theta/pace).
+## 2. 열린 항목 / 확인 필요
 
-진행: 구현은 Sonnet 서브에이전트(Agent tool, model sonnet)에 위임, Claude(Opus)가 스펙·리뷰·커밋. codex 비사용. 매 변경 후 골든 5종 + default/web 테스트 + (필요시) 프런트 pnpm/vite build 검증. 최종 답변 한국어, em-dash 금지.
+- **`~/deploy-salon.sh` 깨짐**(사용자 디버깅 중): 수동 배포는 됨(`cd ~/tunaSalon && git pull && pnpm -C web build && cargo build --release --features "web redis-bus" && sudo systemctl restart tunasalon`). 흔한 원인: 비로그인 셸에서 cargo/pnpm PATH 누락. 견고한 스크립트 재작성 대기.
+- **추천 주제 라이브 검증**: 배포 후 `journalctl -u tunasalon | grep 추천`에 "N 분야 생성"이 떠야 정상. "생성 실패"면 웹서치 키/권한 문제 -> 정적 폴백만 뜸(이게 "부먹찍먹 안 바뀜"의 또다른 가능 원인). `recent_topics.json` 생성 확인.
+- README.ko.md는 사용자 canonical. 앞으로 README 수정은 한국어 먼저 -> 영문 번역.
 
-주의: 지난 세션 --web 서버가 백그라운드로 떠 있을 수 있다(없으면 cargo run --features web -- --web). 코드(persona_kit/flow/web) 바꾸면 서버 재시작 + rooms.db 비워야 반영(4축 영속 전까지).
-```
+## 3. 다음 방향 (사용자 제안, 2026-06-29)
 
----
-
-## 참고 (핸드오프 보강)
-
-- **영속 복원 한계(최우선 후속의 이유)**: `roomstore.rs` save가 `persona_meta`의 backend/system_prompt/modifier만 저장(axes 무시), load는 axes=None. 그래서 (a)assemble 코드 변경이 복원된 방에 안 먹힘 (b)복원 persona는 4축 배지 없음. 해결 = roomstore 스키마에 4축 컬럼 + save/load + main 복원 분기에서 `assemble(blood,mbti,zodiac,role,name)`로 system_prompt 재생성(이름은 저장값 유지).
-- **엔진 라이브 튜닝 손잡이**: base_rate(persona_kit assemble 0.55+raw*0.30), reactivity/provocativeness 하한(0.4), target_rho(web=Pub 0.40, with_target_rho), theta(chat_config 0.60), pace(기본 6s + UI). 한 명 독점 vs 균형 vs 정신없음 사이 조정.
-- **vllm-swap**: 지인서버는 한 모델만 GPU. friend(qwen3.6-35b-fast) 첫 발화 ~2.5분(swap-in). cloud(gemma, ollama localhost)는 swap 무관 빠름. thinking=false면 즉답 0.3s.
-- **흐름 vs 활기**: 흐름/냉각=수렴도(발산 대화는 0/100% 정적, 정상). 활기=발화 빈도(들썩임). 둘 다 사이드바 "방 상태" 카드.
-- **plan**: `docs/plans/salon-web-ux.md`(1단계 동적초대 + 2단계 영속 완료, 3단계+ 미작성). README는 web 트랙 반영됨(badge 271).
+**새 앱: 코덱스 ↔ 클로드코드가 터미널에서 서로 대화.** tunaSalon 흐름 엔진(누가 언제 말할지) + Redis 멀티세션을 기반으로. Redis를 멀티세션 대화에 적극 활용. 별도 구상 필요(개념/아키텍처/신규 레포 여부/CLI 연동 방식). 이 핸드오프 직후 brainstorming 시작.
